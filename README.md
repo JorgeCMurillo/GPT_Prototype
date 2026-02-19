@@ -46,7 +46,13 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
    - HellaSwag eval (if enabled and available)
 6. Saves periodic/final checkpoints and optional analysis plots.
 
-Default model architecture in this repo is GPT-2 medium:
+Current trainer defaults are GPT-2 small:
+
+- `n_layer=12`
+- `n_embd=768`
+- `n_head=12`
+
+GPT-2 medium reference defaults (for comparison):
 
 - `n_layer=24`
 - `n_embd=1024`
@@ -121,20 +127,23 @@ cd moonshotGPT
 accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
 ```
 
-Example with explicit architecture override:
+Example with explicit depth override:
 
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py \
   --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B \
-  --n_layer=12 --n_embd=768 --n_head=12
+  --n_layer=12
 ```
+
+Note:
+
+- This trainer currently exposes `--n_layer` directly.
+- To fully match GPT-2 medium, set `n_embd=1024` and `n_head=16` in `GPT2Config` inside `train_gpt2_finewebedu_bin.py` and use `--n_layer=24`.
 
 ## Useful Flags
 
-- `--n_layer` model depth (default `24`)
-- `--n_embd` hidden size (default `1024`)
-- `--n_head` attention heads (default `16`)
+- `--n_layer` model depth (default `12`)
 - `--eval_every` validation frequency
 - `--ewok_every` EWoK eval frequency
 - `--hellaswag_every` HellaSwag eval frequency
