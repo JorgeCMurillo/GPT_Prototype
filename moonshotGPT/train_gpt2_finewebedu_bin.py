@@ -288,7 +288,9 @@ def main(
     experiments_dir: str = "experiments",
     seq_len: int = 1024,
     vocab_size: int = 50257,
-    n_layer: int = 12,
+    n_embd: int = 1024,
+    n_head: int = 16,
+    n_layer: int = 24,
     num_workers: int = 0,
     shuffle_blocks: bool = True,
     grad_clip: float = 1.0,
@@ -340,7 +342,7 @@ def main(
 
     run_name = (
         f"babygpt_fineweb_bin_mbs{micro_batch_size}_T{seq_len}_"
-        f"L{n_layer}_"
+        f"d{n_embd}_h{n_head}_L{n_layer}_"
         f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
         f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
         f"steps{max_train_steps}"
@@ -425,6 +427,12 @@ def main(
         )
     if n_layer <= 0:
         raise ValueError(f"n_layer must be > 0, got {n_layer}")
+    if n_embd <= 0:
+        raise ValueError(f"n_embd must be > 0, got {n_embd}")
+    if n_head <= 0:
+        raise ValueError(f"n_head must be > 0, got {n_head}")
+    if n_embd % n_head != 0:
+        raise ValueError(f"n_embd must be divisible by n_head, got n_embd={n_embd}, n_head={n_head}")
     loss_vocab_size = tokenizer_vocab_size
     can_probe_generate = (vocab_size == tokenizer_vocab_size)
 
@@ -477,8 +485,8 @@ def main(
         eos_token_id=EOS_ID,
         n_ctx=seq_len,
         n_positions=seq_len,
-        n_embd=768,
-        n_head=12,
+        n_embd=n_embd,
+        n_head=n_head,
         n_layer=n_layer,
         attn_pdrop=0.0,
         embd_pdrop=0.0,
@@ -1201,8 +1209,12 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", type=int, default=1024)
     parser.add_argument("--vocab_size", type=int, default=50257,
                         help="Model vocab size (GPT-2 tokenizer is 50257; >50257 allowed with CE on first 50257 logits)")
-    parser.add_argument("--n_layer", type=int, default=12,
-                        help="Transformer depth (GPT-2 small uses 12 layers)")
+    parser.add_argument("--n_embd", type=int, default=1024,
+                        help="Transformer hidden size (GPT-2 medium uses 1024)")
+    parser.add_argument("--n_head", type=int, default=16,
+                        help="Attention heads (GPT-2 medium uses 16)")
+    parser.add_argument("--n_layer", type=int, default=24,
+                        help="Transformer depth (GPT-2 medium uses 24 layers)")
 
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing train_*.bin, val_*.bin, meta.json")

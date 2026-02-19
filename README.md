@@ -46,6 +46,12 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
    - HellaSwag eval (if enabled and available)
 6. Saves periodic/final checkpoints and optional analysis plots.
 
+Default model architecture in this repo is GPT-2 medium:
+
+- `n_layer=24`
+- `n_embd=1024`
+- `n_head=16`
+
 ## Data Requirements
 
 `--data_dir` must contain:
@@ -100,6 +106,12 @@ You will need at least:
 - `tqdm`
 - `matplotlib` (optional for plots)
 
+Install:
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Run Training
 
 Example (8 processes, bf16):
@@ -109,18 +121,20 @@ cd moonshotGPT
 accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
 ```
 
-Example with explicit depth (GPT-2 small default is `--n_layer 12`):
+Example with explicit architecture override:
 
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py \
   --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B \
-  --n_layer=12
+  --n_layer=12 --n_embd=768 --n_head=12
 ```
 
 ## Useful Flags
 
-- `--n_layer` model depth (default `12`)
+- `--n_layer` model depth (default `24`)
+- `--n_embd` hidden size (default `1024`)
+- `--n_head` attention heads (default `16`)
 - `--eval_every` validation frequency
 - `--ewok_every` EWoK eval frequency
 - `--hellaswag_every` HellaSwag eval frequency
