@@ -10,6 +10,8 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
 
 ## Repository Layout
 
+- `moonshotGPT/fineweb.py`
+  - Pretokenizes FineWeb/FineWeb-Edu text into GPT-2 `uint16` shard files (`train_*.bin`, `val_*.bin`) plus `meta.json`.
 - `moonshotGPT/train_gpt2_finewebedu_bin.py`
   - Main trainer for GPT-2 style causal LM on `.bin` token shards.
 - `moonshotGPT/shard_loader.py`
@@ -24,6 +26,13 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
   - Password-protected EWoK JSONL data archive.
 
 ## How It Works
+
+`fineweb.py` (data prep):
+
+1. Streams documents from FineWeb/FineWeb-Edu.
+2. Tokenizes with GPT-2 tokenizer and prepends BOS per document.
+3. Writes a flat stream of `uint16` token IDs into shard files.
+4. Emits `meta.json` describing the dataset/shard configuration.
 
 `train_gpt2_finewebedu_bin.py`:
 
@@ -45,6 +54,20 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
 - `train_*.bin`
 - `val_*.bin`
 
+You can generate this directory with `moonshotGPT/fineweb.py`.
+
+## Prepare FineWeb-Edu Data
+
+Example:
+
+```bash
+cd moonshotGPT
+python fineweb.py \
+  --dataset HuggingFaceFW/fineweb-edu \
+  --config sample-10BT \
+  --out_dir /home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
+```
+
 ## EWoK Data Loading
 
 `ewok_eval.py` loads EWoK from the first available source:
@@ -57,6 +80,12 @@ Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, wi
 For encrypted zip files, password is read from:
 
 - `EWOK_ZIP_PASSWORD` (default is `ew2026`)
+
+EWoK zip behavior:
+
+- You do **not** need to manually unzip `ewok_fast_jsonl.zip`.
+- `ewok_eval.py` reads `.jsonl` files directly from the zip in memory.
+- It does not auto-extract files to disk.
 
 ## Install Requirements
 
@@ -108,4 +137,3 @@ Each run writes to `experiments/<run_name>/` with files like:
 - `hellaswag_metrics.jsonl` (if enabled)
 - `loss_curve.png`
 - `ckpt_*` checkpoint directories
-
