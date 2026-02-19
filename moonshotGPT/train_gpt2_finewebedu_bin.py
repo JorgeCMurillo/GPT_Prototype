@@ -308,7 +308,7 @@ def main(
     hellaswag_dataset_config: str = None,
     hellaswag_split: str = "validation",
     hellaswag_local_files_only: bool = False,
-    ewok_every: int = 5000,
+    ewok_every: int = 250,
     ewok_batch_size: int = 8,
     save_every: int = 2000,
     exposure_every: int = 50,
@@ -1256,7 +1256,7 @@ if __name__ == "__main__":
                         help="Dataset split used for HellaSwag eval")
     parser.add_argument("--hellaswag_local_files_only", action="store_true",
                         help="Load HellaSwag dataset from local cache/files only")
-    parser.add_argument("--ewok_every", type=int, default=1000,
+    parser.add_argument("--ewok_every", type=int, default=250,
                         help="Run EWoK eval every N optimizer steps (0 disables)")
     parser.add_argument("--ewok_batch_size", type=int, default=4,
                         help="Batch size inside EWoK evaluate()")
