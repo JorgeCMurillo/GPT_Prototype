@@ -7,7 +7,10 @@ This script focuses on EWOK-centric records in step_metrics.json and:
 2) Plots training scalars carried in EWOK records (train_loss, lr, norms, tokens).
 3) Plots EWOK official scores across steps (all domains + one plot per domain).
 4) Plots EWOK full scores across steps (one plot per domain, both components).
-5) Optionally plots HellaSwag if present in step_metrics.json.
+5) Plots EWOK category subplots (TargetDiff, ContextDiff, ContextType) if present.
+6) Plots EWOK full average across domains (sum vs mean) if present.
+7) Optionally plots EWOK full-mean average comparison against another run.
+8) Optionally plots HellaSwag if present in step_metrics.json.
 """
 
 from __future__ import annotations
@@ -22,6 +25,20 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
+
+EWOK_WORD2VEC_MEAN_BASELINES: Dict[str, float] = {
+    "social-interactions": 0.69,
+    "social-properties": 0.73,
+    "material-dynamics": 0.62,
+    "social-relations": 0.51,
+    "quantitative-properties": 0.54,
+    "physical-dynamics": 0.62,
+    "agent-properties": 0.51,
+    "physical-interactions": 0.54,
+    "material-properties": 0.52,
+    "physical-relations": 0.51,
+    "spatial-relations": 0.42,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +61,29 @@ def parse_args() -> argparse.Namespace:
         default=140,
         help="PNG DPI",
     )
+    parser.add_argument(
+        "--overlay-word2vec-ewok-mean",
+        action="store_true",
+        help="Overlay Word2Vec baselines on ewok_full_mean_domains_4x3 plot and save a separate PNG",
+    )
+    parser.add_argument(
+        "--compare-metrics",
+        type=str,
+        default=None,
+        help="Optional second step_metrics.json to compare against the primary run",
+    )
+    parser.add_argument(
+        "--primary-label",
+        type=str,
+        default="primary",
+        help="Legend label for --metrics in comparison plots",
+    )
+    parser.add_argument(
+        "--compare-label",
+        type=str,
+        default="compare",
+        help="Legend label for --compare-metrics in comparison plots",
+    )
     return parser.parse_args()
 
 
@@ -62,33 +102,6 @@ def _safe_name(value: str) -> str:
 
 def _is_number(x) -> bool:
     return isinstance(x, (int, float)) and math.isfinite(float(x))
-
-
-def _fit_line(xs: List[int], ys: List[float]) -> Tuple[float, float] | None:
-    """Return (slope, intercept) for y = slope*x + intercept."""
-    if len(xs) < 2 or len(ys) < 2:
-        return None
-    n = float(len(xs))
-    x_mean = sum(xs) / n
-    y_mean = sum(ys) / n
-    var_x = sum((x - x_mean) ** 2 for x in xs)
-    if var_x <= 0:
-        return None
-    cov_xy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
-    slope = cov_xy / var_x
-    intercept = y_mean - slope * x_mean
-    return slope, intercept
-
-
-def _format_slope(value: float) -> str:
-    # Keep roughly 4-5 decimals while preserving readability for small slopes.
-    if abs(value) >= 1e-4:
-        return f"{value:.5f}"
-    return f"{value:.5e}"
-
-
-def _fit_label(slope: float, intercept: float) -> str:
-    return f"fit: y={_format_slope(slope)}x + {intercept:.5f}"
 
 
 def load_records(metrics_path: Path) -> List[Dict]:
@@ -238,7 +251,7 @@ def plot_ewok_official(
     ax.set_xlabel("Optimizer Step")
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0.0, 1.0)
-    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.2, label="baseline 0.50")
+    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.2, label="random chance = 50%")
     ax.grid(True, alpha=0.25)
     ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8)
     out_all = output_dir / f"ewok_official_{reduction}_all_domains.png"
@@ -261,6 +274,7 @@ def plot_ewok_full(
     output_dir: Path,
     reduction: str,
     dpi: int,
+    word2vec_baselines: Dict[str, float] | None = None,
 ) -> List[Path]:
     # For each domain in eval_full, compute average of both components:
     # avg_component = 0.5 * (component_1 + component_2)
@@ -294,12 +308,16 @@ def plot_ewok_full(
         xs = [x for x, _, _ in pts]
         y_avg = [0.5 * (a + b) for _, a, b in pts]
         ax.plot(xs, y_avg, marker="o", linewidth=1.6, markersize=3.5, color="#2a6f97", label="avg(full)")
-        fit = _fit_line(xs, y_avg)
-        if fit is not None:
-            slope, intercept = fit
-            y_fit = [slope * x + intercept for x in xs]
-            ax.plot(xs, y_fit, linewidth=1.5, color="#d95f02", label=_fit_label(slope, intercept))
-        ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="baseline 0.50")
+        ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
+        w2v = word2vec_baselines.get(domain) if word2vec_baselines else None
+        if _is_number(w2v):
+            ax.axhline(
+                float(w2v),
+                color="#1b9e77",
+                linestyle=(0, (3, 2)),
+                linewidth=1.2,
+                label=f"word2vec {float(w2v):.2f}",
+            )
         ax.set_title(domain, fontsize=10)
         ax.set_xlabel("Step", fontsize=9)
         ax.set_ylabel("Acc", fontsize=9)
@@ -311,10 +329,268 @@ def plot_ewok_full(
         flat_axes[idx].axis("off")
 
     fig.suptitle(f"EWOK Full (avg of both components) by Domain ({reduction})", fontsize=14)
-    out = output_dir / f"ewok_full_{reduction}_domains_4x3.png"
+    suffix = "_word2vec" if word2vec_baselines else ""
+    out = output_dir / f"ewok_full_{reduction}_domains_4x3{suffix}.png"
     fig.savefig(out, dpi=dpi)
     plt.close(fig)
     created.append(out)
+    return created
+
+
+def _pair_to_scalar(value) -> float | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 2 and _is_number(value[0]) and _is_number(value[1]):
+        return 0.5 * (float(value[0]) + float(value[1]))
+    if _is_number(value):
+        return float(value)
+    return None
+
+
+def _extract_full_average_scalar(full_payload: Dict) -> float | None:
+    if not isinstance(full_payload, dict):
+        return None
+
+    avg = _pair_to_scalar(full_payload.get("average"))
+    if avg is not None:
+        return avg
+
+    # Fallback for payloads that omit explicit "average": compute across domains.
+    vals: List[float] = []
+    for domain, value in full_payload.items():
+        if str(domain) == "average":
+            continue
+        y = _pair_to_scalar(value)
+        if y is not None:
+            vals.append(y)
+    if not vals:
+        return None
+    return float(sum(vals) / len(vals))
+
+
+def _full_average_series(
+    ewok_records: List[Dict],
+    reduction: str,
+) -> List[Tuple[int, float]]:
+    out: List[Tuple[int, float]] = []
+    for r in ewok_records:
+        step = r.get("step")
+        _, full = get_ewok_payload(r, reduction)
+        if not isinstance(step, int) or not isinstance(full, dict):
+            continue
+        y = _extract_full_average_scalar(full)
+        if y is None:
+            continue
+        out.append((step, y))
+    return sorted(out, key=lambda t: t[0])
+
+
+def plot_ewok_full_average_all_domains(
+    ewok_records: List[Dict],
+    output_dir: Path,
+    dpi: int,
+) -> List[Path]:
+    series: Dict[str, List[Tuple[int, float]]] = {
+        "sum": _full_average_series(ewok_records, "sum"),
+        "mean": _full_average_series(ewok_records, "mean"),
+    }
+
+    if not series["sum"] and not series["mean"]:
+        return []
+
+    fig = plt.figure(figsize=(10, 5.6))
+    ax = fig.add_subplot(1, 1, 1)
+    style = {
+        "sum": {"color": "#1f77b4", "marker": "o"},
+        "mean": {"color": "#2ca02c", "marker": "s"},
+    }
+    for reduction in ("sum", "mean"):
+        pts = sorted(series[reduction], key=lambda t: t[0])
+        if not pts:
+            continue
+        xs = [x for x, _ in pts]
+        ys = [y for _, y in pts]
+        ax.plot(
+            xs,
+            ys,
+            linewidth=1.8,
+            markersize=3.5,
+            marker=style[reduction]["marker"],
+            color=style[reduction]["color"],
+            label=f"full_{reduction}_average",
+        )
+
+    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
+    ax.set_title("EWOK Full Average Across Domains")
+    ax.set_xlabel("Optimizer Step")
+    ax.set_ylabel("Accuracy")
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    out = output_dir / "ewok_full_average_all_domains_sum_vs_mean.png"
+    fig.tight_layout()
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return [out]
+
+
+def plot_ewok_full_mean_average_compare(
+    primary_ewok_records: List[Dict],
+    compare_ewok_records: List[Dict],
+    output_dir: Path,
+    dpi: int,
+    primary_label: str,
+    compare_label: str,
+) -> List[Path]:
+    primary = _full_average_series(primary_ewok_records, "mean")
+    compare = _full_average_series(compare_ewok_records, "mean")
+    if not primary and not compare:
+        return []
+
+    fig = plt.figure(figsize=(10, 5.6))
+    ax = fig.add_subplot(1, 1, 1)
+
+    if primary:
+        xs = [x for x, _ in primary]
+        ys = [y for _, y in primary]
+        ax.plot(xs, ys, linewidth=1.9, marker="o", markersize=3.5, color="#1f77b4", label=primary_label)
+
+    if compare:
+        xs = [x for x, _ in compare]
+        ys = [y for _, y in compare]
+        ax.plot(xs, ys, linewidth=1.9, marker="s", markersize=3.5, color="#ff7f0e", label=compare_label)
+
+    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
+    ax.set_title("EWOK Full Mean Average Across Domains: Run Comparison")
+    ax.set_xlabel("Optimizer Step")
+    ax.set_ylabel("Accuracy")
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    out = output_dir / "ewok_full_mean_average_compare_runs.png"
+    fig.tight_layout()
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return [out]
+
+
+def plot_ewok_category_subplots(
+    ewok_records: List[Dict],
+    output_dir: Path,
+    reduction: str,
+    dpi: int,
+) -> List[Path]:
+    metric_key = f"eval_by_category_full_{reduction}"
+    category_records = [
+        r
+        for r in ewok_records
+        if isinstance(r.get("step"), int) and isinstance(r.get(metric_key), dict)
+    ]
+    if not category_records:
+        return []
+
+    last_by_col = category_records[-1].get(metric_key, {})
+    if not isinstance(last_by_col, dict) or not last_by_col:
+        return []
+
+    created: List[Path] = []
+    for column in sorted(last_by_col.keys(), key=lambda x: str(x)):
+        col_last = last_by_col.get(column, {})
+        if not isinstance(col_last, dict):
+            continue
+
+        categories = sorted(
+            (k for k in col_last.keys() if str(k) != "average"),
+            key=lambda x: str(x),
+        )
+        if not categories:
+            continue
+
+        avg_epochs: List[int] = []
+        avg_vals: List[float] = []
+        category_series: Dict[str, Tuple[List[int], List[float]]] = {}
+
+        for rec in category_records:
+            by_col = rec.get(metric_key, {})
+            if not isinstance(by_col, dict):
+                continue
+            col_map = by_col.get(column, {})
+            if not isinstance(col_map, dict):
+                continue
+            y_avg = _pair_to_scalar(col_map.get("average"))
+            if y_avg is None:
+                continue
+            avg_epochs.append(rec["step"])
+            avg_vals.append(y_avg)
+
+        for category in categories:
+            xs: List[int] = []
+            ys: List[float] = []
+            for rec in category_records:
+                by_col = rec.get(metric_key, {})
+                if not isinstance(by_col, dict):
+                    continue
+                col_map = by_col.get(column, {})
+                if not isinstance(col_map, dict):
+                    continue
+                y = _pair_to_scalar(col_map.get(category))
+                if y is None:
+                    continue
+                xs.append(rec["step"])
+                ys.append(y)
+            if xs:
+                category_series[str(category)] = (xs, ys)
+
+        if not category_series:
+            continue
+
+        ordered_categories = sorted(category_series.keys())
+        ncols = min(3, max(1, len(ordered_categories)))
+        nrows = int(math.ceil(len(ordered_categories) / ncols))
+
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(16, max(4, nrows * 3.8)),
+            squeeze=False,
+            constrained_layout=True,
+        )
+        axes_flat = axes.flatten()
+
+        for idx, category in enumerate(ordered_categories):
+            ax = axes_flat[idx]
+            xs, ys = category_series[category]
+            ax.plot(xs, ys, marker="o", linewidth=1.8, markersize=3.5, color="#2a6f97", label=category)
+
+            if avg_epochs and avg_vals:
+                ax.plot(
+                    avg_epochs,
+                    avg_vals,
+                    linewidth=1.0,
+                    linestyle="--",
+                    color="#808080",
+                    alpha=0.28,
+                    label="column_average",
+                )
+
+            ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
+            ax.set_title(category, fontsize=10)
+            ax.set_xlabel("Optimizer Step", fontsize=9)
+            ax.set_ylabel("Acc", fontsize=9)
+            ax.set_ylim(0.0, 1.0)
+            ax.grid(True, alpha=0.25)
+            ax.legend(fontsize=7)
+
+        for idx in range(len(ordered_categories), len(axes_flat)):
+            axes_flat[idx].axis("off")
+
+        fig.suptitle(f"EWOK Category Accuracy by {column} ({reduction})", fontsize=14)
+        slug = _safe_name(str(column).lower())
+        out = output_dir / f"ewok_category_{slug}_{reduction}_subplots.png"
+        fig.savefig(out, dpi=dpi)
+        plt.close(fig)
+        created.append(out)
+
     return created
 
 
@@ -366,11 +642,35 @@ def main() -> None:
     ewok_records, dup_info = dedupe_ewok_by_step(ewok_all)
     reductions = detect_reductions(ewok_records)
 
+    compare_ewok_records: List[Dict] = []
+    compare_dup_info: Dict[int, int] = {}
+    if args.compare_metrics:
+        compare_path = Path(args.compare_metrics).expanduser().resolve()
+        if not compare_path.exists():
+            raise SystemExit(f"--compare-metrics not found: {compare_path}")
+        compare_records = load_records(compare_path)
+        compare_ewok_all = [r for r in compare_records if is_ewok_record(r)]
+        compare_ewok_records, compare_dup_info = dedupe_ewok_by_step(compare_ewok_all)
+
     created: List[Path] = []
     created.extend(plot_training_scalars(ewok_records, output_dir, args.dpi))
     for reduction in reductions:
         created.extend(plot_ewok_official(ewok_records, output_dir, reduction, args.dpi))
-        created.extend(plot_ewok_full(ewok_records, output_dir, reduction, args.dpi))
+        word2vec = EWOK_WORD2VEC_MEAN_BASELINES if (args.overlay_word2vec_ewok_mean and reduction == "mean") else None
+        created.extend(plot_ewok_full(ewok_records, output_dir, reduction, args.dpi, word2vec_baselines=word2vec))
+        created.extend(plot_ewok_category_subplots(ewok_records, output_dir, reduction, args.dpi))
+    created.extend(plot_ewok_full_average_all_domains(ewok_records, output_dir, args.dpi))
+    if compare_ewok_records:
+        created.extend(
+            plot_ewok_full_mean_average_compare(
+                ewok_records,
+                compare_ewok_records,
+                output_dir,
+                args.dpi,
+                args.primary_label,
+                args.compare_label,
+            )
+        )
     created.extend(plot_hellaswag(records, output_dir, args.dpi))
 
     print(f"Loaded records: total={len(records)}, ewok={len(ewok_all)}, ewok_deduped={len(ewok_records)}")
@@ -379,6 +679,13 @@ def main() -> None:
         print(f"Dropped duplicate EWOK steps (kept preferred record): {dup_str}")
     else:
         print("No duplicate EWOK steps found.")
+    if args.compare_metrics:
+        print(f"Loaded comparison EWOK records: {len(compare_ewok_records)}")
+        if compare_dup_info:
+            dup_str = ", ".join(f"{k}x{v}" for k, v in sorted(compare_dup_info.items()))
+            print(f"Dropped duplicate comparison EWOK steps: {dup_str}")
+        else:
+            print("No duplicate comparison EWOK steps found.")
     print(f"Detected EWOK reductions: {', '.join(reductions) if reductions else 'none'}")
     print(f"Wrote {len(created)} plot(s) to: {output_dir}")
     for p in created:
