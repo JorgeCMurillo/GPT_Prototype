@@ -76,6 +76,23 @@ python -m bos_aligned_proto.train_gpt2_finewebedu_bos_bin \
   --num_workers 0
 ```
 
+### 3) Train BOS GPT-2 medium
+
+Start with a smaller `micro_batch_size` and increase only if GPU memory allows:
+
+```bash
+python -m bos_aligned_proto.train_gpt2_finewebedu_bos_bin \
+  --data_dir fineweb_edu_10B_bosrow \
+  --n_embd 1024 \
+  --n_head 16 \
+  --n_layer 24 \
+  --micro_batch_size 2 \
+  --seq_len 1024 \
+  --total_batch_tokens 491520 \
+  --max_train_steps 20000 \
+  --num_workers 0
+```
+
 Outputs go to `experiments/babygpt_fineweb_bosrow_*`.
 
 ## Notes and tradeoffs
