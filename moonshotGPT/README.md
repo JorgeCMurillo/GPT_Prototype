@@ -7,115 +7,6 @@ The modified plan in this repo is:
 - then, use related methods to discard unnecessary data while preserving GPT-2 Medium EWoK performance,
 - then, run attribution analyses to identify which retained data improves EWoK.
 
-## What This Repo Is Trying To Do
-At a high level, you are training a student model (GPT-2 Medium architecture) on FineWeb-Edu, while optionally using a fixed reference model (default: OpenAI GPT-2 Medium) to guide which training tokens to keep. The near-term goal is a correctness and performance check for rho-1 behavior, not yet final dataset compression.
-
-Long-term, this becomes a data selection pipeline: move from token-level filtering to sequence/dataset-level pruning so a smaller subset can still recover strong EWoK behavior, and then attribute what in that subset matters most.
-
-## 60-Second TL;DR
-- `fineweb.py` builds `train_*.bin`/`val_*.bin` uint16 shards from FineWeb-Edu.
-- `train_gpt2_finewebedu_bin.py` can train baseline GPT-2 Medium on those shards.
-- `compute_ref_loss_shards.py` precomputes per-token reference losses from `openai-community/gpt2-medium`.
-- Enabling rho in training (`--rho_ref_loss_dir ...`) filters which tokens contribute to loss.
-- A nonzero `--rho_ref_loss_cap` is the key knob for explicitly excluding tokens the reference model finds too hard.
-- Resume is supported via `--resume_from_run`, including log trimming + data-stream fast-forward alignment.
-
-## Glossary
-- **Student model**: the model being optimized in this repo (for example GPT-2 Medium config: `n_embd=1024, n_head=16, n_layer=24`).
-- **Reference model**: a fixed model used only to provide per-token reference losses (default docs target: `openai-community/gpt2-medium`).
-- **Token loss**: negative log-likelihood for a single target token.
-- **rho**: token-selection mechanism that keeps only a fraction of candidate tokens for optimization.
-- **keep fraction (`rho_keep_frac`)**: fraction of candidate tokens retained each batch.
-- **warmup (`rho_warmup_steps`)**: early steps where rho masking is disabled and all tokens are used.
-- **cap (`rho_ref_loss_cap`)**: optional ceiling on reference loss; tokens above it are excluded from rho candidates.
-- **exposure logs**: per-rank JSONL logs showing which shard/block spans were fed to the model.
-- **checkpoint resume**: load model/optimizer/trainer state, trim logs to checkpoint step, then fast-forward dataloader stream.
-
-## How Rho-1 Works In This Script
-In one sentence: rho mode computes token scores from student/reference losses, keeps top-scoring tokens among valid candidates, and averages loss over only those kept tokens.
-
-In this repo, the intent for your rho-1 experiment is: remove tokens that are likely unhelpful for this phase, especially when both student/reference indicate high difficulty (via a nonzero reference-loss cap), then check whether quality remains close to baseline.
-
-### Rho Math
-1) Per-token student loss:
-
-$$
-\ell_s(t) = -\log p_{\theta}(x_t \mid x_{1:t-1})
-$$
-
-What this means: the student pays high loss when token $x_t$ is hard to predict given prior context.
-
-2) Per-token reference loss (precomputed):
-
-$$
-\ell_r(t) = -\log p_{\phi}(x_t \mid x_{1:t-1})
-$$
-
-What this means: this is the same quantity, but measured under the fixed reference model.
-
-3) Scoring modes:
-
-- `delta` mode:
-
-$$
-s(t) = \ell_s(t) - \ell_r(t)
-$$
-
-- `ref_only` mode:
-
-$$
-s(t) = -\ell_r(t)
-$$
-
-What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
-
-4) Candidate set with optional cap:
-
-Let $v(t)=1$ mean “token $t$ is valid for rho selection.”
-
-Then the candidate set $C$ is built like this:
-
-- Start with all tokens where $v(t)=1$.
-- If $c>0$, also require $\ell_r(t) \le c$.
-
-where $c$ is `--rho_ref_loss_cap`.
-
-What this means: first keep only valid tokens; if a cap is turned on, also drop tokens whose reference loss is above the cap.
-5) Top-k keep rule:
-
-$$
-k = \lceil \rho \cdot |C| \rceil
-$$
-
-where $\rho$ is `--rho_keep_frac`, and
-
-$$
-m(t)=1 \text{ if } t \in \text{TopK}_{C}(s, k), \text{ else } 0
-$$
-
-What this means: only the highest-scored candidate tokens are kept for gradient signal.
-
-6) Optimized loss:
-
-$$
-L = \frac{\sum_t m(t)\,\ell_s(t)}{\max(1,\sum_t m(t))}
-$$
-
-What this means: the update ignores dropped tokens by masking them out of the mean.
-
-7) Warmup behavior:
-
-If `step < --rho_warmup_steps`, then effectively:
-
-$$
-m(t)=1 \quad \forall t
-$$
-
-What this means: rho filtering starts only after warmup.
-
-8) Interpretation for your "both hard" objective:
-
-Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-reference-loss tokens from candidate selection; without cap, rho still ranks candidates but does not pre-drop those high-reference-loss tokens.
 ## Setup
 Run commands from this directory:
 
@@ -194,8 +85,8 @@ Important:
 - Keep `--batch_size` in this step equal to training `--micro_batch_size`.
 - Keep `--seq_len` equal between precompute and training.
 
-### 4) Rho-1 Experiment Run (Cap-Enabled)
-Why you run this now: this is the modified training mode that keeps only selected tokens for optimization and explicitly excludes high-reference-loss tokens.
+### 4) Rho-1 Experiment Run (Cap Off by Default)
+Why you run this now: this is the modified training mode that keeps only selected tokens for optimization.
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
@@ -211,12 +102,12 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
-  --rho_mode delta \
-  --rho_ref_loss_cap 3.0
+  --rho_mode delta
 ```
 
 Notes:
-- `rho_ref_loss_cap=3.0` is an example threshold; tune empirically.
+- Cap is off by default.
+- Add `--rho_ref_loss_cap <positive_value>` only if you want to pre-filter high-reference-loss tokens.
 - Start by checking whether performance remains close to baseline while filtering works as expected.
 
 ### 5) Resume Training
@@ -237,7 +128,6 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta \
-  --rho_ref_loss_cap 3.0 \
   --resume_from_run experiments/<your_run_or_ckpt_dir>
 ```
 
@@ -253,6 +143,117 @@ Why you run this now: summarize EWoK/HellaSwag and training traces from `step_me
 python plot_step_metrics.py \
   --metrics experiments/<your_run>/step_metrics.json
 ```
+
+## What This Repo Is Trying To Do
+At a high level, you are training a student model (GPT-2 Medium architecture) on FineWeb-Edu, while optionally using a fixed reference model (default: OpenAI GPT-2 Medium) to guide which training tokens to keep. The near-term goal is a correctness and performance check for rho-1 behavior, not yet final dataset compression.
+
+Long-term, this becomes a data selection pipeline: move from token-level filtering to sequence/dataset-level pruning so a smaller subset can still recover strong EWoK behavior, and then attribute what in that subset matters most.
+
+## 60-Second TL;DR
+- `fineweb.py` builds `train_*.bin`/`val_*.bin` uint16 shards from FineWeb-Edu.
+- `train_gpt2_finewebedu_bin.py` can train baseline GPT-2 Medium on those shards.
+- `compute_ref_loss_shards.py` precomputes per-token reference losses from `openai-community/gpt2-medium`.
+- Enabling rho in training (`--rho_ref_loss_dir ...`) filters which tokens contribute to loss.
+- `--rho_ref_loss_cap` is optional and off by default; set it to a positive value to exclude high-reference-loss tokens before top-k selection.
+- Resume is supported via `--resume_from_run`, including log trimming + data-stream fast-forward alignment.
+
+## Glossary
+- **Student model**: the model being optimized in this repo (for example GPT-2 Medium config: `n_embd=1024, n_head=16, n_layer=24`).
+- **Reference model**: a fixed model used only to provide per-token reference losses (default docs target: `openai-community/gpt2-medium`).
+- **Token loss**: negative log-likelihood for a single target token.
+- **rho**: token-selection mechanism that keeps only a fraction of candidate tokens for optimization.
+- **keep fraction (`rho_keep_frac`)**: fraction of candidate tokens retained each batch.
+- **warmup (`rho_warmup_steps`)**: early steps where rho masking is disabled and all tokens are used.
+- **cap (`rho_ref_loss_cap`)**: optional ceiling on reference loss; tokens above it are excluded from rho candidates when enabled.
+- **exposure logs**: per-rank JSONL logs showing which shard/block spans were fed to the model.
+- **checkpoint resume**: load model/optimizer/trainer state, trim logs to checkpoint step, then fast-forward dataloader stream.
+
+## How Rho-1 Works In This Script
+In one sentence: rho mode computes token scores from student/reference losses, keeps top-scoring tokens among valid candidates, and averages loss over only those kept tokens.
+
+In this repo, the intent for your rho-1 experiment is: remove tokens that are likely unhelpful for this phase, then check whether quality remains close to baseline. If you want to explicitly pre-drop very hard-for-reference tokens, turn on a nonzero reference-loss cap.
+
+### Rho Math
+1) Per-token student loss:
+
+$$
+\ell_s(t) = -\log p_{\theta}(x_t \mid x_{1:t-1})
+$$
+
+What this means: the student pays high loss when token $x_t$ is hard to predict given prior context.
+
+2) Per-token reference loss (precomputed):
+
+$$
+\ell_r(t) = -\log p_{\phi}(x_t \mid x_{1:t-1})
+$$
+
+What this means: this is the same quantity, but measured under the fixed reference model.
+
+3) Scoring modes:
+
+- `delta` mode:
+
+$$
+s(t) = \ell_s(t) - \ell_r(t)
+$$
+
+- `ref_only` mode:
+
+$$
+s(t) = -\ell_r(t)
+$$
+
+What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
+
+4) Candidate set with optional cap:
+
+Let $v(t)=1$ mean "token $t$ is valid for rho selection."
+
+Then the candidate set $C$ is built like this:
+
+- Start with all tokens where $v(t)=1$.
+- If $c>0$, also require $\ell_r(t) \le c$.
+
+where $c$ is `--rho_ref_loss_cap`.
+
+What this means: first keep only valid tokens; if a cap is turned on, also drop tokens whose reference loss is above the cap.
+
+5) Top-k keep rule:
+
+$$
+k = \lceil \rho \cdot |C| \rceil
+$$
+
+where $\rho$ is `--rho_keep_frac`, and
+
+$$
+m(t)=1 \text{ if } t \in \text{TopK}_{C}(s, k), \text{ else } 0
+$$
+
+What this means: only the highest-scored candidate tokens are kept for gradient signal.
+
+6) Optimized loss:
+
+$$
+L = \frac{\sum_t m(t)\,\ell_s(t)}{\max(1,\sum_t m(t))}
+$$
+
+What this means: the update ignores dropped tokens by masking them out of the mean.
+
+7) Warmup behavior:
+
+If `step < --rho_warmup_steps`, then effectively:
+
+$$
+m(t)=1 \quad \forall t
+$$
+
+What this means: rho filtering starts only after warmup.
+
+8) Interpretation for your "both hard" objective:
+
+Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-reference-loss tokens from candidate selection; with cap off (default), rho still ranks valid candidates but does not pre-drop those high-reference-loss tokens.
 
 ## Outputs And Where To Look
 Each run creates an `experiments/<run_name>/` directory with:
