@@ -51,12 +51,35 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --mixed_precision bf16
 ```
 
-### 4) Optional: run rho-enabled training
+### 4) Optional: precompute reference-loss shards (required for rho)
+```bash
+cd moonshotGPT
+accelerate launch --num_processes 8 compute_ref_loss_shards.py \
+  --data_dir fineweb_edu_10B \
+  --out_dir ref_loss_gpt2m_T1024_B4 \
+  --split train \
+  # must match training --seq_len
+  --seq_len 1024 \
+  # must match training --micro_batch_size
+  --batch_size 4 \
+  --ref_model openai-community/gpt2-medium \
+  --tokenizer gpt2 \
+  --out_dtype float16 \
+  --mixed_precision bf16
+```
+
+Alignment note:
+- Keep precompute `--batch_size` equal to training `--micro_batch_size`.
+- Keep precompute `--seq_len` equal to training `--seq_len`.
+
+### 5) Optional: run rho-enabled training
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --data_dir fineweb_edu_10B \
+  # must match precompute --batch_size
   --micro_batch_size 4 \
+  # must match precompute --seq_len
   --seq_len 1024 \
   --total_batch_tokens 491520 \
   --max_train_steps 20000 \
@@ -64,6 +87,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
+  # must be generated from same shard set
   --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
