@@ -39,17 +39,17 @@ In this repo, the intent for your rho-1 experiment is: remove tokens that are li
 ### Rho Math
 1) Per-token student loss:
 
-\[
+$$
 \ell_s(t) = -\log p_{\theta}(x_t \mid x_{<t})
-\]
+$$
 
 What this means: the student pays high loss when token \(x_t\) is hard to predict given prior context.
 
 2) Per-token reference loss (precomputed):
 
-\[
+$$
 \ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})
-\]
+$$
 
 What this means: this is the same quantity, but measured under the fixed reference model.
 
@@ -59,29 +59,28 @@ What this means: this is the same quantity, but measured under the fixed referen
 - $$s(t) = \ell_s(t) - \ell_r(t)
 $$
 - `ref_only` mode:
-\[
+$$
 s(t) = -\ell_r(t)
-\]
+$$
 
 What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
 
 4) Candidate set with optional cap:
 
-\[
+$$
 C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
-\]
-
+$$
 where \(c\) is `--rho_ref_loss_cap`.
 
 What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
 
 5) Top-k keep rule:
 
-\[
+$$
 k = \lceil \rho \cdot |C| \rceil
-\]
+$$
 
-where \(\rho\) is `--rho_keep_frac`, and
+where $$\rho$$ is `--rho_keep_frac`, and
 
 \[
 m(t)=1 \text{ if } t \in \text{TopK}_{C}(s, k), \text{ else } 0
