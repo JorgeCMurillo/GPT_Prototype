@@ -63,9 +63,7 @@ What this means: `delta` prioritizes tokens where the student underperforms the 
 
 4) Candidate set with optional cap:
 
-$$
-C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
-$$
+$$C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}$$
 where \(c\) is `--rho_ref_loss_cap`.
 
 What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
