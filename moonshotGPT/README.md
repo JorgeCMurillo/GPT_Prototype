@@ -63,7 +63,9 @@ What this means: `delta` prioritizes tokens where the student underperforms the 
 
 4) Candidate set with optional cap:
 
-$$C = \{t : \text{ref_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}$$
+$$
+C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
+$$
 where \(c\) is `--rho_ref_loss_cap`.
 
 What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
@@ -74,19 +76,19 @@ $$
 k = \lceil \rho \cdot |C| \rceil
 $$
 
-where $$\rho$$ is `--rho_keep_frac`, and
+where $\rho$ is `--rho_keep_frac`, and
 
-\[
+$$
 m(t)=1 \text{ if } t \in \text{TopK}_{C}(s, k), \text{ else } 0
-\]
+$$
 
 What this means: only the highest-scored candidate tokens are kept for gradient signal.
 
 6) Optimized loss:
 
-\[
+$$
 L = \frac{\sum_t m(t)\,\ell_s(t)}{\max(1,\sum_t m(t))}
-\]
+$$
 
 What this means: the update ignores dropped tokens by masking them out of the mean.
 
@@ -94,9 +96,9 @@ What this means: the update ignores dropped tokens by masking them out of the me
 
 If `step < --rho_warmup_steps`, then effectively:
 
-\[
+$$
 m(t)=1 \quad \forall t
-\]
+$$
 
 What this means: rho filtering starts only after warmup.
 
@@ -298,4 +300,3 @@ Success criteria:
 ## Public Interface Notes
 - This README adds documentation only.
 - No code API or CLI changes are required to use this workflow.
-
