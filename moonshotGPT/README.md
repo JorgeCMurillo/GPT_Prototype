@@ -59,9 +59,7 @@ What this means: this is the same quantity, but measured under the fixed referen
 - $$s(t) = \ell_s(t) - \ell_r(t)
 $$
 - `ref_only` mode:
-$$
-s(t) = -\ell_r(t)
-$$
+$$s(t) = -\ell_r(t)$$
 
 What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
 
