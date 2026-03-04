@@ -45,7 +45,7 @@ What this means: the student pays high loss when token \(x_t\) is hard to predic
 
 2) Per-token reference loss (precomputed):
 
-$$\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})$$
+$\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})$
 
 What this means: this is the same quantity, but measured under the fixed reference model.
 
@@ -61,9 +61,7 @@ What this means: `delta` prioritizes tokens where the student underperforms the 
 
 4) Candidate set with optional cap:
 
-$$
-C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
-$$
+$C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}$
 where \(c\) is `--rho_ref_loss_cap`.
 
 What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
