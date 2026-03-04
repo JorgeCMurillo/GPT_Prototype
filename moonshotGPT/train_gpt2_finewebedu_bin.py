@@ -1,5 +1,5 @@
-# train_gpt2_finewebedu_bin_step_exposure_fixed.py
-import os, random, argparse, json, math, inspect, subprocess, sys
+# train_gpt2_finewebedu_bin.py
+import os, random, argparse, json, math, inspect, subprocess, sys, re
 from datetime import datetime
 from contextlib import nullcontext
 import gc
@@ -33,6 +33,12 @@ except ImportError:
     EWOK_DF = None
 
 from shard_loader import make_dataloader
+from training_utils.resume_trim import (
+    derive_resume_skip_microsteps,
+    fast_forward_iterator_data_only,
+    trim_run_logs_after_step,
+    validate_replay_compatibility,
+)
 
 try:
     import hellaswag_eval
@@ -69,6 +75,18 @@ def append_jsonl(path: str, record: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as f:
         f.write(json.dumps(to_jsonable(record)) + "\n")
+
+
+def atomic_write_json(path: str, payload: dict):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(to_jsonable(payload), f, indent=2)
+    os.replace(tmp, path)
+
+
+def load_json(path: str):
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 # -----------------------------
@@ -177,6 +195,365 @@ def _flatten_meta(meta_obj):
     return out
 
 
+def _to_scalar_int(x) -> int:
+    if isinstance(x, torch.Tensor):
+        if x.numel() != 1:
+            raise ValueError(f"Expected scalar tensor, got shape={tuple(x.shape)}")
+        return int(x.item())
+    return int(x)
+
+
+def _resolve_ref_loss_file(ref_loss_dir: str, shard_path: str):
+    base = os.path.basename(str(shard_path))
+    if base.endswith(".bin"):
+        base = base[:-4]
+    for suffix, dtype in (("f16", np.float16), ("f32", np.float32)):
+        p = os.path.join(ref_loss_dir, f"{base}.ref_loss.{suffix}.bin")
+        if os.path.exists(p):
+            return p, dtype
+    raise FileNotFoundError(
+        f"No ref-loss file found for shard '{shard_path}' in '{ref_loss_dir}'. "
+        "Expected one of: *.ref_loss.f16.bin or *.ref_loss.f32.bin"
+    )
+
+
+def _list_split_shards(data_dir: str, split: str):
+    prefix = f"{split}_"
+    shards = [
+        os.path.join(data_dir, name)
+        for name in sorted(os.listdir(data_dir))
+        if name.startswith(prefix) and name.endswith(".bin")
+    ]
+    if not shards:
+        raise FileNotFoundError(
+            f"No shards found for split='{split}' in '{data_dir}' "
+            f"(expected files like {split}_*.bin)."
+        )
+    return shards
+
+
+def _count_uint16_tokens(path: str) -> int:
+    nbytes = os.path.getsize(path)
+    if nbytes % 2 != 0:
+        raise ValueError(f"uint16 shard has odd byte size (not divisible by 2): {path}")
+    return nbytes // 2
+
+
+def _count_ref_loss_tokens(path: str, ref_dtype) -> int:
+    itemsize = int(np.dtype(ref_dtype).itemsize)
+    nbytes = os.path.getsize(path)
+    if nbytes % itemsize != 0:
+        raise ValueError(
+            f"Ref-loss file byte size not divisible by dtype itemsize={itemsize}: {path}"
+        )
+    return nbytes // itemsize
+
+
+def _ref_loss_meta_path(ref_loss_path: str) -> str:
+    if not ref_loss_path.endswith(".bin"):
+        raise ValueError(f"Unexpected ref-loss filename (expected .bin): {ref_loss_path}")
+    return ref_loss_path[:-4] + ".meta.json"
+
+
+def _validate_rho_ref_loss_alignment(
+    data_dir: str,
+    ref_loss_dir: str,
+    seq_len: int,
+    micro_batch_size: int,
+    split: str = "train",
+    max_reported_errors: int = 12,
+) -> int:
+    """
+    Fail-fast validation for rho reference losses before training starts.
+
+    Checks for each split shard:
+    - matching ref-loss file exists
+    - ref-loss token count matches source shard token count
+    - metadata file exists and has matching seq_len / batch_size / stride / block
+    """
+    shards = _list_split_shards(data_dir, split)
+    expected_seq_len = int(seq_len)
+    expected_bs = int(micro_batch_size)
+    expected_stride = expected_seq_len * expected_bs
+    expected_block = expected_stride + 1
+
+    errors = []
+
+    def _expect_meta_int(meta: dict, key: str, expected: int, shard_name: str):
+        if key not in meta:
+            errors.append(
+                f"{shard_name}: meta missing key '{key}' (expected {expected})."
+            )
+            return
+        try:
+            got = int(meta.get(key))
+        except Exception:
+            errors.append(
+                f"{shard_name}: meta key '{key}' is non-integer ({meta.get(key)!r}); expected {expected}."
+            )
+            return
+        if got != int(expected):
+            errors.append(
+                f"{shard_name}: meta key '{key}'={got} but expected {expected}."
+            )
+
+    for shard_path in shards:
+        shard_name = os.path.basename(shard_path)
+
+        try:
+            shard_tokens = _count_uint16_tokens(shard_path)
+        except Exception as exc:
+            errors.append(f"{shard_name}: cannot read shard token count: {exc}")
+            continue
+
+        try:
+            ref_path, ref_dtype = _resolve_ref_loss_file(ref_loss_dir, shard_path)
+        except Exception as exc:
+            errors.append(f"{shard_name}: {exc}")
+            continue
+
+        try:
+            ref_tokens = _count_ref_loss_tokens(ref_path, ref_dtype)
+        except Exception as exc:
+            errors.append(f"{shard_name}: cannot read ref-loss token count: {exc}")
+            continue
+        if ref_tokens != shard_tokens:
+            errors.append(
+                f"{shard_name}: ref token count mismatch: shard={shard_tokens}, ref={ref_tokens} ({ref_path})."
+            )
+
+        meta_path = _ref_loss_meta_path(ref_path)
+        if not os.path.exists(meta_path):
+            errors.append(
+                f"{shard_name}: missing ref-loss metadata file: {meta_path}"
+            )
+            continue
+
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+        except Exception as exc:
+            errors.append(f"{shard_name}: failed to parse meta JSON {meta_path}: {exc}")
+            continue
+
+        _expect_meta_int(meta, "seq_len", expected_seq_len, shard_name)
+        _expect_meta_int(meta, "batch_size", expected_bs, shard_name)
+        _expect_meta_int(meta, "stride_tokens", expected_stride, shard_name)
+        _expect_meta_int(meta, "block_tokens", expected_block, shard_name)
+
+        if "source_num_tokens" in meta:
+            try:
+                source_tokens = int(meta.get("source_num_tokens"))
+                if source_tokens != shard_tokens:
+                    errors.append(
+                        f"{shard_name}: meta source_num_tokens={source_tokens} but shard has {shard_tokens}."
+                    )
+            except Exception:
+                errors.append(
+                    f"{shard_name}: meta source_num_tokens is non-integer ({meta.get('source_num_tokens')!r})."
+                )
+
+        source_base = meta.get("source_shard_basename")
+        if source_base is not None and str(source_base) != shard_name:
+            errors.append(
+                f"{shard_name}: meta source_shard_basename={source_base!r} does not match shard name."
+            )
+
+    if errors:
+        shown = errors[:max_reported_errors]
+        lines = "\n".join(f"  - {msg}" for msg in shown)
+        hidden = max(0, len(errors) - len(shown))
+        if hidden > 0:
+            lines += f"\n  - ... and {hidden} more validation errors."
+        raise ValueError(
+            "Rho ref-loss preflight validation failed before training.\n"
+            f"Checked split='{split}' in data_dir='{data_dir}' against ref_loss_dir='{ref_loss_dir}'.\n"
+            f"Expected seq_len={expected_seq_len}, micro_batch_size={expected_bs}.\n"
+            "Common fix: recompute ref-loss shards with matching --seq_len and --batch_size.\n"
+            f"Details:\n{lines}"
+        )
+
+    return len(shards)
+
+
+def _checkpoint_step_from_dirname(path: str):
+    name = os.path.basename(os.path.normpath(path))
+    m = re.match(r"^ckpt_[^/]*_step(\d+)$", name)
+    if m is None:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _resolve_resume_paths(resume_from_run: str):
+    """
+    Accept either:
+    - a run directory containing ckpt_*_stepXXXXXXX folders
+    - a specific checkpoint directory ckpt_*_stepXXXXXXX
+
+    Returns (run_dir, ckpt_dir, step_hint).
+    """
+    raw = os.path.abspath(str(resume_from_run))
+    if not os.path.isdir(raw):
+        raise FileNotFoundError(f"--resume_from_run path does not exist or is not a directory: {raw}")
+
+    step_direct = _checkpoint_step_from_dirname(raw)
+    if step_direct is not None:
+        run_dir = os.path.dirname(raw)
+        return run_dir, raw, int(step_direct)
+
+    cands = []
+    for name in sorted(os.listdir(raw)):
+        ckpt_dir = os.path.join(raw, name)
+        if not os.path.isdir(ckpt_dir):
+            continue
+        step = _checkpoint_step_from_dirname(ckpt_dir)
+        if step is None:
+            continue
+        cands.append((int(step), float(os.path.getmtime(ckpt_dir)), ckpt_dir))
+
+    if not cands:
+        raise FileNotFoundError(
+            f"No checkpoint directories found under '{raw}'. "
+            "Expected folders named like ckpt_<tag>_step0001234."
+        )
+
+    cands.sort(key=lambda x: (x[0], x[1]))
+    step, _mtime, ckpt_dir = cands[-1]
+    return raw, ckpt_dir, int(step)
+
+
+def _validate_ckpt_model_config_alignment(
+    ckpt_dir: str,
+    seq_len: int,
+    vocab_size: int,
+    n_embd: int,
+    n_head: int,
+    n_layer: int,
+):
+    cfg_path = os.path.join(ckpt_dir, "config.json")
+    if not os.path.exists(cfg_path):
+        raise FileNotFoundError(f"Checkpoint missing config.json: {cfg_path}")
+
+    try:
+        cfg = load_json(cfg_path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse checkpoint config: {cfg_path}: {exc}") from exc
+
+    mismatches = []
+
+    def _check(keys, expected: int, label: str):
+        got = None
+        for k in keys:
+            if k in cfg:
+                got = int(cfg[k])
+                break
+        if got is None:
+            return
+        if int(got) != int(expected):
+            mismatches.append(f"{label}: ckpt={got}, requested={int(expected)}")
+
+    _check(["vocab_size"], vocab_size, "vocab_size")
+    _check(["n_embd"], n_embd, "n_embd")
+    _check(["n_head"], n_head, "n_head")
+    _check(["n_layer"], n_layer, "n_layer")
+    # GPT2 config usually stores both n_positions and n_ctx; either must match seq_len.
+    _check(["n_positions", "n_ctx"], seq_len, "seq_len")
+
+    if mismatches:
+        raise ValueError(
+            "Checkpoint architecture does not match requested training args.\n"
+            f"checkpoint: {ckpt_dir}\n"
+            + "\n".join(f"  - {m}" for m in mismatches)
+        )
+
+
+def _load_existing_step_metrics(metrics_path: str):
+    if not os.path.exists(metrics_path):
+        return []
+    try:
+        data = load_json(metrics_path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse existing step_metrics file '{metrics_path}': {exc}") from exc
+    if not isinstance(data, list):
+        raise ValueError(f"Expected list in step_metrics file: {metrics_path}")
+    return data
+
+
+def _load_trainer_state(ckpt_dir: str):
+    state_path = os.path.join(ckpt_dir, "trainer_state.json")
+    if not os.path.exists(state_path):
+        return {}
+    try:
+        data = load_json(state_path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse trainer state '{state_path}': {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected dict in trainer state file: {state_path}")
+    return data
+
+
+def _save_trainer_state(ckpt_dir: str, state: dict):
+    atomic_write_json(os.path.join(ckpt_dir, "trainer_state.json"), state)
+
+
+def _load_ref_loss_batch(
+    ref_loss_dir: str,
+    shard_meta: dict,
+    expected_bt: int,
+    ref_cache: dict,
+):
+    shard_path = shard_meta.get("shard_path", None)
+    if shard_path is None:
+        raise KeyError("Batch meta missing shard_path; cannot map to ref-loss file.")
+    start = _to_scalar_int(shard_meta.get("start"))
+    end = _to_scalar_int(shard_meta.get("end"))
+    if (end - start) != (expected_bt + 1):
+        raise ValueError(
+            f"Unexpected block span from meta: end-start={end-start}, expected {expected_bt+1}. "
+            "Reference-loss alignment requires matching seq_len and micro_batch_size."
+        )
+
+    cache_key = str(shard_path)
+    if cache_key not in ref_cache:
+        ref_path, ref_dtype = _resolve_ref_loss_file(ref_loss_dir, cache_key)
+        ref_cache[cache_key] = {
+            "path": ref_path,
+            "dtype": ref_dtype,
+            "mm": np.memmap(ref_path, dtype=ref_dtype, mode="r"),
+        }
+    mm = ref_cache[cache_key]["mm"]
+
+    lo = start + 1
+    hi = end
+    arr = np.asarray(mm[lo:hi], dtype=np.float32)
+    if arr.size != expected_bt:
+        raise ValueError(
+            f"Ref-loss slice size mismatch for shard '{shard_path}': got {arr.size}, expected {expected_bt}."
+        )
+    valid = np.isfinite(arr)
+    if not valid.any():
+        raise ValueError(
+            f"Ref-loss slice has no finite values for shard '{shard_path}' [{lo}:{hi}]. "
+            "Check precompute alignment (same seq_len and micro_batch_size)."
+        )
+    # Keep non-finite values out of mask selection by making them very small score candidates.
+    arr = np.where(valid, arr, np.float32(1e9)).astype(np.float32, copy=False)
+    return arr, valid
+
+
+def _resolve_mixed_precision(requested: str) -> str:
+    if requested != "bf16":
+        return requested
+    if not torch.cuda.is_available():
+        return "no"
+    if not torch.cuda.is_bf16_supported():
+        return "fp16"
+    return "bf16"
+
+
 def release_eval_memory():
     """Best-effort cleanup before heavy eval runs."""
     gc.collect()
@@ -193,10 +570,10 @@ def _unpack_ewok_per_item(result):
         raise TypeError(f"Unexpected EWoK return type: {type(result)}")
     if len(result) == 3:
         eval_off, eval_full, per_item = result
-        return eval_off, eval_full, per_item
+        return eval_off, eval_full, per_item, None
     if len(result) == 4:
-        eval_off, eval_full, per_item, _margin_stats = result
-        return eval_off, eval_full, per_item
+        eval_off, eval_full, per_item, margin_stats = result
+        return eval_off, eval_full, per_item, margin_stats
     raise ValueError(f"Unexpected EWoK return tuple length: {len(result)}")
 
 
@@ -313,18 +690,63 @@ def main(
     save_every: int = 2000,
     exposure_every: int = 50,
     push_to_hub: bool = False,
+    mixed_precision: str = "bf16",
+    rho_ref_loss_dir: str = "",
+    rho_keep_frac: float = 1.0,
+    rho_warmup_steps: int = 0,
+    rho_mode: str = "delta",
+    rho_ref_loss_cap: float = 0.0,
+    init_from_ckpt: str = "",
+    resume_from_run: str = "",
 ) -> None:
     set_all_seeds(seed)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    invocation_args = dict(locals())
+
+    rho_enabled = bool(rho_ref_loss_dir)
+    init_from_ckpt = str(init_from_ckpt).strip()
+    resume_from_run = str(resume_from_run).strip()
+    if init_from_ckpt and resume_from_run:
+        raise ValueError("Use only one of --init_from_ckpt or --resume_from_run, not both.")
+    if init_from_ckpt and not os.path.isdir(init_from_ckpt):
+        raise FileNotFoundError(f"--init_from_ckpt not found: {init_from_ckpt}")
+
+    if rho_enabled:
+        if not os.path.isdir(rho_ref_loss_dir):
+            raise FileNotFoundError(f"--rho_ref_loss_dir not found: {rho_ref_loss_dir}")
+        if not (0.0 < float(rho_keep_frac) <= 1.0):
+            raise ValueError(f"--rho_keep_frac must be in (0,1], got {rho_keep_frac}")
+        if rho_mode not in {"delta", "ref_only"}:
+            raise ValueError(f"--rho_mode must be one of ['delta','ref_only'], got {rho_mode}")
+        if rho_warmup_steps < 0:
+            raise ValueError(f"--rho_warmup_steps must be >=0, got {rho_warmup_steps}")
+        if rho_ref_loss_cap < 0:
+            raise ValueError(f"--rho_ref_loss_cap must be >=0, got {rho_ref_loss_cap}")
 
     # [FIX 1] Initialize Accelerator FIRST so we know the real world_size
+    effective_mixed_precision = _resolve_mixed_precision(mixed_precision)
     dataloader_config = DataLoaderConfiguration(dispatch_batches=False, split_batches=False)
     accelerator = Accelerator(
         dataloader_config=dataloader_config,
+        mixed_precision=effective_mixed_precision,
         # We will set gradient_accumulation_steps manually below after calculation
     )
     device = accelerator.device
     world_size = accelerator.num_processes
+
+    if rho_enabled:
+        checked_shards = _validate_rho_ref_loss_alignment(
+            data_dir=data_dir,
+            ref_loss_dir=rho_ref_loss_dir,
+            seq_len=seq_len,
+            micro_batch_size=micro_batch_size,
+            split="train",
+        )
+        if accelerator.is_local_main_process:
+            print(
+                f"rho preflight validation passed: checked {checked_shards} train shards "
+                f"(seq_len={seq_len}, micro_batch_size={micro_batch_size})."
+            )
 
     # [FIX 1] Calculate grad_accum_steps using the authoritative world_size
     tokens_per_microstep_global = world_size * micro_batch_size * seq_len
@@ -340,14 +762,45 @@ def main(
     effective_global_batch_seqs = grad_accum_steps * micro_batch_size * world_size
     per_gpu_tokens_per_opt_step = grad_accum_steps * micro_batch_size * seq_len
 
-    run_name = (
-        f"babygpt_fineweb_bin_mbs{micro_batch_size}_T{seq_len}_"
-        f"d{n_embd}_h{n_head}_L{n_layer}_"
-        f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
-        f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
-        f"steps{max_train_steps}"
-    )
-    out_dir = os.path.join(experiments_dir, run_name)
+    resume_mode = bool(resume_from_run)
+    resume_run_dir = ""
+    resume_ckpt_dir = ""
+    resume_step_hint = 0
+    resume_state = {}
+    if resume_mode:
+        resume_run_dir, resume_ckpt_dir, resume_step_hint = _resolve_resume_paths(resume_from_run)
+        resume_state = _load_trainer_state(resume_ckpt_dir)
+        out_dir = resume_run_dir
+    else:
+        run_name = (
+            f"babygpt_fineweb_bin_mbs{micro_batch_size}_T{seq_len}_"
+            f"d{n_embd}_h{n_head}_L{n_layer}_"
+            f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
+            f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
+            f"steps{max_train_steps}"
+        )
+        if rho_enabled:
+            run_name += (
+                f"_rho{rho_mode}_k{int(round(float(rho_keep_frac) * 1000.0)):04d}_"
+                f"wu{int(rho_warmup_steps)}"
+            )
+        out_dir = os.path.join(experiments_dir, run_name)
+
+    model_init_ckpt_dir = ""
+    if resume_mode:
+        model_init_ckpt_dir = resume_ckpt_dir
+    elif init_from_ckpt:
+        model_init_ckpt_dir = os.path.abspath(init_from_ckpt)
+
+    if model_init_ckpt_dir:
+        _validate_ckpt_model_config_alignment(
+            ckpt_dir=model_init_ckpt_dir,
+            seq_len=seq_len,
+            vocab_size=vocab_size,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_layer=n_layer,
+        )
 
     if accelerator.is_main_process:
         os.makedirs(out_dir, exist_ok=True)
@@ -365,6 +818,29 @@ def main(
     ewok_items_path = os.path.join(out_dir, "ewok_items.jsonl")
     hellaswag_metrics_path = os.path.join(out_dir, "hellaswag_metrics.jsonl")
     metrics_path = os.path.join(out_dir, "step_metrics.json")
+    run_config_path = os.path.join(out_dir, "run_config.json")
+
+    if accelerator.is_main_process:
+        if resume_mode:
+            append_jsonl(
+                os.path.join(out_dir, "resume_history.jsonl"),
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "resume_from_run": resume_run_dir,
+                    "resume_ckpt_dir": resume_ckpt_dir,
+                    "resume_step_hint": int(resume_step_hint),
+                    "invocation_args": invocation_args,
+                },
+            )
+        elif not os.path.exists(run_config_path):
+            atomic_write_json(
+                run_config_path,
+                {
+                    "created_at": datetime.now().isoformat(),
+                    "script": os.path.abspath(__file__),
+                    "args": invocation_args,
+                },
+            )
 
     min_lr = learning_rate * learning_rate_decay_frac
     lr_step0 = get_llmc_lr(
@@ -390,9 +866,17 @@ def main(
     )
 
     if accelerator.is_local_main_process:
+        if resume_mode:
+            print(f"resume_from_run             = {resume_run_dir}")
+            print(f"resume_ckpt_dir             = {resume_ckpt_dir}")
+            print(f"resume_step_hint            = {resume_step_hint}")
+        elif model_init_ckpt_dir:
+            print(f"init_from_ckpt              = {model_init_ckpt_dir}")
         print("---- Batch math ----")
         print("# Global token/accounting settings used to derive optimizer-step batch size.")
         print(f"world_size (processes)      = {world_size}")
+        print(f"mixed_precision requested   = {mixed_precision}")
+        print(f"mixed_precision effective   = {effective_mixed_precision}")
         print(f"micro_batch_size (per GPU)  = {micro_batch_size}")
         print(f"seq_len                     = {seq_len}")
         print(f"requested total_batch_tokens= {total_batch_tokens}")
@@ -411,10 +895,25 @@ def main(
         print(f"lr@warmup_end               = {lr_warmup_end}")
         print(f"lr@final_step               = {lr_final}")
         print("--------------------")
+        if rho_enabled:
+            print("---- Rho masking ----")
+            print(f"rho_ref_loss_dir            = {rho_ref_loss_dir}")
+            print(f"rho_mode                    = {rho_mode}")
+            print(f"rho_keep_frac               = {rho_keep_frac}")
+            print(f"rho_warmup_steps            = {rho_warmup_steps}")
+            print(f"rho_ref_loss_cap            = {rho_ref_loss_cap}")
+            print("---------------------")
         print(f"out_dir = {out_dir}")
 
     # Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+    tokenizer_source = "gpt2"
+    if model_init_ckpt_dir:
+        ckpt_tok_cfg = os.path.join(model_init_ckpt_dir, "tokenizer_config.json")
+        if os.path.exists(ckpt_tok_cfg):
+            tokenizer_source = model_init_ckpt_dir
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
+    if accelerator.is_local_main_process:
+        print(f"tokenizer source             = {tokenizer_source}")
     tokenizer.pad_token = tokenizer.eos_token
     EOS_ID = tokenizer.pad_token_id  # 50256
     tokenizer_vocab_size = int(tokenizer.vocab_size)
@@ -437,22 +936,48 @@ def main(
     can_probe_generate = (vocab_size == tokenizer_vocab_size)
 
     # Dataloaders
-    try:
-        train_loader = make_dataloader(
-            data_dir=data_dir,
-            split="train",
-            batch_size=micro_batch_size,
-            seq_len=seq_len,
-            shuffle_blocks=shuffle_blocks,
-            seed=seed,
-            num_workers=num_workers,
-            max_blocks=None,
-            shard_by_rank=True,
-            return_meta=True,
-        )
-    except TypeError:
-        if accelerator.is_local_main_process:
-            print("[warn] shard_loader.make_dataloader does not accept return_meta=True yet; exposure meta will be empty.")
+    # Metadata is only needed for rho masking and/or exposure logging.
+    need_train_meta = bool(rho_enabled or (exposure_every > 0))
+    if accelerator.is_local_main_process:
+        print(f"train_loader metadata enabled = {need_train_meta}")
+
+    if need_train_meta:
+        try:
+            train_loader = make_dataloader(
+                data_dir=data_dir,
+                split="train",
+                batch_size=micro_batch_size,
+                seq_len=seq_len,
+                shuffle_blocks=shuffle_blocks,
+                seed=seed,
+                num_workers=num_workers,
+                max_blocks=None,
+                shard_by_rank=True,
+                return_meta=True,
+            )
+        except TypeError:
+            if rho_enabled:
+                raise RuntimeError(
+                    "shard_loader.make_dataloader does not support return_meta=True, "
+                    "but rho masking needs per-batch shard/start/end metadata."
+                )
+            if accelerator.is_local_main_process:
+                print(
+                    "[warn] shard_loader.make_dataloader does not accept return_meta=True yet; "
+                    "exposure meta will be empty."
+                )
+            train_loader = make_dataloader(
+                data_dir=data_dir,
+                split="train",
+                batch_size=micro_batch_size,
+                seq_len=seq_len,
+                shuffle_blocks=shuffle_blocks,
+                seed=seed,
+                num_workers=num_workers,
+                max_blocks=None,
+                shard_by_rank=True,
+            )
+    else:
         train_loader = make_dataloader(
             data_dir=data_dir,
             split="train",
@@ -479,23 +1004,31 @@ def main(
     )
 
     # Model
-    config = GPT2Config(
-        vocab_size=vocab_size,
-        bos_token_id=EOS_ID,
-        eos_token_id=EOS_ID,
-        n_ctx=seq_len,
-        n_positions=seq_len,
-        n_embd=n_embd,
-        n_head=n_head,
-        n_layer=n_layer,
-        attn_pdrop=0.0,
-        embd_pdrop=0.0,
-        resid_pdrop=0.0,
-        summary_first_dropout=0.0,
-    )
-    model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
+    if model_init_ckpt_dir:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_init_ckpt_dir,
+            attn_implementation="sdpa",
+        )
+    else:
+        config = GPT2Config(
+            vocab_size=vocab_size,
+            bos_token_id=EOS_ID,
+            eos_token_id=EOS_ID,
+            n_ctx=seq_len,
+            n_positions=seq_len,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_layer=n_layer,
+            attn_pdrop=0.0,
+            embd_pdrop=0.0,
+            resid_pdrop=0.0,
+            summary_first_dropout=0.0,
+        )
+        model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
 
     if accelerator.is_local_main_process:
+        if model_init_ckpt_dir:
+            print(f"model init source            = {model_init_ckpt_dir}")
         print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Optimizer (llm.c-style defaults + param grouping)
@@ -515,12 +1048,94 @@ def main(
 
     model, optimizer = accelerator.prepare(model, optimizer)
 
+    resume_opt_step = 0
+    resume_tokens_seen_local_total = 0
+    resume_skip_microsteps = 0
+    resume_trim_summary = None
+    replay_check = None
+    if resume_mode:
+        def _state_int(name: str, fallback: int):
+            if name not in resume_state:
+                return int(fallback)
+            return int(resume_state.get(name))
+
+        resume_opt_step = _state_int("opt_step", resume_step_hint)
+        resume_tokens_seen_local_total = _state_int("tokens_seen_local_total", 0)
+        current_replay_cfg = {
+            "seed": int(seed),
+            "micro_batch_size": int(micro_batch_size),
+            "seq_len": int(seq_len),
+            "grad_accum_steps": int(grad_accum_steps),
+            "shuffle_blocks": bool(shuffle_blocks),
+            "num_workers": int(num_workers),
+            "world_size": int(world_size),
+            "data_dir": os.path.abspath(data_dir),
+        }
+        replay_check = validate_replay_compatibility(
+            current_cfg=current_replay_cfg,
+            trainer_state=resume_state,
+            strict=True,
+            fail_on_missing=False,
+        )
+        if accelerator.is_local_main_process:
+            for msg in replay_check.get("warnings", []):
+                print(f"[resume][warn] {msg}")
+
+        if resume_opt_step < 0:
+            raise ValueError(f"Invalid opt_step in trainer state: {resume_opt_step}")
+        if resume_opt_step >= max_train_steps:
+            raise ValueError(
+                f"Checkpoint opt_step={resume_opt_step} is already >= max_train_steps={max_train_steps}."
+            )
+        resume_skip_microsteps = derive_resume_skip_microsteps(
+            trainer_state=resume_state,
+            resume_opt_step=resume_opt_step,
+            grad_accum_steps=grad_accum_steps,
+        )
+
+        opt_state_path = os.path.join(resume_ckpt_dir, "optimizer.pt")
+        if not os.path.exists(opt_state_path):
+            raise FileNotFoundError(
+                f"Resume requested but optimizer state is missing: {opt_state_path}\n"
+                "Expected checkpoints saved by this script (which include optimizer.pt). "
+                "If you only want weight initialization, use --init_from_ckpt instead."
+            )
+        accelerator.wait_for_everyone()
+        opt_state = torch.load(opt_state_path, map_location="cpu")
+        optimizer.load_state_dict(opt_state)
+        del opt_state
+        optimizer.zero_grad(set_to_none=True)
+        accelerator.wait_for_everyone()
+        if accelerator.is_local_main_process:
+            print(f"Loaded optimizer state from {opt_state_path}")
+            print(
+                f"Resuming at optimizer step {resume_opt_step} "
+                f"(tokens_seen_local_total={resume_tokens_seen_local_total}, "
+                f"micro_steps_seen={resume_skip_microsteps})"
+            )
+        if accelerator.is_main_process:
+            resume_trim_summary = trim_run_logs_after_step(
+                run_dir=out_dir,
+                max_step=resume_opt_step,
+                include_exposure_logs=True,
+                create_backup=True,
+            )
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process and resume_trim_summary is not None:
+            print(
+                f"Resume preflight trim complete: removed "
+                f"{int(resume_trim_summary.get('total_removed', 0))} records "
+                f"with step > {resume_opt_step}."
+            )
+
     # Plot buffers
     train_loss_history = []
     val_loss_history = []
 
     # EWoK/step metrics JSON (list)
-    step_metrics = []
+    step_metrics = _load_existing_step_metrics(metrics_path) if resume_mode else []
+    if accelerator.is_local_main_process and resume_mode:
+        print(f"Loaded {len(step_metrics)} existing step_metrics entries from {metrics_path}")
     hellaswag_ds = None
     hellaswag_max_seq_len = None
     hellaswag_disabled = False
@@ -558,7 +1173,29 @@ def main(
             os.makedirs(ckpt_dir, exist_ok=True)
             accelerator.unwrap_model(model).save_pretrained(ckpt_dir)
             tokenizer.save_pretrained(ckpt_dir)
+            torch.save(optimizer.state_dict(), os.path.join(ckpt_dir, "optimizer.pt"))
+            _save_trainer_state(
+                ckpt_dir,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "opt_step": int(step),
+                    "tokens_seen_local_total": int(tokens_seen_local_total),
+                    "micro_batch_size": int(micro_batch_size),
+                    "seq_len": int(seq_len),
+                    "grad_accum_steps": int(grad_accum_steps),
+                    "micro_steps_seen": int(step) * int(grad_accum_steps),
+                    "effective_total_tokens": int(effective_total_tokens),
+                    "rho_enabled": bool(rho_enabled),
+                    "rho_mode": (rho_mode if rho_enabled else None),
+                    "seed": int(seed),
+                    "shuffle_blocks": bool(shuffle_blocks),
+                    "num_workers": int(num_workers),
+                    "world_size": int(world_size),
+                    "data_dir": os.path.abspath(data_dir),
+                },
+            )
             print(f"Saved checkpoint to {ckpt_dir}/")
+        accelerator.wait_for_everyone()
 
     # Training loop
     model.train()
@@ -569,23 +1206,61 @@ def main(
     win_loss_sum = 0.0
     win_tokens = 0
 
-    opt_step = 0
+    opt_step = int(resume_opt_step)
     micro_steps_total = max_train_steps * grad_accum_steps
+    start_micro_step = int(resume_skip_microsteps) if resume_mode else 0
+    if start_micro_step < 0:
+        raise ValueError(f"Invalid start_micro_step={start_micro_step} (must be >=0).")
+    if start_micro_step > int(micro_steps_total):
+        raise ValueError(
+            f"Resume micro_steps_seen={start_micro_step} exceeds total micro-steps "
+            f"for this run ({micro_steps_total})."
+        )
+
+    train_iter = iter(train_loader)
+    resume_fast_forward_stats = None
+    if resume_mode and start_micro_step > 0:
+        resume_fast_forward_stats = fast_forward_iterator_data_only(
+            iterator=train_iter,
+            skip_count=start_micro_step,
+            report_every_s=5.0,
+            is_main=accelerator.is_local_main_process,
+        )
+        if int(resume_fast_forward_stats.get("actual_skipped", 0)) != int(start_micro_step):
+            raise RuntimeError(
+                f"Resume dataloader fast-forward skipped "
+                f"{resume_fast_forward_stats.get('actual_skipped')} micro-steps, "
+                f"expected {start_micro_step}."
+            )
+        if bool(resume_fast_forward_stats.get("exhausted", False)):
+            raise RuntimeError(
+                "Resume dataloader fast-forward exhausted iterator early. "
+                "Replay state cannot be reconstructed safely."
+            )
 
     pbar = tqdm(
-        train_loader,
+        train_iter,
         total=micro_steps_total,
+        initial=start_micro_step,
         desc=f"Train (micro={micro_steps_total}, opt={max_train_steps})",
         disable=not accelerator.is_local_main_process,
     )
 
     # Throughput + exposure counters
     REPORT_EVERY_S = 5.0
-    tokens_seen_local_recent = 0
-    last_report_tokens_local = 0
+    tokens_seen_local_recent = int(resume_tokens_seen_local_total)
+    last_report_tokens_local = int(resume_tokens_seen_local_total)
     last_report_t = time.perf_counter()
 
-    tokens_seen_local_total = 0  # cumulative on this rank
+    tokens_seen_local_total = int(resume_tokens_seen_local_total)  # cumulative on this rank
+    if accelerator.is_local_main_process and resume_mode:
+        if resume_fast_forward_stats is not None:
+            print(
+                f"[resume] dataloader replay aligned by skipping "
+                f"{int(resume_fast_forward_stats.get('actual_skipped', 0))} micro-steps."
+            )
+        else:
+            print("[resume] dataloader replay aligned with zero micro-step skip.")
 
     # SDPA backend preference (Flash -> Efficient -> Math)
     sdpa_backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
@@ -595,6 +1270,7 @@ def main(
 
     # Buffer meta per optimizer step (i.e., across grad_accum microsteps)
     micro_meta_buf = []
+    ref_loss_cache = {}
 
     # Keep last step scalars around so ewok records can include them
     last_lr = None
@@ -602,12 +1278,20 @@ def main(
     last_param_norm = None
     last_train_loss = None
     last_train_loss_micro = None
+    last_rho_keep_frac = None
+    last_rho_kept_tokens = None
+    last_rho_ref_loss_mean = None
 
     # Track mean train loss across all microsteps in each optimizer step.
     opt_step_loss_sum = 0.0
     opt_step_loss_count = 0
+    opt_step_rho_keep_frac_sum = 0.0
+    opt_step_rho_keep_frac_count = 0
+    opt_step_rho_kept_tokens_sum = 0
+    opt_step_rho_ref_loss_sum = 0.0
+    opt_step_rho_ref_loss_count = 0
 
-    for micro_step, batch in enumerate(pbar):
+    for micro_step, batch in enumerate(pbar, start=start_micro_step):
         if opt_step >= max_train_steps:
             break
 
@@ -647,15 +1331,84 @@ def main(
                 with sdpa_kernel(sdpa_backends):
                     logits = model(input_ids=input_ids).logits  # no attention_mask
 
-                # mean NLL per token over (B*T) positions
-                loss_raw = F.cross_entropy(
+                # Token-wise NLL over (B*T) positions.
+                token_loss = F.cross_entropy(
                     logits[..., :loss_vocab_size].reshape(-1, loss_vocab_size),
                     labels.reshape(-1),
-                    reduction="mean",
-                )
+                    reduction="none",
+                ).reshape_as(labels)
+
+                rho_keep_frac_batch = None
+                rho_kept_tokens_batch = None
+                rho_ref_loss_mean_batch = None
+                if rho_enabled and opt_step >= rho_warmup_steps:
+                    if not isinstance(meta, dict):
+                        raise RuntimeError(
+                            "Rho masking requires dict metadata per batch. "
+                            "Run with a shard_loader that returns meta."
+                        )
+                    ref_arr, ref_valid_np = _load_ref_loss_batch(
+                        ref_loss_dir=rho_ref_loss_dir,
+                        shard_meta=meta,
+                        expected_bt=int(labels.numel()),
+                        ref_cache=ref_loss_cache,
+                    )
+                    ref_loss = torch.from_numpy(ref_arr).to(device=device, non_blocking=True).reshape_as(labels)
+                    ref_valid_mask = torch.from_numpy(ref_valid_np).to(device=device, non_blocking=True).reshape_as(labels)
+
+                    score = (
+                        token_loss.detach().float() - ref_loss
+                        if rho_mode == "delta"
+                        else -ref_loss
+                    )
+
+                    candidate_mask = ref_valid_mask
+                    if rho_ref_loss_cap > 0:
+                        candidate_mask = candidate_mask & (ref_loss <= float(rho_ref_loss_cap))
+
+                    candidate_count = int(candidate_mask.sum().item())
+                    if candidate_count <= 0:
+                        # If cap removed everything, fall back to valid ref positions.
+                        candidate_mask = ref_valid_mask
+                        candidate_count = int(candidate_mask.sum().item())
+
+                    if candidate_count <= 0:
+                        keep_mask = torch.ones_like(token_loss, dtype=torch.bool)
+                    elif rho_keep_frac >= 1.0:
+                        keep_mask = candidate_mask
+                    else:
+                        k = max(1, int(math.ceil(float(rho_keep_frac) * candidate_count)))
+                        cand_scores = score[candidate_mask]
+                        if k >= int(cand_scores.numel()):
+                            keep_mask = candidate_mask
+                        else:
+                            thresh = torch.topk(cand_scores, k, sorted=False).values.min()
+                            keep_mask = candidate_mask & (score >= thresh)
+
+                    mask_f = keep_mask.to(token_loss.dtype)
+                    loss_raw = (token_loss * mask_f).sum() / mask_f.sum().clamp_min(1.0)
+
+                    rho_kept_tokens_batch = int(mask_f.sum().detach().item())
+                    rho_keep_frac_batch = float(rho_kept_tokens_batch / max(1, token_loss.numel()))
+                    rho_ref_loss_mean_batch = float(ref_loss[ref_valid_mask].mean().detach().item())
+                else:
+                    loss_raw = token_loss.mean()
+                    if rho_enabled:
+                        # During warmup, keep all tokens.
+                        rho_kept_tokens_batch = int(token_loss.numel())
+                        rho_keep_frac_batch = 1.0
+
                 loss_raw_item = float(loss_raw.detach().item())
                 opt_step_loss_sum += loss_raw_item
                 opt_step_loss_count += 1
+                if rho_keep_frac_batch is not None:
+                    opt_step_rho_keep_frac_sum += float(rho_keep_frac_batch)
+                    opt_step_rho_keep_frac_count += 1
+                if rho_kept_tokens_batch is not None:
+                    opt_step_rho_kept_tokens_sum += int(rho_kept_tokens_batch)
+                if rho_ref_loss_mean_batch is not None:
+                    opt_step_rho_ref_loss_sum += float(rho_ref_loss_mean_batch)
+                    opt_step_rho_ref_loss_count += 1
 
                 # Accelerate handles grad-accum loss scaling inside accelerator.backward().
                 loss = loss_raw
@@ -702,8 +1455,25 @@ def main(
                 last_param_norm = param_norm
                 last_train_loss = opt_step_loss_sum / max(1, opt_step_loss_count)
                 last_train_loss_micro = loss_raw_item
+                last_rho_keep_frac = (
+                    opt_step_rho_keep_frac_sum / max(1, opt_step_rho_keep_frac_count)
+                    if opt_step_rho_keep_frac_count > 0 else None
+                )
+                last_rho_kept_tokens = (
+                    int(round(opt_step_rho_kept_tokens_sum / max(1, opt_step_rho_keep_frac_count)))
+                    if opt_step_rho_keep_frac_count > 0 else None
+                )
+                last_rho_ref_loss_mean = (
+                    opt_step_rho_ref_loss_sum / max(1, opt_step_rho_ref_loss_count)
+                    if opt_step_rho_ref_loss_count > 0 else None
+                )
                 opt_step_loss_sum = 0.0
                 opt_step_loss_count = 0
+                opt_step_rho_keep_frac_sum = 0.0
+                opt_step_rho_keep_frac_count = 0
+                opt_step_rho_kept_tokens_sum = 0
+                opt_step_rho_ref_loss_sum = 0.0
+                opt_step_rho_ref_loss_count = 0
 
                 # Approx global tokens seen so far (assumes each rank runs same # microbatches)
                 tokens_seen_global_approx = int(tokens_seen_local_total * accelerator.num_processes)
@@ -727,10 +1497,20 @@ def main(
                         "grad_accum_steps": int(grad_accum_steps),
                         "micro_batch_size": int(micro_batch_size),
                         "seq_len": int(seq_len),
+                        "rho_enabled": bool(rho_enabled),
+                        "rho_mode": (rho_mode if rho_enabled else None),
+                        "rho_keep_frac_target": (float(rho_keep_frac) if rho_enabled else None),
+                        "rho_keep_frac_mean": (float(last_rho_keep_frac) if last_rho_keep_frac is not None else None),
+                        "rho_kept_tokens_mean": (int(last_rho_kept_tokens) if last_rho_kept_tokens is not None else None),
+                        "rho_ref_loss_mean": (float(last_rho_ref_loss_mean) if last_rho_ref_loss_mean is not None else None),
+                        "rho_warmup_steps": (int(rho_warmup_steps) if rho_enabled else None),
+                        "rho_ref_loss_cap": (float(rho_ref_loss_cap) if rho_enabled else None),
                     })
 
         # stats (no masks, no padding)
         bs_tokens = int(labels.numel())
+        if rho_enabled and (rho_kept_tokens_batch is not None):
+            bs_tokens = int(rho_kept_tokens_batch)
         loss_val = loss_raw_item
         total_loss_sum += loss_val * bs_tokens
         total_tokens += bs_tokens
@@ -1003,7 +1783,7 @@ def main(
                 if accelerator.is_main_process:
                     print('starting EWoK evaluation on main process')
                     with torch.no_grad():
-                        eval_off_sum, eval_full_sum, per_item_sum = _unpack_ewok_per_item(
+                        eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
                             evaluate(
                                 accelerator.unwrap_model(model),
                                 tokenizer,
@@ -1012,7 +1792,7 @@ def main(
                                 score_reduction="sum",
                             )
                         )
-                        eval_off_mean, eval_full_mean, per_item_mean = _unpack_ewok_per_item(
+                        eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
                             evaluate(
                                 accelerator.unwrap_model(model),
                                 tokenizer,
@@ -1065,6 +1845,10 @@ def main(
                         "eval_full_sum": to_jsonable(eval_full_sum),
                         "eval_official_mean": to_jsonable(eval_off_mean),
                         "eval_full_mean": to_jsonable(eval_full_mean),
+                        # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
+                        "eval_margin_stats": to_jsonable(eval_margin_stats_sum),
+                        "eval_margin_stats_sum": to_jsonable(eval_margin_stats_sum),
+                        "eval_margin_stats_mean": to_jsonable(eval_margin_stats_mean),
                         "eval_by_category_full_sum": to_jsonable(eval_by_category_full_sum),
                         "eval_by_category_full_mean": to_jsonable(eval_by_category_full_mean),
                     }
@@ -1095,7 +1879,7 @@ def main(
         model.eval()
         accelerator.unwrap_model(model).eval()
         with torch.no_grad():
-            eval_off_sum, eval_full_sum, per_item_sum = _unpack_ewok_per_item(
+            eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
                 evaluate(
                     accelerator.unwrap_model(model),
                     tokenizer,
@@ -1104,7 +1888,7 @@ def main(
                     score_reduction="sum",
                 )
             )
-            eval_off_mean, eval_full_mean, per_item_mean = _unpack_ewok_per_item(
+            eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
                 evaluate(
                     accelerator.unwrap_model(model),
                     tokenizer,
@@ -1154,6 +1938,10 @@ def main(
             "eval_full_sum": to_jsonable(eval_full_sum),
             "eval_official_mean": to_jsonable(eval_off_mean),
             "eval_full_mean": to_jsonable(eval_full_mean),
+            # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
+            "eval_margin_stats": to_jsonable(eval_margin_stats_sum),
+            "eval_margin_stats_sum": to_jsonable(eval_margin_stats_sum),
+            "eval_margin_stats_mean": to_jsonable(eval_margin_stats_mean),
             "eval_by_category_full_sum": to_jsonable(eval_by_category_full_sum),
             "eval_by_category_full_mean": to_jsonable(eval_by_category_full_mean),
         }
@@ -1238,6 +2026,23 @@ if __name__ == "__main__":
     parser.add_argument("--beta1", type=float, default=0.9, help="AdamW beta1")
     parser.add_argument("--beta2", type=float, default=0.95, help="AdamW beta2")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Clip norm (<=0 disables)")
+    parser.add_argument("--mixed_precision", type=str, default="bf16", choices=["no", "fp16", "bf16"],
+                        help="Accelerate mixed precision mode (bf16 preferred where supported)")
+
+    parser.add_argument("--rho_ref_loss_dir", type=str, default="",
+                        help="Directory containing precomputed *.ref_loss.f16/f32.bin files (enables rho masking)")
+    parser.add_argument("--rho_keep_frac", type=float, default=1.0,
+                        help="Fraction of candidate tokens kept for optimization when rho is enabled")
+    parser.add_argument("--rho_warmup_steps", type=int, default=0,
+                        help="Number of optimizer steps to run without rho masking")
+    parser.add_argument("--rho_mode", type=str, default="delta", choices=["delta", "ref_only"],
+                        help="Token selection score: delta=(student_loss-ref_loss), ref_only=(-ref_loss)")
+    parser.add_argument("--rho_ref_loss_cap", type=float, default=0.0,
+                        help="Optional cap on acceptable ref_loss before top-k selection (0 disables)")
+    parser.add_argument("--init_from_ckpt", type=str, default="",
+                        help="Initialize model weights from a checkpoint directory (weights-only start).")
+    parser.add_argument("--resume_from_run", type=str, default="",
+                        help="Resume training from an existing run dir (or a specific ckpt_*_stepXXXXXXX dir).")
 
     # Intentional CLI overrides vs main() defaults.
     parser.add_argument("--eval_every", type=int, default=200,

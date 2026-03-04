@@ -7,10 +7,12 @@ This script focuses on EWOK-centric records in step_metrics.json and:
 2) Plots training scalars carried in EWOK records (train_loss, lr, norms, tokens).
 3) Plots EWOK official scores across steps (all domains + one plot per domain).
 4) Plots EWOK full scores across steps (one plot per domain, both components).
-5) Plots EWOK category subplots (TargetDiff, ContextDiff, ContextType) if present.
-6) Plots EWOK full average across domains (sum vs mean) if present.
-7) Optionally plots EWOK full-mean average comparison against another run.
-8) Optionally plots HellaSwag if present in step_metrics.json.
+5) Plots EWOK mean margins (signed and absolute) in a 4x3 domain grid.
+6) Plots EWOK mean margin averages across domains over time.
+7) Plots EWOK category subplots (TargetDiff, ContextDiff, ContextType) if present.
+8) Plots EWOK full average across domains (sum vs mean) if present.
+9) Optionally plots EWOK full-mean average comparison against another run.
+10) Optionally plots HellaSwag if present in step_metrics.json.
 """
 
 from __future__ import annotations
@@ -157,6 +159,14 @@ def get_ewok_payload(record: Dict, reduction: str) -> Tuple[Dict | None, Dict | 
             record.get("eval_official_mean"),
             record.get("eval_full_mean"),
         )
+    raise ValueError(f"unsupported reduction: {reduction}")
+
+
+def get_margin_payload(record: Dict, reduction: str) -> Dict | None:
+    if reduction == "sum":
+        return record.get("eval_margin_stats_sum", record.get("eval_margin_stats"))
+    if reduction == "mean":
+        return record.get("eval_margin_stats_mean")
     raise ValueError(f"unsupported reduction: {reduction}")
 
 
@@ -337,6 +347,71 @@ def plot_ewok_full(
     return created
 
 
+def plot_ewok_margin_domains(
+    ewok_records: List[Dict],
+    output_dir: Path,
+    reduction: str,
+    dpi: int,
+) -> List[Path]:
+    # Render all domains in a 4x3 grid with both signed and absolute mean margin.
+    by_domain: Dict[str, List[Tuple[int, float, float]]] = defaultdict(list)
+    for r in ewok_records:
+        step = r.get("step")
+        margin_payload = get_margin_payload(r, reduction)
+        if not isinstance(step, int) or not isinstance(margin_payload, dict):
+            continue
+        for domain, stats in margin_payload.items():
+            if str(domain) == "average" or not isinstance(stats, dict):
+                continue
+            y_signed = stats.get("mean_signed_m")
+            y_abs = stats.get("mean_abs_m")
+            if _is_number(y_signed) and _is_number(y_abs):
+                by_domain[str(domain)].append((step, float(y_signed), float(y_abs)))
+
+    created: List[Path] = []
+    if not by_domain:
+        return created
+
+    domains = sorted(by_domain)
+    nrows, ncols = 4, 3
+    fig, axes = plt.subplots(nrows, ncols, figsize=(18, 14), constrained_layout=True)
+    flat_axes = axes.flatten()
+
+    for idx, domain in enumerate(domains):
+        ax = flat_axes[idx]
+        pts = sorted(by_domain[domain], key=lambda t: t[0])
+        xs = [x for x, _, _ in pts]
+        ys_signed = [a for _, a, _ in pts]
+        ys_abs = [b for _, _, b in pts]
+        ax.plot(xs, ys_signed, marker="o", linewidth=1.6, markersize=3.5, color="#1f77b4", label="mean signed margin")
+        ax.plot(
+            xs,
+            ys_abs,
+            marker="s",
+            linewidth=1.4,
+            markersize=3.2,
+            linestyle=(0, (4, 2)),
+            color="#ff7f0e",
+            label="mean abs margin",
+        )
+        ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
+        ax.set_title(domain, fontsize=10)
+        ax.set_xlabel("Step", fontsize=9)
+        ax.set_ylabel("Margin", fontsize=9)
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=7)
+
+    for idx in range(len(domains), len(flat_axes)):
+        flat_axes[idx].axis("off")
+
+    fig.suptitle(f"EWOK Mean Margins by Domain ({reduction})", fontsize=14)
+    out = output_dir / f"ewok_margin_{reduction}_domains_4x3.png"
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    created.append(out)
+    return created
+
+
 def _pair_to_scalar(value) -> float | None:
     if isinstance(value, (list, tuple)) and len(value) >= 2 and _is_number(value[0]) and _is_number(value[1]):
         return 0.5 * (float(value[0]) + float(value[1]))
@@ -381,6 +456,119 @@ def _full_average_series(
             continue
         out.append((step, y))
     return sorted(out, key=lambda t: t[0])
+
+
+def _extract_margin_average_scalar(margin_payload: Dict, metric_key: str) -> float | None:
+    if not isinstance(margin_payload, dict):
+        return None
+
+    avg = margin_payload.get("average")
+    if isinstance(avg, dict) and _is_number(avg.get(metric_key)):
+        return float(avg[metric_key])
+
+    vals: List[float] = []
+    for domain, stats in margin_payload.items():
+        if str(domain) == "average" or not isinstance(stats, dict):
+            continue
+        if _is_number(stats.get(metric_key)):
+            vals.append(float(stats[metric_key]))
+    if not vals:
+        return None
+    return float(sum(vals) / len(vals))
+
+
+def _margin_average_series(
+    ewok_records: List[Dict],
+    reduction: str,
+    metric_key: str,
+) -> List[Tuple[int, float]]:
+    out: List[Tuple[int, float]] = []
+    for r in ewok_records:
+        step = r.get("step")
+        margin_payload = get_margin_payload(r, reduction)
+        if not isinstance(step, int) or not isinstance(margin_payload, dict):
+            continue
+        y = _extract_margin_average_scalar(margin_payload, metric_key)
+        if y is None:
+            continue
+        out.append((step, y))
+    return sorted(out, key=lambda t: t[0])
+
+
+def plot_ewok_margin_average_all_domains(
+    ewok_records: List[Dict],
+    output_dir: Path,
+    reduction: str,
+    dpi: int,
+) -> List[Path]:
+    signed = _margin_average_series(ewok_records, reduction, "mean_signed_m")
+    abs_margin = _margin_average_series(ewok_records, reduction, "mean_abs_m")
+    if not signed and not abs_margin:
+        return []
+
+    fig = plt.figure(figsize=(10, 5.6))
+    ax = fig.add_subplot(1, 1, 1)
+
+    if signed:
+        xs = [x for x, _ in signed]
+        ys = [y for _, y in signed]
+        ax.plot(xs, ys, linewidth=1.9, marker="o", markersize=3.5, color="#1f77b4", label="mean signed margin")
+
+    if abs_margin:
+        xs = [x for x, _ in abs_margin]
+        ys = [y for _, y in abs_margin]
+        ax.plot(
+            xs,
+            ys,
+            linewidth=1.6,
+            marker="s",
+            markersize=3.4,
+            linestyle=(0, (4, 2)),
+            color="#ff7f0e",
+            alpha=0.45,
+            label="mean abs margin (reference)",
+        )
+
+    ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
+    ax.set_title(f"EWOK Mean Margins Across Domains ({reduction})")
+    ax.set_xlabel("Optimizer Step")
+    ax.set_ylabel("Margin")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    # Add a compact math + intuition note directly on the chart.
+    reduction_label = (
+        r"$s(C,T)=\sum_t \log P_{\theta}(t\mid C)$"
+        if reduction == "sum"
+        else r"$s(C,T)=\frac{1}{|T|}\sum_t \log P_{\theta}(t\mid C)$"
+    )
+    expl = (
+        r"$m_1=s(C_1,T_1)-s(C_1,T_2),\ m_2=s(C_2,T_2)-s(C_2,T_1),\ m=\frac{1}{2}(m_1+m_2)$"
+        "\n"
+        r"$\mu_d=\mathbb{E}_i[m_i],\ \mathrm{plotted}=\frac{1}{D}\sum_d \mu_d$"
+        "\n"
+        + reduction_label
+        + "; "
+        + r"$\mathrm{abs\ ref}=\frac{1}{D}\sum_d \mathbb{E}_i[|m_i|]$"
+        + "\n"
+        + "Intuition: signed > 0 favors the correct direction; near 0 with high abs can indicate strong but inconsistent or biased discrimination."
+    )
+    ax.text(
+        0.015,
+        0.015,
+        expl,
+        transform=ax.transAxes,
+        fontsize=8,
+        va="bottom",
+        ha="left",
+        bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "edgecolor": "#cccccc", "alpha": 0.75},
+    )
+
+    out = output_dir / f"ewok_margin_{reduction}_average_all_domains.png"
+    fig.tight_layout()
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return [out]
 
 
 def plot_ewok_full_average_all_domains(
@@ -658,6 +846,8 @@ def main() -> None:
         created.extend(plot_ewok_official(ewok_records, output_dir, reduction, args.dpi))
         word2vec = EWOK_WORD2VEC_MEAN_BASELINES if (args.overlay_word2vec_ewok_mean and reduction == "mean") else None
         created.extend(plot_ewok_full(ewok_records, output_dir, reduction, args.dpi, word2vec_baselines=word2vec))
+        created.extend(plot_ewok_margin_domains(ewok_records, output_dir, reduction, args.dpi))
+        created.extend(plot_ewok_margin_average_all_domains(ewok_records, output_dir, reduction, args.dpi))
         created.extend(plot_ewok_category_subplots(ewok_records, output_dir, reduction, args.dpi))
     created.extend(plot_ewok_full_average_all_domains(ewok_records, output_dir, args.dpi))
     if compare_ewok_records:
