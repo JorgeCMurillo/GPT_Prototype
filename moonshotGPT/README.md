@@ -39,30 +39,43 @@ In this repo, the intent for your rho-1 experiment is: remove tokens that are li
 ### Rho Math
 1) Per-token student loss:
 
-$\ell_s(t) = -\log p_{\theta}(x_t \mid x_{<t})$
+$$
+\ell_s(t) = -\log p_{\theta}(x_t \mid x_{1:t-1})
+$$
 
-What this means: the student pays high loss when token \(x_t\) is hard to predict given prior context.
+What this means: the student pays high loss when token $x_t$ is hard to predict given prior context.
 
 2) Per-token reference loss (precomputed):
 
-$\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})$
+$$
+\ell_r(t) = -\log p_{\phi}(x_t \mid x_{1:t-1})
+$$
 
 What this means: this is the same quantity, but measured under the fixed reference model.
 
 3) Scoring modes:
 
 - `delta` mode:
-- $$s(t) = \ell_s(t) - \ell_r(t)
+
 $$
+s(t) = \ell_s(t) - \ell_r(t)
+$$
+
 - `ref_only` mode:
-$$s(t) = -\ell_r(t)$$
+
+$$
+s(t) = -\ell_r(t)
+$$
 
 What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
 
 4) Candidate set with optional cap:
 
-$C = \{t : \text{ref_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}$
-where \(c\) is `--rho_ref_loss_cap`.
+$$
+C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
+$$
+
+where $c$ is `--rho_ref_loss_cap`.
 
 What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
 
@@ -101,7 +114,6 @@ What this means: rho filtering starts only after warmup.
 8) Interpretation for your "both hard" objective:
 
 Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-reference-loss tokens from candidate selection; without cap, rho still ranks candidates but does not pre-drop those high-reference-loss tokens.
-
 ## Setup
 Run commands from this directory:
 
