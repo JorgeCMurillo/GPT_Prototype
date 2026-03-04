@@ -39,7 +39,7 @@ In this repo, the intent for your rho-1 experiment is: remove tokens that are li
 ### Rho Math
 1) Per-token student loss:
 
-$$\ell_s(t) = -\log p_{\theta}(x_t \mid x_{<t})$$
+$\ell_s(t) = -\log p_{\theta}(x_t \mid x_{<t})$
 
 What this means: the student pays high loss when token \(x_t\) is hard to predict given prior context.
 
