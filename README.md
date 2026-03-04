@@ -1,185 +1,106 @@
 # GPT_Prototype
 
-Lightweight GPT-2 training/evaluation prototype for FineWeb-Edu token shards, with:
+A focused research repo for training and evaluating GPT-2 style models on FineWeb-Edu token shards.
 
-- Distributed training via `accelerate`
-- Periodic validation and checkpoints
-- EWoK evaluation (including per-item logs and category metrics)
-- Optional HellaSwag evaluation
-- Run-level metric plotting
+This repo is centered on `moonshotGPT`, including:
+- baseline GPT-2 training,
+- optional rho-based token filtering,
+- EWoK/HellaSwag evaluation,
+- checkpointing, resume support, and run-level analysis artifacts.
 
-## Repository Layout
+## Start Here
+If you only need to run experiments, use the detailed runner-first guide:
+- [`moonshotGPT/README.md`](moonshotGPT/README.md)
 
-- `moonshotGPT/fineweb.py`
-  - Pretokenizes FineWeb/FineWeb-Edu text into GPT-2 `uint16` shard files (`train_*.bin`, `val_*.bin`) plus `meta.json`.
-- `moonshotGPT/train_gpt2_finewebedu_bin.py`
-  - Main trainer for GPT-2 style causal LM on `.bin` token shards.
-- `moonshotGPT/shard_loader.py`
-  - Data loader for `train_*.bin` / `val_*.bin` shards.
-- `moonshotGPT/ewok_eval.py`
-  - EWoK evaluator used during/after training.
-- `moonshotGPT/hellaswag_eval.py` (optional)
-  - HellaSwag evaluation utilities.
-- `moonshotGPT/plot_step_metrics.py` (optional)
-  - Generates plots from `step_metrics.json`.
-- `moonshotGPT/ewok_fast_jsonl.zip`
-  - Password-protected EWoK JSONL data archive.
+That README includes end-to-end commands for:
+- tokenization,
+- baseline GPT-2 Medium training,
+- reference-loss precompute,
+- rho runs,
+- resume,
+- plotting.
 
-## How It Works
+## Quickstart
 
-`fineweb.py` (data prep):
+### 1) Install
+```bash
+pip install -r requirements.txt
+```
 
-1. Streams documents from FineWeb/FineWeb-Edu.
-2. Tokenizes with GPT-2 tokenizer and prepends BOS per document.
-3. Writes a flat stream of `uint16` token IDs into shard files.
-4. Emits `meta.json` describing the dataset/shard configuration.
-
-`train_gpt2_finewebedu_bin.py`:
-
-1. Builds a GPT-2 style model (`GPT2Config`) and AdamW optimizer.
-2. Streams training/validation batches from shard files in `--data_dir`.
-3. Trains with gradient accumulation to match a global token budget (`--total_batch_tokens`).
-4. Logs scalar metrics (`scalars.jsonl`) and evaluation metrics (`step_metrics.json`).
-5. Runs periodic:
-   - Validation loss
-   - EWoK eval (sum/mean variants + per-category metrics)
-   - HellaSwag eval (if enabled and available)
-6. Saves periodic/final checkpoints and optional analysis plots.
-
-Current trainer defaults are GPT-2 small:
-
-- `n_layer=12`
-- `n_embd=768`
-- `n_head=12`
-
-GPT-2 medium reference defaults (for comparison):
-
-- `n_layer=24`
-- `n_embd=1024`
-- `n_head=16`
-
-## Data Requirements
-
-`--data_dir` must contain:
-
-- `meta.json`
-- `train_*.bin`
-- `val_*.bin`
-
-You can generate this directory with `moonshotGPT/fineweb.py`.
-
-## Prepare FineWeb-Edu Data
-
-Example:
-
+### 2) Prepare data
 ```bash
 cd moonshotGPT
 python fineweb.py \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
-  --out_dir /home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
+  --out_dir fineweb_edu_10B
 ```
 
-## EWoK Data Loading
-
-`ewok_eval.py` loads EWoK from the first available source:
-
-1. `EWOK_SRC` (if set; can be a `.zip` or directory)
-2. `moonshotGPT/ewok_fast_jsonl.zip`
-3. `moonshotGPT/ewok_fast/`
-4. Legacy absolute path fallback
-
-For encrypted zip files, password is read from:
-
-- `EWOK_ZIP_PASSWORD` (default is `ew2026`)
-
-EWoK zip behavior:
-
-- You do **not** need to manually unzip `ewok_fast_jsonl.zip`.
-- `ewok_eval.py` reads `.jsonl` files directly from the zip in memory.
-- It does not auto-extract files to disk.
-
-## Install Requirements
-
-You will need at least:
-
-- `torch`
-- `accelerate`
-- `transformers`
-- `datasets`
-- `numpy`
-- `pandas`
-- `tqdm`
-- `matplotlib` (optional for plots)
-
-Install:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Run Training
-
-Example (8 processes, bf16):
-
+### 3) Train baseline GPT-2 Medium
 ```bash
 cd moonshotGPT
-accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
+accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
+  --data_dir fineweb_edu_10B \
+  --micro_batch_size 4 \
+  --seq_len 1024 \
+  --total_batch_tokens 491520 \
+  --max_train_steps 20000 \
+  --n_embd 1024 \
+  --n_head 16 \
+  --n_layer 24 \
+  --mixed_precision bf16
 ```
 
-Example with explicit depth override:
-
+### 4) Optional: run rho-enabled training
 ```bash
 cd moonshotGPT
-accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py \
-  --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B \
-  --n_embd=768 --n_head=12 --n_layer=12
+accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
+  --data_dir fineweb_edu_10B \
+  --micro_batch_size 4 \
+  --seq_len 1024 \
+  --total_batch_tokens 491520 \
+  --max_train_steps 20000 \
+  --n_embd 1024 \
+  --n_head 16 \
+  --n_layer 24 \
+  --mixed_precision bf16 \
+  --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
+  --rho_keep_frac 0.7 \
+  --rho_warmup_steps 500 \
+  --rho_mode delta
 ```
 
-Example matching GPT-2 medium dimensions:
+Cap note:
+- `--rho_ref_loss_cap` is optional and off by default.
+- Add `--rho_ref_loss_cap <positive_value>` only when you explicitly want cap-based pre-filtering.
 
-```bash
-cd moonshotGPT
-accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py \
-  --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B \
-  --n_embd=1024 --n_head=16 --n_layer=24
-```
+## Repository Map
+- `moonshotGPT/fineweb.py`: streams + tokenizes FineWeb/FineWeb-Edu into `train_*.bin` / `val_*.bin` and `meta.json`.
+- `moonshotGPT/train_gpt2_finewebedu_bin.py`: main trainer (baseline + optional rho path, eval, checkpoints, resume).
+- `moonshotGPT/compute_ref_loss_shards.py`: precomputes per-token reference loss shards for rho training.
+- `moonshotGPT/shard_loader.py`: memmapped shard loader used by training.
+- `moonshotGPT/ewok_eval.py`: EWoK evaluation logic used during/after training.
+- `moonshotGPT/hellaswag_eval.py`: optional HellaSwag evaluation utilities.
+- `moonshotGPT/plot_step_metrics.py`: generates analysis plots from `step_metrics.json`.
+- `moonshotGPT/training_utils/resume_trim.py`: resume preflight trimming and dataloader replay helpers.
 
-Note:
-
-- Current defaults are GPT-2 small (`n_embd=768`, `n_head=12`, `n_layer=12`).
-- GPT-2 medium settings are `n_embd=1024`, `n_head=16`, `n_layer=24`.
-
-## Parameter Definitions
-
-- `--data_dir`: Path to tokenized training data directory. Must contain `meta.json`, `train_*.bin`, and `val_*.bin` (typically generated by `fineweb.py`).
-- `--n_embd`: Transformer hidden size (small: `768`, medium: `1024`).
-- `--n_head`: Number of attention heads (small: `12`, medium: `16`). Must divide `n_embd`.
-- `--n_layer`: Number of transformer blocks/layers (small: `12`, medium: `24`).
-- `--seq_len`: Context length (tokens) for each training sequence.
-- `--micro_batch_size`: Number of sequences per process/GPU per micro-step.
-- `--total_batch_tokens`: Target global tokens per optimizer step; gradient accumulation is computed from this.
-- `--max_train_steps`: Number of optimizer steps to train for.
-- `--ewok_every`: Run EWoK evaluation every N optimizer steps (`0` disables).
-
-## Useful Flags
-
-- `--n_embd` model hidden size (default `768`)
-- `--n_head` number of attention heads (default `12`)
-- `--n_layer` model depth (default `12`)
-- `--eval_every` validation frequency
-- `--ewok_every` EWoK eval frequency
-- `--hellaswag_every` HellaSwag eval frequency
-- `--save_every` checkpoint frequency
-- `--exposure_every` exposure metadata logging frequency
-
-## Outputs
-
-Each run writes to `experiments/<run_name>/` with files like:
-
-- `scalars.jsonl`
+## Typical Outputs
+Training runs write under `moonshotGPT/experiments/<run_name>/`:
 - `step_metrics.json`
+- `scalars.jsonl`
 - `ewok_items.jsonl`
 - `hellaswag_metrics.jsonl` (if enabled)
-- `loss_curve.png`
-- `ckpt_*` checkpoint directories
+- `exposures/exposures_rank*.jsonl`
+- `ckpt_*_stepXXXXXXX/`
+- `plots_from_step_metrics/`
+
+## Data + Large Files
+This repo is intended to version code and docs, not generated artifacts.
+Keep large runtime outputs out of git, especially:
+- `moonshotGPT/experiments/`
+- token shard datasets (for example `fineweb_edu_10B/`)
+- reference-loss binaries (for example `ref_loss_gpt2m_*/`)
+
+## Notes
+- Default reference model for rho workflows is `openai-community/gpt2-medium`.
+- For stable rho alignment, keep training `--micro_batch_size` equal to precompute `--batch_size`, and keep `--seq_len` matched.
