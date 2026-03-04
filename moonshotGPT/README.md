@@ -56,9 +56,8 @@ What this means: this is the same quantity, but measured under the fixed referen
 3) Scoring modes:
 
 - `delta` mode:
-\[
-s(t) = \ell_s(t) - \ell_r(t)
-\]
+- $$s(t) = \ell_s(t) - \ell_r(t)
+$$
 - `ref_only` mode:
 \[
 s(t) = -\ell_r(t)
