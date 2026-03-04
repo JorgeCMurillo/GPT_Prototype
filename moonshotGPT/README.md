@@ -71,13 +71,16 @@ What this means: `delta` prioritizes tokens where the student underperforms the 
 
 4) Candidate set with optional cap:
 
+Let $v(t)=1$ mean “token $t$ is valid for rho selection.”
 
-$C = \{t : \text{ref}_{\text{valid}}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}$
+Then the candidate set $C$ is built like this:
 
+- Start with all tokens where $v(t)=1$.
+- If $c>0$, also require $\ell_r(t) \le c$.
 
 where $c$ is `--rho_ref_loss_cap`.
 
-What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
+What this means: first keep only valid tokens; if a cap is turned on, also drop tokens whose reference loss is above the cap.
 5) Top-k keep rule:
 
 $$
