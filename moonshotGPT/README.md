@@ -45,9 +45,7 @@ What this means: the student pays high loss when token \(x_t\) is hard to predic
 
 2) Per-token reference loss (precomputed):
 
-$$
-\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})
-$$
+$$\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})$$
 
 What this means: this is the same quantity, but measured under the fixed reference model.
 
