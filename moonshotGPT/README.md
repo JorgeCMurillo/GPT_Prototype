@@ -72,7 +72,7 @@ What this means: `delta` prioritizes tokens where the student underperforms the 
 4) Candidate set with optional cap:
 
 $$
-C = \{\, t \mid \operatorname{refValid}(t)=1 \land (c \le 0 \lor \ell_r(t) \le c) \,\}
+C = \{\, t \mid refValid(t)=1 \land (c \le 0 \lor \ell_r(t) \le c) \,\}
 $$
 
 where $c$ is `--rho_ref_loss_cap`.
