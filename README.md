@@ -51,6 +51,9 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --mixed_precision bf16
 ```
 
+Quick smoke-test tip:
+- add `--skip_final_ewok` if you only want to validate training/eval plumbing without final EWoK at exit.
+
 ### 4) Optional: precompute reference-loss shards (required for rho)
 ```bash
 cd moonshotGPT

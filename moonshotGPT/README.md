@@ -65,6 +65,9 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --shuffle_blocks
 ```
 
+Optional for quick smoke tests:
+- add `--skip_final_ewok` to skip the final end-of-run EWoK pass.
+
 ### 3) Precompute Reference Loss Shards (OpenAI GPT-2 Medium)
 Why you run this now: rho mode needs precomputed per-token reference losses aligned to your train shards.
 
@@ -135,6 +138,7 @@ Resume behavior in this script:
 - loads model + optimizer + trainer state,
 - trims logs above checkpoint step (with backups),
 - fast-forwards dataloader stream in data-only mode to align replay state.
+- runs final EWoK at end unless you pass `--skip_final_ewok`.
 
 ### 6) Plot Metrics
 Why you run this now: summarize EWoK/HellaSwag and training traces from `step_metrics.json`.
@@ -290,6 +294,12 @@ Each run creates an `experiments/<run_name>/` directory with:
 - Fix:
   - use `--mixed_precision bf16` when supported,
   - otherwise fallback to `fp16` or `no`.
+
+### 5) Fast smoke run fails at final EWoK
+- Symptom: training steps finish, then run fails during final EWoK device setup.
+- Fix:
+  - for short pipeline checks, add `--skip_final_ewok`,
+  - for full eval runs, ensure CUDA is visible in the runtime where you launch Accelerate.
 
 ## Research Roadmap
 ### Stage 1: Validate rho-1 implementation

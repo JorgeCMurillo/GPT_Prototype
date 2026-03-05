@@ -687,6 +687,7 @@ def main(
     hellaswag_local_files_only: bool = False,
     ewok_every: int = 250,
     ewok_batch_size: int = 8,
+    skip_final_ewok: bool = False,
     save_every: int = 2000,
     exposure_every: int = 50,
     push_to_hub: bool = False,
@@ -1875,7 +1876,7 @@ def main(
 
     # Final EWoK (+ per-item) + final checkpoint
     accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
+    if accelerator.is_main_process and not skip_final_ewok:
         model.eval()
         accelerator.unwrap_model(model).eval()
         with torch.no_grad():
@@ -1969,6 +1970,8 @@ def main(
                 print(f"[warn] failed to run plot_step_metrics.py: {exc}")
         else:
             print(f"[warn] plot script not found at {plot_script}; skipping auto-plots.")
+    elif accelerator.is_main_process and skip_final_ewok:
+        print("[info] skipping final EWoK evaluation (--skip_final_ewok)")
 
     save_checkpoint("final", opt_step)
 
@@ -2065,6 +2068,8 @@ if __name__ == "__main__":
                         help="Run EWoK eval every N optimizer steps (0 disables)")
     parser.add_argument("--ewok_batch_size", type=int, default=4,
                         help="Batch size inside EWoK evaluate()")
+    parser.add_argument("--skip_final_ewok", action="store_true",
+                        help="Skip final EWoK eval at end of training (useful for quick smoke tests)")
     parser.add_argument("--save_every", type=int, default=2000,
                         help="Save checkpoint every N optimizer steps (0 disables)")
 
