@@ -1,6 +1,7 @@
 # moonshotGPT: GPT-2 Medium on FineWeb-Edu with Optional Rho-1 Token Filtering
 
 This repository trains GPT-2 style models on tokenized FineWeb-Edu shards, evaluates on EWoK/HellaSwag, and logs data exposure metadata for later analysis. The main training entrypoint is `train_gpt2_finewebedu_bin.py`.
+Shared evaluation helpers are in `evals.py`.
 
 The modified plan in this repo is:
 - first, verify that rho-1 style training is implemented correctly and does not collapse performance,
