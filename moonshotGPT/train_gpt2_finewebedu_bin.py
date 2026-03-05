@@ -26,28 +26,16 @@ from transformers import (
 from accelerate.utils import DataLoaderConfiguration
 from accelerate import Accelerator
 
-try:
-    from evaluation.ewok import evaluate, ewok_df as EWOK_DF
-except ImportError:
-    from ewok_eval import evaluate, ewok_df as EWOK_DF
+from evaluation.ewok import evaluate, ewok_df as EWOK_DF
 
 from shard_loader import make_dataloader
-try:
-    from evaluation.runner import (
-        build_ewok_row_category_lookup,
-        run_ewok_eval_step,
-        run_final_ewok_eval_main_process,
-        run_hellaswag_eval_step,
-        run_parallel_validation,
-    )
-except ImportError:
-    from evals import (
-        build_ewok_row_category_lookup,
-        run_ewok_eval_step,
-        run_final_ewok_eval_main_process,
-        run_hellaswag_eval_step,
-        run_parallel_validation,
-    )
+from evaluation.runner import (
+    build_ewok_row_category_lookup,
+    run_ewok_eval_step,
+    run_final_ewok_eval_main_process,
+    run_hellaswag_eval_step,
+    run_parallel_validation,
+)
 from training_utils.resume_trim import (
     derive_resume_skip_microsteps,
     fast_forward_iterator_data_only,
@@ -58,10 +46,7 @@ from training_utils.resume_trim import (
 try:
     from evaluation import hellaswag as hellaswag_eval
 except Exception:
-    try:
-        import hellaswag_eval
-    except Exception:
-        hellaswag_eval = None
+    hellaswag_eval = None
 
 
 # -----------------------------

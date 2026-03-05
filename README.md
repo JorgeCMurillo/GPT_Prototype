@@ -109,7 +109,6 @@ Cap note:
 - `moonshotGPT/evaluation/runner.py`: training-time eval runners (validation + EWoK + HellaSwag orchestration).
 - `moonshotGPT/evaluation/ewok.py`: EWoK evaluation implementation and dataset loading.
 - `moonshotGPT/evaluation/hellaswag.py`: HellaSwag evaluation implementation.
-- `moonshotGPT/ewok_eval.py` / `moonshotGPT/hellaswag_eval.py` / `moonshotGPT/evals.py`: compatibility wrappers for older imports.
 - `moonshotGPT/plot_step_metrics.py`: generates analysis plots from `step_metrics.json`.
 - `moonshotGPT/training_utils/resume_trim.py`: resume preflight trimming and dataloader replay helpers.
 

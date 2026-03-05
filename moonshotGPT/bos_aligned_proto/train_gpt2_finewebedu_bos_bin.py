@@ -26,15 +26,13 @@ from transformers import (
 from accelerate.utils import DataLoaderConfiguration
 from accelerate import Accelerator
 
-try:
-    from ewok_eval import evaluate, ewok_df as EWOK_DF
-except ImportError:
-    # Allow running from locations where moonshotGPT parent is not on sys.path.
-    _this_dir = os.path.dirname(__file__)
-    _parent_dir = os.path.dirname(_this_dir)
-    if _parent_dir not in sys.path:
-        sys.path.append(_parent_dir)
-    from ewok_eval import evaluate, ewok_df as EWOK_DF
+# Allow running from locations where moonshotGPT parent is not on sys.path.
+_this_dir = os.path.dirname(__file__)
+_parent_dir = os.path.dirname(_this_dir)
+if _parent_dir not in sys.path:
+    sys.path.append(_parent_dir)
+
+from evaluation.ewok import evaluate, ewok_df as EWOK_DF
 
 try:
     from .bos_row_loader import make_bos_row_dataloader as make_dataloader
@@ -42,7 +40,7 @@ except ImportError:
     from bos_row_loader import make_bos_row_dataloader as make_dataloader
 
 try:
-    import hellaswag_eval
+    from evaluation import hellaswag as hellaswag_eval
 except Exception:
     hellaswag_eval = None
 

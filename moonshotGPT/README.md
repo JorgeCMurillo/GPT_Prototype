@@ -1,7 +1,7 @@
 # moonshotGPT: GPT-2 Medium on FineWeb-Edu with Optional Rho-1 Token Filtering
 
 This repository trains GPT-2 style models on tokenized FineWeb-Edu shards, evaluates on EWoK/HellaSwag, and logs data exposure metadata for later analysis. The main training entrypoint is `train_gpt2_finewebedu_bin.py`.
-Shared evaluation helpers now live under `evaluation/` (`evaluation/runner.py`, `evaluation/ewok.py`, `evaluation/hellaswag.py`), with compatibility wrappers kept in `evals.py`, `ewok_eval.py`, and `hellaswag_eval.py`.
+Shared evaluation helpers live under `evaluation/` (`evaluation/runner.py`, `evaluation/ewok.py`, `evaluation/hellaswag.py`).
 
 The modified plan in this repo is:
 - first, verify that rho-1 style training is implemented correctly and does not collapse performance,
@@ -279,7 +279,7 @@ Each run creates an `experiments/<run_name>/` directory with:
   - training data shard set == precompute shard set
 
 ### 2) Missing EWoK source
-- Symptom: EWoK loader errors in `evaluation/ewok.py` (or wrapper `ewok_eval.py`).
+- Symptom: EWoK loader errors in `evaluation/ewok.py`.
 - Fix: ensure one of these exists:
   - `ewok_fast_jsonl.zip` in repo root,
   - directory pointed to by `EWOK_SRC`,
