@@ -27,12 +27,27 @@ from accelerate.utils import DataLoaderConfiguration
 from accelerate import Accelerator
 
 try:
-    from ewok_eval import evaluate, ewok_df as EWOK_DF
+    from evaluation.ewok import evaluate, ewok_df as EWOK_DF
 except ImportError:
-    from ewok_eval import evaluate
-    EWOK_DF = None
+    from ewok_eval import evaluate, ewok_df as EWOK_DF
 
 from shard_loader import make_dataloader
+try:
+    from evaluation.runner import (
+        build_ewok_row_category_lookup,
+        run_ewok_eval_step,
+        run_final_ewok_eval_main_process,
+        run_hellaswag_eval_step,
+        run_parallel_validation,
+    )
+except ImportError:
+    from evals import (
+        build_ewok_row_category_lookup,
+        run_ewok_eval_step,
+        run_final_ewok_eval_main_process,
+        run_hellaswag_eval_step,
+        run_parallel_validation,
+    )
 from training_utils.resume_trim import (
     derive_resume_skip_microsteps,
     fast_forward_iterator_data_only,
@@ -41,9 +56,12 @@ from training_utils.resume_trim import (
 )
 
 try:
-    import hellaswag_eval
+    from evaluation import hellaswag as hellaswag_eval
 except Exception:
-    hellaswag_eval = None
+    try:
+        import hellaswag_eval
+    except Exception:
+        hellaswag_eval = None
 
 
 # -----------------------------
@@ -561,98 +579,6 @@ def release_eval_memory():
         torch.cuda.empty_cache()
 
 
-def _unpack_ewok_per_item(result):
-    """
-    Backward/forward compatible unpack for ewok_eval.evaluate(return_per_item=True).
-    Older API returns 3 values, newer API returns 4 (with margin stats).
-    """
-    if not isinstance(result, (list, tuple)):
-        raise TypeError(f"Unexpected EWoK return type: {type(result)}")
-    if len(result) == 3:
-        eval_off, eval_full, per_item = result
-        return eval_off, eval_full, per_item, None
-    if len(result) == 4:
-        eval_off, eval_full, per_item, margin_stats = result
-        return eval_off, eval_full, per_item, margin_stats
-    raise ValueError(f"Unexpected EWoK return tuple length: {len(result)}")
-
-
-def _canonicalize_category_value(value) -> str:
-    if value is None:
-        return "<NA>"
-    if isinstance(value, str):
-        return value.strip().replace("_", " ")
-    try:
-        if np.isnan(value):
-            return "<NA>"
-    except Exception:
-        pass
-    return str(value)
-
-
-def _build_ewok_row_category_lookup(
-    ewok_df,
-    category_columns=("TargetDiff", "ContextDiff", "ContextType"),
-):
-    lookup = {}
-    if ewok_df is None:
-        return lookup
-    for row_idx, row in ewok_df.iterrows():
-        row_key = int(row_idx)
-        lookup[row_key] = {
-            col: _canonicalize_category_value(row.get(col))
-            for col in category_columns
-        }
-    return lookup
-
-
-def _aggregate_eval_full_by_category(
-    per_item_records,
-    row_category_lookup,
-    category_columns=("TargetDiff", "ContextDiff", "ContextType"),
-):
-    counters = {col: {} for col in category_columns}
-
-    for rec in per_item_records:
-        row_idx = rec.get("row_index")
-        if not isinstance(row_idx, int):
-            continue
-        row_meta = row_category_lookup.get(row_idx)
-        if not isinstance(row_meta, dict):
-            continue
-
-        off_ok = 1 if bool(rec.get("correct_official", False)) else 0
-        sym_ok = 1 if bool(rec.get("correct_symmetric", False)) else 0
-
-        for col in category_columns:
-            cat = row_meta.get(col, "<NA>")
-            bucket = counters[col].setdefault(cat, {"off_ok": 0, "sym_ok": 0, "n": 0})
-            bucket["off_ok"] += off_ok
-            bucket["sym_ok"] += sym_ok
-            bucket["n"] += 1
-
-    out = {}
-    for col in category_columns:
-        col_map = {}
-        acc1_vals = []
-        acc2_vals = []
-        for cat in sorted(counters[col].keys()):
-            b = counters[col][cat]
-            n = int(b["n"])
-            if n <= 0:
-                continue
-            acc1 = float(b["off_ok"] / n)
-            acc2 = float(b["sym_ok"] / n)
-            col_map[str(cat)] = (acc1, acc2)
-            acc1_vals.append(acc1)
-            acc2_vals.append(acc2)
-        if acc1_vals:
-            col_map["average"] = (float(np.mean(acc1_vals)), float(np.mean(acc2_vals)))
-        out[col] = col_map
-
-    return out
-
-
 # -----------------------------
 # Main
 
@@ -1141,7 +1067,7 @@ def main(
     hellaswag_max_seq_len = None
     hellaswag_disabled = False
     ewok_category_columns = ("TargetDiff", "ContextDiff", "ContextType")
-    ewok_row_category_lookup = _build_ewok_row_category_lookup(EWOK_DF, ewok_category_columns)
+    ewok_row_category_lookup = build_ewok_row_category_lookup(EWOK_DF, ewok_category_columns)
 
     def save_plot():
         if not accelerator.is_main_process:
@@ -1595,84 +1521,23 @@ def main(
         # -------------------------------------------------------------
         if accelerator.sync_gradients:
             do_eval = (eval_every > 0 and opt_step % eval_every == 0)
-            
+
             if do_eval:
-                # [BARRIER] Ensure synchronization before eval
-                accelerator.wait_for_everyone()
-
-                # Reset to start so each eval uses the same validation prefix.
-                val_iter = iter(val_loader)
-                model.eval()
-                
-                # Each rank computes local sums
-                local_val_loss_sum = 0.0
-                local_val_tokens_sum = 0
-                
-                # Only print on local main process
-                if accelerator.is_local_main_process:
-                    print('Validation')
-                    
-                with torch.no_grad():
-                    # Run on ALL ranks
-                    for _ in range(VAL_BATCH_LIMIT):
-                        try:
-                            v_batch = next(val_iter)
-                        except StopIteration:
-                            val_iter = iter(val_loader) # Restart
-                            v_batch = next(val_iter)
-
-                        if isinstance(v_batch, (list, tuple)) and len(v_batch) == 3:
-                            v_ids, v_labels, _ = v_batch
-                        else:
-                            v_ids, v_labels = v_batch
-                        
-                        v_ids = v_ids.to(device, non_blocking=True)
-                        v_labels = v_labels.to(device, non_blocking=True)
-
-                        with autocast_ctx():
-                            with sdpa_kernel(sdpa_backends):
-                                v_logits = model(input_ids=v_ids).logits
-
-                        v_loss_mean = F.cross_entropy(
-                            v_logits[..., :loss_vocab_size].reshape(-1, loss_vocab_size),
-                            v_labels.reshape(-1),
-                            reduction="mean",
-                        )
-
-                        vtoks = int(v_labels.numel())
-                        local_val_loss_sum += float(v_loss_mean.item()) * vtoks
-                        local_val_tokens_sum += vtoks
-
-                # Aggregate results from all ranks
-                # Create tensors on device for reduction
-                tr_loss = torch.tensor(local_val_loss_sum, device=device)
-                tr_tokens = torch.tensor(local_val_tokens_sum, device=device)
-                
-                # Sum across all ranks
-                global_loss_sum = accelerator.reduce(tr_loss, reduction="sum")
-                global_tokens_sum = accelerator.reduce(tr_tokens, reduction="sum")
-                
-                # Compute average
-                current_val_loss = global_loss_sum.item() / max(1, global_tokens_sum.item())
-                
-                if accelerator.is_local_main_process:
-                    print(f" --> Val loss (first {VAL_BATCH_LIMIT} val batches) @ step {opt_step}: {current_val_loss:.4f}")
+                current_val_loss = run_parallel_validation(
+                    accelerator=accelerator,
+                    model=model,
+                    val_loader=val_loader,
+                    device=device,
+                    autocast_ctx=autocast_ctx,
+                    sdpa_backends=sdpa_backends,
+                    loss_vocab_size=loss_vocab_size,
+                    step=opt_step,
+                    val_batch_limit=VAL_BATCH_LIMIT,
+                    append_jsonl_fn=append_jsonl,
+                    scalars_path=scalars_path,
+                )
                 if accelerator.is_main_process:
                     val_loss_history.append((opt_step, current_val_loss))
-
-                    # Log to jsonl
-                    append_jsonl(scalars_path, {
-                        "type": "val_loss",
-                        "step": opt_step,
-                        "timestamp": datetime.now().isoformat(),
-                        "val_loss": float(current_val_loss),
-                        "val_batches": int(VAL_BATCH_LIMIT),
-                    })
-                    
-                model.train()
-                
-                # [BARRIER] Ensure everyone is done before moving on
-                accelerator.wait_for_everyone()
 
         # -------------------------------------------------------------
         # EWoK eval + checkpointing
@@ -1683,184 +1548,63 @@ def main(
             do_ewok = (ewok_every > 0 and opt_step % ewok_every == 0)
 
             if do_hellaswag:
-                # [BARRIER 1] Sync entry so everyone stops here before one rank evaluates
-                accelerator.wait_for_everyone()
-                model.eval()
-
-                release_eval_memory()
-
-                if accelerator.is_main_process:
-                    if hellaswag_disabled:
-                        pass
-                    elif hellaswag_eval is None:
-                        print("[warn] hellaswag_eval import failed; skipping HellaSwag eval.")
-                        hellaswag_disabled = True
-                    else:
-                        if hellaswag_ds is None:
-                            print(f"Loading HellaSwag dataset: {hellaswag_dataset} ({hellaswag_split})")
-                            try:
-                                hellaswag_ds = hellaswag_eval.load_dataset_compat(
-                                    dataset_name=hellaswag_dataset,
-                                    dataset_config=hellaswag_dataset_config,
-                                    split=hellaswag_split,
-                                    local_files_only=hellaswag_local_files_only,
-                                )
-                                if hellaswag_max_examples is not None:
-                                    hellaswag_ds = hellaswag_ds.select(
-                                        range(min(int(hellaswag_max_examples), len(hellaswag_ds)))
-                                    )
-                            except Exception as exc:
-                                print(f"[warn] failed to load HellaSwag dataset: {exc}")
-                                hellaswag_ds = None
-                                hellaswag_disabled = True
-
-                        if hellaswag_ds is not None:
-                            print("starting HellaSwag evaluation on main process")
-                            hs_model = accelerator.unwrap_model(model)
-                            hs_model.eval()
-                            hellaswag_max_seq_len = hellaswag_eval.infer_max_seq_len(hs_model, tokenizer)
-                            with torch.no_grad():
-                                hs_metrics = hellaswag_eval.evaluate_hellaswag(
-                                    model=hs_model,
-                                    tokenizer=tokenizer,
-                                    dataset=hellaswag_ds,
-                                    batch_size=hellaswag_batch_size,
-                                    device=device,
-                                    max_seq_len=hellaswag_max_seq_len,
-                                )
-
-                            hs_record = {
-                                "step": opt_step,
-                                "timestamp": datetime.now().isoformat(),
-                                "train_loss_last": float(last_train_loss) if last_train_loss is not None else float(loss_val),
-                                "lr": float(last_lr) if last_lr is not None else get_current_lr(optimizer),
-                                "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
-                                "hellaswag": {
-                                    "dataset": hellaswag_dataset,
-                                    "dataset_config": hellaswag_dataset_config,
-                                    "split": hellaswag_split,
-                                    "num_examples": int(hs_metrics["num_examples"]),
-                                    "accuracy": float(hs_metrics["accuracy"]),
-                                    "accuracy_norm": float(hs_metrics["accuracy_norm"]),
-                                    "batch_size": int(hellaswag_batch_size),
-                                    "max_seq_len": int(hellaswag_max_seq_len),
-                                },
-                            }
-                            step_metrics.append(hs_record)
-                            save_metrics(step_metrics, metrics_path)
-                            hs_scalar = {
-                                "type": "hellaswag",
-                                "step": opt_step,
-                                "timestamp": datetime.now().isoformat(),
-                                "num_examples": int(hs_metrics["num_examples"]),
-                                "accuracy": float(hs_metrics["accuracy"]),
-                                "accuracy_norm": float(hs_metrics["accuracy_norm"]),
-                                "batch_size": int(hellaswag_batch_size),
-                                "max_seq_len": int(hellaswag_max_seq_len),
-                                "dataset": hellaswag_dataset,
-                                "dataset_config": hellaswag_dataset_config,
-                                "split": hellaswag_split,
-                            }
-                            append_jsonl(scalars_path, hs_scalar)
-                            append_jsonl(hellaswag_metrics_path, hs_scalar)
-                            print(
-                                f"HellaSwag @ step {opt_step}: "
-                                f"acc={hs_metrics['accuracy']:.4f}, "
-                                f"acc_norm={hs_metrics['accuracy_norm']:.4f}"
-                            )
-
-                # [BARRIER 2] Forces other ranks to wait for rank 0 to finish eval
-                accelerator.wait_for_everyone()
-                model.train()
+                hellaswag_disabled, hellaswag_ds, hellaswag_max_seq_len = run_hellaswag_eval_step(
+                    accelerator=accelerator,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    hellaswag_eval_module=hellaswag_eval,
+                    hellaswag_disabled=hellaswag_disabled,
+                    hellaswag_ds=hellaswag_ds,
+                    hellaswag_max_seq_len=hellaswag_max_seq_len,
+                    hellaswag_dataset=hellaswag_dataset,
+                    hellaswag_dataset_config=hellaswag_dataset_config,
+                    hellaswag_split=hellaswag_split,
+                    hellaswag_local_files_only=hellaswag_local_files_only,
+                    hellaswag_max_examples=hellaswag_max_examples,
+                    hellaswag_batch_size=hellaswag_batch_size,
+                    opt_step=opt_step,
+                    last_train_loss=last_train_loss,
+                    loss_val=loss_val,
+                    last_lr=last_lr,
+                    optimizer=optimizer,
+                    tokens_seen_local_total=tokens_seen_local_total,
+                    scalars_path=scalars_path,
+                    hellaswag_metrics_path=hellaswag_metrics_path,
+                    step_metrics=step_metrics,
+                    metrics_path=metrics_path,
+                    append_jsonl_fn=append_jsonl,
+                    save_metrics_fn=save_metrics,
+                    get_current_lr_fn=get_current_lr,
+                    release_eval_memory_fn=release_eval_memory,
+                )
 
             if do_ewok:
-                # [BARRIER 1] Sync entry so everyone stops here before one rank evaluates
-                accelerator.wait_for_everyone()
-                model.eval()
-                # print('managed to pass barrier, starting ewok eval on main process')
-                # Memory cleanup to prevent OOM during eval
-                release_eval_memory()
-
-                if accelerator.is_main_process:
-                    print('starting EWoK evaluation on main process')
-                    with torch.no_grad():
-                        eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
-                            evaluate(
-                                accelerator.unwrap_model(model),
-                                tokenizer,
-                                batch_size=ewok_batch_size,
-                                return_per_item=True,
-                                score_reduction="sum",
-                            )
-                        )
-                        eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
-                            evaluate(
-                                accelerator.unwrap_model(model),
-                                tokenizer,
-                                batch_size=ewok_batch_size,
-                                return_per_item=True,
-                                score_reduction="mean",
-                            )
-                        )
-                        eval_by_category_full_sum = _aggregate_eval_full_by_category(
-                            per_item_sum,
-                            ewok_row_category_lookup,
-                            ewok_category_columns,
-                        )
-                        eval_by_category_full_mean = _aggregate_eval_full_by_category(
-                            per_item_mean,
-                            ewok_row_category_lookup,
-                            ewok_category_columns,
-                        )
-
-                    # per-item jsonl
-                    for r in per_item_sum:
-                        rr = dict(r)
-                        rr.update({
-                            "type": "ewok_item",
-                            "step": opt_step,
-                            "timestamp": datetime.now().isoformat(),
-                        })
-                        append_jsonl(ewok_items_path, rr)
-                    for r in per_item_mean:
-                        rr = dict(r)
-                        rr.update({
-                            "type": "ewok_item_mean",
-                            "step": opt_step,
-                            "timestamp": datetime.now().isoformat(),
-                        })
-                        append_jsonl(ewok_items_path, rr)
-
-                    record = {
-                        "step": opt_step,
-                        "timestamp": datetime.now().isoformat(),
-                        "train_loss_last": float(last_train_loss) if last_train_loss is not None else float(loss_val),
-                        "lr": float(last_lr) if last_lr is not None else get_current_lr(optimizer),
-                        "grad_norm_l2": float(last_grad_norm) if last_grad_norm is not None else None,
-                        "param_norm_l2": float(last_param_norm) if last_param_norm is not None else None,
-                        "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
-                        # Keep these keys as backward-compatible aliases for sum-reduction.
-                        "eval_official": to_jsonable(eval_off_sum),
-                        "eval_full": to_jsonable(eval_full_sum),
-                        "eval_official_sum": to_jsonable(eval_off_sum),
-                        "eval_full_sum": to_jsonable(eval_full_sum),
-                        "eval_official_mean": to_jsonable(eval_off_mean),
-                        "eval_full_mean": to_jsonable(eval_full_mean),
-                        # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
-                        "eval_margin_stats": to_jsonable(eval_margin_stats_sum),
-                        "eval_margin_stats_sum": to_jsonable(eval_margin_stats_sum),
-                        "eval_margin_stats_mean": to_jsonable(eval_margin_stats_mean),
-                        "eval_by_category_full_sum": to_jsonable(eval_by_category_full_sum),
-                        "eval_by_category_full_mean": to_jsonable(eval_by_category_full_mean),
-                    }
-                    step_metrics.append(record)
-                    save_metrics(step_metrics, metrics_path)
-                    print(f"Saved metrics to {metrics_path}")
-                    print(f"Appended per-item EWoK to {ewok_items_path}")
-                
-                # [BARRIER 2] Forces Ranks 1-5 to wait for Rank 0 to finish eval
-                accelerator.wait_for_everyone()
-                model.train()
+                run_ewok_eval_step(
+                    accelerator=accelerator,
+                    model=model,
+                    tokenizer=tokenizer,
+                    evaluate_fn=evaluate,
+                    ewok_batch_size=ewok_batch_size,
+                    opt_step=opt_step,
+                    last_train_loss=last_train_loss,
+                    loss_val=loss_val,
+                    last_lr=last_lr,
+                    last_grad_norm=last_grad_norm,
+                    last_param_norm=last_param_norm,
+                    optimizer=optimizer,
+                    tokens_seen_local_total=tokens_seen_local_total,
+                    ewok_items_path=ewok_items_path,
+                    step_metrics=step_metrics,
+                    metrics_path=metrics_path,
+                    ewok_row_category_lookup=ewok_row_category_lookup,
+                    ewok_category_columns=ewok_category_columns,
+                    append_jsonl_fn=append_jsonl,
+                    save_metrics_fn=save_metrics,
+                    get_current_lr_fn=get_current_lr,
+                    to_jsonable_fn=to_jsonable,
+                    release_eval_memory_fn=release_eval_memory,
+                )
 
             if do_save:
                 save_plot()
@@ -1876,80 +1620,29 @@ def main(
 
     # Final EWoK (+ per-item) + final checkpoint
     accelerator.wait_for_everyone()
-    if accelerator.is_main_process and not skip_final_ewok:
-        model.eval()
-        accelerator.unwrap_model(model).eval()
-        with torch.no_grad():
-            eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
-                evaluate(
-                    accelerator.unwrap_model(model),
-                    tokenizer,
-                    batch_size=ewok_batch_size,
-                    return_per_item=True,
-                    score_reduction="sum",
-                )
+    if accelerator.is_main_process:
+        if not skip_final_ewok:
+            run_final_ewok_eval_main_process(
+                accelerator=accelerator,
+                model=model,
+                tokenizer=tokenizer,
+                evaluate_fn=evaluate,
+                ewok_batch_size=ewok_batch_size,
+                opt_step=opt_step,
+                optimizer=optimizer,
+                tokens_seen_local_total=tokens_seen_local_total,
+                ewok_items_path=ewok_items_path,
+                step_metrics=step_metrics,
+                metrics_path=metrics_path,
+                ewok_row_category_lookup=ewok_row_category_lookup,
+                ewok_category_columns=ewok_category_columns,
+                append_jsonl_fn=append_jsonl,
+                save_metrics_fn=save_metrics,
+                get_current_lr_fn=get_current_lr,
+                to_jsonable_fn=to_jsonable,
             )
-            eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
-                evaluate(
-                    accelerator.unwrap_model(model),
-                    tokenizer,
-                    batch_size=ewok_batch_size,
-                    return_per_item=True,
-                    score_reduction="mean",
-                )
-            )
-            eval_by_category_full_sum = _aggregate_eval_full_by_category(
-                per_item_sum,
-                ewok_row_category_lookup,
-                ewok_category_columns,
-            )
-            eval_by_category_full_mean = _aggregate_eval_full_by_category(
-                per_item_mean,
-                ewok_row_category_lookup,
-                ewok_category_columns,
-            )
-
-        for r in per_item_sum:
-            rr = dict(r)
-            rr.update({
-                "type": "ewok_item_final",
-                "step": opt_step,
-                "timestamp": datetime.now().isoformat(),
-            })
-            append_jsonl(ewok_items_path, rr)
-        for r in per_item_mean:
-            rr = dict(r)
-            rr.update({
-                "type": "ewok_item_final_mean",
-                "step": opt_step,
-                "timestamp": datetime.now().isoformat(),
-            })
-            append_jsonl(ewok_items_path, rr)
-
-        record = {
-            "step": opt_step,
-            "timestamp": datetime.now().isoformat(),
-            "final": True,
-            "lr": get_current_lr(optimizer),
-            "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
-            # Keep these keys as backward-compatible aliases for sum-reduction.
-            "eval_official": to_jsonable(eval_off_sum),
-            "eval_full": to_jsonable(eval_full_sum),
-            "eval_official_sum": to_jsonable(eval_off_sum),
-            "eval_full_sum": to_jsonable(eval_full_sum),
-            "eval_official_mean": to_jsonable(eval_off_mean),
-            "eval_full_mean": to_jsonable(eval_full_mean),
-            # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
-            "eval_margin_stats": to_jsonable(eval_margin_stats_sum),
-            "eval_margin_stats_sum": to_jsonable(eval_margin_stats_sum),
-            "eval_margin_stats_mean": to_jsonable(eval_margin_stats_mean),
-            "eval_by_category_full_sum": to_jsonable(eval_by_category_full_sum),
-            "eval_by_category_full_mean": to_jsonable(eval_by_category_full_mean),
-        }
-        step_metrics.append(record)
-        save_metrics(step_metrics, metrics_path)
-        print(f"Saved final metrics to {metrics_path}")
-        print(f"Appended final per-item EWoK to {ewok_items_path}")
+        else:
+            print("[info] skipping final EWoK evaluation (--skip_final_ewok)")
 
         # Auto-generate run-local analysis plots from step_metrics.json
         plot_script = os.path.join(os.path.dirname(__file__), "plot_step_metrics.py")
@@ -1970,8 +1663,6 @@ def main(
                 print(f"[warn] failed to run plot_step_metrics.py: {exc}")
         else:
             print(f"[warn] plot script not found at {plot_script}; skipping auto-plots.")
-    elif accelerator.is_main_process and skip_final_ewok:
-        print("[info] skipping final EWoK evaluation (--skip_final_ewok)")
 
     save_checkpoint("final", opt_step)
 
