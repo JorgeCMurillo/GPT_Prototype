@@ -77,7 +77,7 @@ cd moonshotGPT
 python fineweb.py \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
-  --out_dir /home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B
+  --out_dir ./fineweb_edu_10B
 ```
 
 ## EWoK Data Loading
@@ -141,7 +141,7 @@ Example matching GPT-2 medium dimensions:
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes=8 --mixed_precision=bf16 train_gpt2_finewebedu_bin.py \
-  --data_dir=/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B \
+  --data_dir=./fineweb_edu_10B \
   --n_embd=1024 --n_head=16 --n_layer=24
 ```
 
