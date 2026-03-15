@@ -1,3 +1,9 @@
+"""Analyze precomputed reference-loss shards and summarize their distribution.
+
+This script scans aligned token and ref-loss shards, computes percentile and
+position statistics, and writes plots/CSVs that help choose rho thresholds.
+"""
+
 import argparse
 import csv
 import json

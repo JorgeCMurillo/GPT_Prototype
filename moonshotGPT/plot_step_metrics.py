@@ -5,14 +5,12 @@ This script focuses on EWOK-centric records in step_metrics.json and:
 1) Removes duplicate EWOK entries for the same optimizer step
    (prefers non-final records, which avoids the duplicated last step).
 2) Plots training scalars carried in EWOK records (train_loss, lr, norms, tokens).
-3) Plots EWOK official scores across steps (all domains + one plot per domain).
-4) Plots EWOK full scores across steps (one plot per domain, both components).
-5) Plots EWOK mean margins (signed and absolute) in a 4x3 domain grid.
-6) Plots EWOK mean margin averages across domains over time.
-7) Plots EWOK category subplots (TargetDiff, ContextDiff, ContextType) if present.
-8) Plots EWOK full average across domains (sum vs mean) if present.
-9) Optionally plots EWOK full-mean average comparison against another run.
-10) Optionally plots HellaSwag if present in step_metrics.json.
+3) Plots EWOK full/category metrics for the enabled reductions.
+   By default this means mean-reduction plots only; sum plots are opt-in.
+4) Plots EWOK mean margins (signed and absolute) when present for the enabled reductions.
+5) Plots EWOK full average across domains (sum vs mean) if sum plots are enabled.
+6) Optionally plots EWOK full-mean average comparison against another run.
+7) Optionally plots HellaSwag if present in step_metrics.json.
 """
 
 from __future__ import annotations
@@ -86,6 +84,39 @@ def parse_args() -> argparse.Namespace:
         default="compare",
         help="Legend label for --compare-metrics in comparison plots",
     )
+    parser.add_argument(
+        "--max-step",
+        type=int,
+        default=None,
+        help="If set, only keep EWOK records with step <= this value before plotting",
+    )
+    parser.add_argument(
+        "--compare-full-mean-domains-4x3",
+        action="store_true",
+        help="When --compare-metrics is set, plot both runs in a per-domain EWOK full-mean grid",
+    )
+    parser.add_argument(
+        "--compare-category-columns",
+        type=str,
+        default="",
+        help="Comma-separated EWOK category columns for mean comparison (e.g. ContextDiff,ContextType)",
+    )
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=1,
+        help="Moving-average window for plotted lines (1 disables smoothing)",
+    )
+    parser.add_argument(
+        "--no-markers",
+        action="store_true",
+        help="Disable point markers on line plots",
+    )
+    parser.add_argument(
+        "--include-ewok-sum-plots",
+        action="store_true",
+        help="Include EWOK sum-reduction plots; default behavior is mean-only",
+    )
     return parser.parse_args()
 
 
@@ -102,8 +133,41 @@ def _safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "unknown"
 
 
+def _parse_csv_list(value: str) -> List[str]:
+    if not isinstance(value, str):
+        return []
+    out: List[str] = []
+    for part in value.split(","):
+        item = part.strip()
+        if item:
+            out.append(item)
+    return out
+
+
 def _is_number(x) -> bool:
     return isinstance(x, (int, float)) and math.isfinite(float(x))
+
+
+def _moving_average(values: List[float], window: int) -> List[float]:
+    if window <= 1 or len(values) <= 1:
+        return list(values)
+    w = max(1, int(window))
+    out: List[float] = []
+    running = 0.0
+    q: List[float] = []
+    for y in values:
+        q.append(float(y))
+        running += float(y)
+        if len(q) > w:
+            running -= q.pop(0)
+        out.append(running / len(q))
+    return out
+
+
+def _smoothed_xy(points: List[Tuple[int, float]], smooth_window: int) -> Tuple[List[int], List[float]]:
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return xs, _moving_average(ys, smooth_window)
 
 
 def load_records(metrics_path: Path) -> List[Dict]:
@@ -118,6 +182,9 @@ def is_ewok_record(record: Dict) -> bool:
         "eval_official" in record
         or "eval_official_sum" in record
         or "eval_official_mean" in record
+        or "eval_babylm_completion_choice_official" in record
+        or "eval_babylm_completion_choice_official_sum" in record
+        or "eval_babylm_completion_choice_official_mean" in record
     )
 
 
@@ -148,25 +215,57 @@ def dedupe_ewok_by_step(records: Iterable[Dict]) -> Tuple[List[Dict], Dict[int, 
     return deduped, duplicates
 
 
+def filter_records_by_max_step(ewok_records: List[Dict], max_step: int | None) -> List[Dict]:
+    if not isinstance(max_step, int):
+        return list(ewok_records)
+    return [r for r in ewok_records if isinstance(r.get("step"), int) and int(r["step"]) <= max_step]
+
+
 def get_ewok_payload(record: Dict, reduction: str) -> Tuple[Dict | None, Dict | None]:
     if reduction == "sum":
         return (
-            record.get("eval_official_sum", record.get("eval_official")),
-            record.get("eval_full_sum", record.get("eval_full")),
+            record.get(
+                "eval_babylm_completion_choice_official_sum",
+                record.get("eval_official_sum", record.get("eval_official")),
+            ),
+            record.get(
+                "eval_babylm_completion_choice_full_sum",
+                record.get("eval_full_sum", record.get("eval_full")),
+            ),
         )
     if reduction == "mean":
         return (
-            record.get("eval_official_mean"),
-            record.get("eval_full_mean"),
+            record.get("eval_babylm_completion_choice_official_mean", record.get("eval_official_mean")),
+            record.get("eval_babylm_completion_choice_full_mean", record.get("eval_full_mean")),
         )
     raise ValueError(f"unsupported reduction: {reduction}")
 
 
 def get_margin_payload(record: Dict, reduction: str) -> Dict | None:
     if reduction == "sum":
-        return record.get("eval_margin_stats_sum", record.get("eval_margin_stats"))
+        return record.get(
+            "eval_babylm_completion_choice_margin_stats_sum",
+            record.get("eval_margin_stats_sum", record.get("eval_margin_stats")),
+        )
     if reduction == "mean":
-        return record.get("eval_margin_stats_mean")
+        return record.get(
+            "eval_babylm_completion_choice_margin_stats_mean",
+            record.get("eval_margin_stats_mean"),
+        )
+    raise ValueError(f"unsupported reduction: {reduction}")
+
+
+def get_category_payload(record: Dict, reduction: str) -> Dict | None:
+    if reduction == "sum":
+        return record.get(
+            "eval_babylm_completion_choice_by_category_full_sum",
+            record.get("eval_by_category_full_sum"),
+        )
+    if reduction == "mean":
+        return record.get(
+            "eval_babylm_completion_choice_by_category_full_mean",
+            record.get("eval_by_category_full_mean"),
+        )
     raise ValueError(f"unsupported reduction: {reduction}")
 
 
@@ -174,9 +273,14 @@ def detect_reductions(ewok_records: Iterable[Dict]) -> List[str]:
     seen_sum = False
     seen_mean = False
     for r in ewok_records:
-        if "eval_official" in r or "eval_official_sum" in r:
+        if (
+            "eval_official" in r
+            or "eval_official_sum" in r
+            or "eval_babylm_completion_choice_official" in r
+            or "eval_babylm_completion_choice_official_sum" in r
+        ):
             seen_sum = True
-        if "eval_official_mean" in r:
+        if "eval_official_mean" in r or "eval_babylm_completion_choice_official_mean" in r:
             seen_mean = True
     out = []
     if seen_sum:
@@ -184,6 +288,15 @@ def detect_reductions(ewok_records: Iterable[Dict]) -> List[str]:
     if seen_mean:
         out.append("mean")
     return out
+
+
+def filter_enabled_reductions(reductions: Iterable[str], include_sum: bool) -> List[str]:
+    enabled: List[str] = []
+    for reduction in reductions:
+        if reduction == "sum" and not include_sum:
+            continue
+        enabled.append(reduction)
+    return enabled
 
 
 def plot_training_scalars(ewok_records: List[Dict], output_dir: Path, dpi: int) -> List[Path]:
@@ -226,50 +339,6 @@ def plot_training_scalars(ewok_records: List[Dict], output_dir: Path, dpi: int) 
         fig.savefig(out, dpi=dpi)
         created.append(out)
     plt.close(fig)
-    return created
-
-
-def plot_ewok_official(
-    ewok_records: List[Dict],
-    output_dir: Path,
-    reduction: str,
-    dpi: int,
-) -> List[Path]:
-    by_domain: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
-    for r in ewok_records:
-        step = r.get("step")
-        off, _ = get_ewok_payload(r, reduction)
-        if not isinstance(step, int) or not isinstance(off, dict):
-            continue
-        for domain, value in off.items():
-            if _is_number(value):
-                by_domain[str(domain)].append((step, float(value)))
-
-    created: List[Path] = []
-    if not by_domain:
-        return created
-
-    # All domains on one figure
-    fig = plt.figure(figsize=(13, 8))
-    ax = fig.add_subplot(1, 1, 1)
-    for domain in sorted(by_domain):
-        pts = sorted(by_domain[domain], key=lambda t: t[0])
-        xs = [x for x, _ in pts]
-        ys = [y for _, y in pts]
-        ax.plot(xs, ys, marker="o", linewidth=1.2, markersize=3, label=domain)
-    ax.set_title(f"EWOK Official by Domain ({reduction})")
-    ax.set_xlabel("Optimizer Step")
-    ax.set_ylabel("Accuracy")
-    ax.set_ylim(0.0, 1.0)
-    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.2, label="random chance = 50%")
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8)
-    out_all = output_dir / f"ewok_official_{reduction}_all_domains.png"
-    fig.tight_layout()
-    fig.savefig(out_all, dpi=dpi)
-    plt.close(fig)
-    created.append(out_all)
-
     return created
 
 
@@ -628,6 +697,8 @@ def plot_ewok_full_mean_average_compare(
     dpi: int,
     primary_label: str,
     compare_label: str,
+    smooth_window: int = 1,
+    show_markers: bool = True,
 ) -> List[Path]:
     primary = _full_average_series(primary_ewok_records, "mean")
     compare = _full_average_series(compare_ewok_records, "mean")
@@ -638,14 +709,18 @@ def plot_ewok_full_mean_average_compare(
     ax = fig.add_subplot(1, 1, 1)
 
     if primary:
-        xs = [x for x, _ in primary]
-        ys = [y for _, y in primary]
-        ax.plot(xs, ys, linewidth=1.9, marker="o", markersize=3.5, color="#1f77b4", label=primary_label)
+        xs, ys = _smoothed_xy(primary, smooth_window)
+        if show_markers:
+            ax.plot(xs, ys, linewidth=1.9, marker="o", markersize=3.5, color="#1f77b4", label=primary_label)
+        else:
+            ax.plot(xs, ys, linewidth=1.9, color="#1f77b4", label=primary_label)
 
     if compare:
-        xs = [x for x, _ in compare]
-        ys = [y for _, y in compare]
-        ax.plot(xs, ys, linewidth=1.9, marker="s", markersize=3.5, color="#ff7f0e", label=compare_label)
+        xs, ys = _smoothed_xy(compare, smooth_window)
+        if show_markers:
+            ax.plot(xs, ys, linewidth=1.9, marker="s", markersize=3.5, color="#ff7f0e", label=compare_label)
+        else:
+            ax.plot(xs, ys, linewidth=1.9, color="#ff7f0e", label=compare_label)
 
     ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
     ax.set_title("EWOK Full Mean Average Across Domains: Run Comparison")
@@ -662,22 +737,279 @@ def plot_ewok_full_mean_average_compare(
     return [out]
 
 
+def _full_mean_domain_series(ewok_records: List[Dict]) -> Dict[str, List[Tuple[int, float]]]:
+    by_domain: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
+    for r in ewok_records:
+        step = r.get("step")
+        full = r.get("eval_babylm_completion_choice_full_mean", r.get("eval_full_mean"))
+        if not isinstance(step, int) or not isinstance(full, dict):
+            continue
+        for domain, value in full.items():
+            if str(domain) == "average":
+                continue
+            y = _pair_to_scalar(value)
+            if y is None:
+                continue
+            by_domain[str(domain)].append((step, y))
+    for domain in list(by_domain.keys()):
+        by_domain[domain] = sorted(by_domain[domain], key=lambda t: t[0])
+    return by_domain
+
+
+def plot_ewok_full_mean_domains_compare(
+    primary_ewok_records: List[Dict],
+    compare_ewok_records: List[Dict],
+    output_dir: Path,
+    dpi: int,
+    primary_label: str,
+    compare_label: str,
+    word2vec_baselines: Dict[str, float] | None = None,
+    max_step: int | None = None,
+    smooth_window: int = 1,
+    show_markers: bool = True,
+) -> List[Path]:
+    primary_by_domain = _full_mean_domain_series(primary_ewok_records)
+    compare_by_domain = _full_mean_domain_series(compare_ewok_records)
+    domains = set(primary_by_domain.keys()) | set(compare_by_domain.keys())
+    if word2vec_baselines:
+        domains |= set(word2vec_baselines.keys())
+    domains = sorted(domains)
+    if not domains:
+        return []
+
+    ncols = 3
+    nrows = 4 if len(domains) <= 12 else int(math.ceil(len(domains) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(18, max(14, nrows * 3.5)), constrained_layout=True)
+    flat_axes = axes.flatten()
+
+    for idx, domain in enumerate(domains):
+        ax = flat_axes[idx]
+        pts_primary = primary_by_domain.get(domain, [])
+        pts_compare = compare_by_domain.get(domain, [])
+
+        if pts_primary:
+            xs, ys = _smoothed_xy(pts_primary, smooth_window)
+            if show_markers:
+                ax.plot(xs, ys, linewidth=1.8, marker="o", markersize=3.5, color="#1f77b4", label=primary_label)
+            else:
+                ax.plot(xs, ys, linewidth=1.8, color="#1f77b4", label=primary_label)
+        if pts_compare:
+            xs, ys = _smoothed_xy(pts_compare, smooth_window)
+            if show_markers:
+                ax.plot(
+                    xs,
+                    ys,
+                    linewidth=1.8,
+                    marker="s",
+                    markersize=3.3,
+                    linestyle=(0, (4, 2)),
+                    color="#ff7f0e",
+                    label=compare_label,
+                )
+            else:
+                ax.plot(
+                    xs,
+                    ys,
+                    linewidth=1.8,
+                    linestyle=(0, (4, 2)),
+                    color="#ff7f0e",
+                    label=compare_label,
+                )
+
+        w2v = word2vec_baselines.get(domain) if word2vec_baselines else None
+        if _is_number(w2v):
+            ax.axhline(
+                float(w2v),
+                color="#1b9e77",
+                linestyle=(0, (3, 2)),
+                linewidth=1.3,
+                label=f"word2vec {float(w2v):.2f}",
+            )
+        ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="random chance = 50%")
+
+        ax.set_title(domain, fontsize=10)
+        ax.set_xlabel("Step", fontsize=9)
+        ax.set_ylabel("Acc", fontsize=9)
+        ax.set_ylim(0.0, 1.0)
+        if isinstance(max_step, int):
+            ax.set_xlim(0, max_step)
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=7)
+
+    for idx in range(len(domains), len(flat_axes)):
+        flat_axes[idx].axis("off")
+
+    step_note = f" (<= step {max_step})" if isinstance(max_step, int) else ""
+    fig.suptitle(f"EWOK Full Mean by Domain: {primary_label} vs {compare_label}{step_note}", fontsize=14)
+    suffix_w2v = "_word2vec" if word2vec_baselines else ""
+    suffix_step = f"_to_step{max_step}" if isinstance(max_step, int) else ""
+    out = output_dir / f"ewok_full_mean_domains_4x3_compare_runs{suffix_w2v}{suffix_step}.png"
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return [out]
+
+
+def _category_column_series(
+    ewok_records: List[Dict],
+    reduction: str,
+    column: str,
+) -> Dict[str, List[Tuple[int, float]]]:
+    by_category: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
+    for rec in ewok_records:
+        step = rec.get("step")
+        by_col = get_category_payload(rec, reduction)
+        if not isinstance(step, int) or not isinstance(by_col, dict):
+            continue
+        col_map = by_col.get(column)
+        if not isinstance(col_map, dict):
+            continue
+        for category, value in col_map.items():
+            if str(category) == "average":
+                continue
+            y = _pair_to_scalar(value)
+            if y is None:
+                continue
+            by_category[str(category)].append((step, y))
+    for category in list(by_category.keys()):
+        by_category[category] = sorted(by_category[category], key=lambda t: t[0])
+    return by_category
+
+
+def _available_category_columns(ewok_records: List[Dict], reduction: str = "mean") -> List[str]:
+    columns: set[str] = set()
+    for rec in ewok_records:
+        payload = get_category_payload(rec, reduction)
+        if isinstance(payload, dict):
+            columns.update(str(k) for k in payload.keys())
+    return sorted(columns)
+
+
+def _resolve_requested_columns(
+    requested_columns: List[str],
+    primary_ewok_records: List[Dict],
+    compare_ewok_records: List[Dict],
+    reduction: str = "mean",
+) -> Tuple[List[str], List[str]]:
+    available = set(_available_category_columns(primary_ewok_records, reduction)) | set(
+        _available_category_columns(compare_ewok_records, reduction)
+    )
+    lower_to_canonical = {c.lower(): c for c in available}
+    resolved: List[str] = []
+    missing: List[str] = []
+    for item in requested_columns:
+        key = item.strip()
+        if not key:
+            continue
+        canonical = lower_to_canonical.get(key.lower())
+        if canonical:
+            if canonical not in resolved:
+                resolved.append(canonical)
+        else:
+            missing.append(key)
+    return resolved, missing
+
+
+def plot_ewok_category_column_mean_compare(
+    primary_ewok_records: List[Dict],
+    compare_ewok_records: List[Dict],
+    column: str,
+    output_dir: Path,
+    dpi: int,
+    primary_label: str,
+    compare_label: str,
+    max_step: int | None = None,
+    smooth_window: int = 1,
+    show_markers: bool = True,
+) -> List[Path]:
+    primary_by_category = _category_column_series(primary_ewok_records, "mean", column)
+    compare_by_category = _category_column_series(compare_ewok_records, "mean", column)
+    categories = sorted(set(primary_by_category.keys()) | set(compare_by_category.keys()))
+    if not categories:
+        return []
+
+    ncols = min(3, max(1, len(categories)))
+    nrows = int(math.ceil(len(categories) / ncols))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(16, max(4, nrows * 3.8)),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    axes_flat = axes.flatten()
+
+    for idx, category in enumerate(categories):
+        ax = axes_flat[idx]
+        primary_pts = primary_by_category.get(category, [])
+        compare_pts = compare_by_category.get(category, [])
+
+        if primary_pts:
+            xs, ys = _smoothed_xy(primary_pts, smooth_window)
+            if show_markers:
+                ax.plot(xs, ys, marker="o", linewidth=1.8, markersize=3.5, color="#1f77b4", label=primary_label)
+            else:
+                ax.plot(xs, ys, linewidth=1.8, color="#1f77b4", label=primary_label)
+
+        if compare_pts:
+            xs, ys = _smoothed_xy(compare_pts, smooth_window)
+            if show_markers:
+                ax.plot(
+                    xs,
+                    ys,
+                    marker="s",
+                    linewidth=1.8,
+                    markersize=3.3,
+                    linestyle=(0, (4, 2)),
+                    color="#ff7f0e",
+                    label=compare_label,
+                )
+            else:
+                ax.plot(
+                    xs,
+                    ys,
+                    linewidth=1.8,
+                    linestyle=(0, (4, 2)),
+                    color="#ff7f0e",
+                    label=compare_label,
+                )
+
+        ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
+        ax.set_title(category, fontsize=10)
+        ax.set_xlabel("Optimizer Step", fontsize=9)
+        ax.set_ylabel("Acc", fontsize=9)
+        ax.set_ylim(0.0, 1.0)
+        if isinstance(max_step, int):
+            ax.set_xlim(0, max_step)
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=7)
+
+    for idx in range(len(categories), len(axes_flat)):
+        axes_flat[idx].axis("off")
+
+    step_note = f" (<= step {max_step})" if isinstance(max_step, int) else ""
+    fig.suptitle(f"EWOK Mean by {column}: {primary_label} vs {compare_label}{step_note}", fontsize=14)
+    step_suffix = f"_to_step{max_step}" if isinstance(max_step, int) else ""
+    out = output_dir / f"ewok_category_{_safe_name(column.lower())}_mean_compare_runs{step_suffix}.png"
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return [out]
+
+
 def plot_ewok_category_subplots(
     ewok_records: List[Dict],
     output_dir: Path,
     reduction: str,
     dpi: int,
 ) -> List[Path]:
-    metric_key = f"eval_by_category_full_{reduction}"
     category_records = [
         r
         for r in ewok_records
-        if isinstance(r.get("step"), int) and isinstance(r.get(metric_key), dict)
+        if isinstance(r.get("step"), int) and isinstance(get_category_payload(r, reduction), dict)
     ]
     if not category_records:
         return []
 
-    last_by_col = category_records[-1].get(metric_key, {})
+    last_by_col = get_category_payload(category_records[-1], reduction) or {}
     if not isinstance(last_by_col, dict) or not last_by_col:
         return []
 
@@ -699,7 +1031,7 @@ def plot_ewok_category_subplots(
         category_series: Dict[str, Tuple[List[int], List[float]]] = {}
 
         for rec in category_records:
-            by_col = rec.get(metric_key, {})
+            by_col = get_category_payload(rec, reduction) or {}
             if not isinstance(by_col, dict):
                 continue
             col_map = by_col.get(column, {})
@@ -715,7 +1047,7 @@ def plot_ewok_category_subplots(
             xs: List[int] = []
             ys: List[float] = []
             for rec in category_records:
-                by_col = rec.get(metric_key, {})
+                by_col = get_category_payload(rec, reduction) or {}
                 if not isinstance(by_col, dict):
                     continue
                 col_map = by_col.get(column, {})
@@ -828,7 +1160,9 @@ def main() -> None:
     records = load_records(metrics_path)
     ewok_all = [r for r in records if is_ewok_record(r)]
     ewok_records, dup_info = dedupe_ewok_by_step(ewok_all)
-    reductions = detect_reductions(ewok_records)
+    ewok_records = filter_records_by_max_step(ewok_records, args.max_step)
+    available_reductions = detect_reductions(ewok_records)
+    reductions = filter_enabled_reductions(available_reductions, args.include_ewok_sum_plots)
 
     compare_ewok_records: List[Dict] = []
     compare_dup_info: Dict[int, int] = {}
@@ -839,17 +1173,18 @@ def main() -> None:
         compare_records = load_records(compare_path)
         compare_ewok_all = [r for r in compare_records if is_ewok_record(r)]
         compare_ewok_records, compare_dup_info = dedupe_ewok_by_step(compare_ewok_all)
+        compare_ewok_records = filter_records_by_max_step(compare_ewok_records, args.max_step)
 
     created: List[Path] = []
     created.extend(plot_training_scalars(ewok_records, output_dir, args.dpi))
     for reduction in reductions:
-        created.extend(plot_ewok_official(ewok_records, output_dir, reduction, args.dpi))
         word2vec = EWOK_WORD2VEC_MEAN_BASELINES if (args.overlay_word2vec_ewok_mean and reduction == "mean") else None
         created.extend(plot_ewok_full(ewok_records, output_dir, reduction, args.dpi, word2vec_baselines=word2vec))
         created.extend(plot_ewok_margin_domains(ewok_records, output_dir, reduction, args.dpi))
         created.extend(plot_ewok_margin_average_all_domains(ewok_records, output_dir, reduction, args.dpi))
         created.extend(plot_ewok_category_subplots(ewok_records, output_dir, reduction, args.dpi))
-    created.extend(plot_ewok_full_average_all_domains(ewok_records, output_dir, args.dpi))
+    if args.include_ewok_sum_plots:
+        created.extend(plot_ewok_full_average_all_domains(ewok_records, output_dir, args.dpi))
     if compare_ewok_records:
         created.extend(
             plot_ewok_full_mean_average_compare(
@@ -859,8 +1194,55 @@ def main() -> None:
                 args.dpi,
                 args.primary_label,
                 args.compare_label,
+                smooth_window=args.smooth_window,
+                show_markers=not args.no_markers,
             )
         )
+        if args.compare_full_mean_domains_4x3:
+            compare_word2vec = EWOK_WORD2VEC_MEAN_BASELINES if args.overlay_word2vec_ewok_mean else None
+            created.extend(
+                plot_ewok_full_mean_domains_compare(
+                    ewok_records,
+                    compare_ewok_records,
+                    output_dir,
+                    args.dpi,
+                    args.primary_label,
+                    args.compare_label,
+                    word2vec_baselines=compare_word2vec,
+                    max_step=args.max_step,
+                    smooth_window=args.smooth_window,
+                    show_markers=not args.no_markers,
+                )
+            )
+
+        requested_columns = _parse_csv_list(args.compare_category_columns)
+        if requested_columns:
+            resolved_columns, missing_columns = _resolve_requested_columns(
+                requested_columns,
+                ewok_records,
+                compare_ewok_records,
+                reduction="mean",
+            )
+            for column in resolved_columns:
+                created.extend(
+                    plot_ewok_category_column_mean_compare(
+                        ewok_records,
+                        compare_ewok_records,
+                        column,
+                        output_dir,
+                        args.dpi,
+                        args.primary_label,
+                        args.compare_label,
+                        max_step=args.max_step,
+                        smooth_window=args.smooth_window,
+                        show_markers=not args.no_markers,
+                    )
+                )
+            if missing_columns:
+                print(
+                    "Requested comparison category columns not found: "
+                    + ", ".join(missing_columns)
+                )
     created.extend(plot_hellaswag(records, output_dir, args.dpi))
 
     print(f"Loaded records: total={len(records)}, ewok={len(ewok_all)}, ewok_deduped={len(ewok_records)}")
@@ -869,6 +1251,12 @@ def main() -> None:
         print(f"Dropped duplicate EWOK steps (kept preferred record): {dup_str}")
     else:
         print("No duplicate EWOK steps found.")
+    if isinstance(args.max_step, int):
+        print(f"Applied EWOK step filter: <= {args.max_step}")
+    if args.smooth_window > 1:
+        print(f"Applied moving-average smoothing window: {args.smooth_window}")
+    if args.no_markers:
+        print("Disabled line markers for comparison plots.")
     if args.compare_metrics:
         print(f"Loaded comparison EWOK records: {len(compare_ewok_records)}")
         if compare_dup_info:
@@ -876,7 +1264,13 @@ def main() -> None:
             print(f"Dropped duplicate comparison EWOK steps: {dup_str}")
         else:
             print("No duplicate comparison EWOK steps found.")
-    print(f"Detected EWOK reductions: {', '.join(reductions) if reductions else 'none'}")
+    print(
+        f"Detected EWOK reductions in metrics: "
+        f"{', '.join(available_reductions) if available_reductions else 'none'}"
+    )
+    if not args.include_ewok_sum_plots and "sum" in available_reductions:
+        print("Skipping EWOK sum plots by default. Use --include-ewok-sum-plots to enable them.")
+    print(f"Plotted EWOK reductions: {', '.join(reductions) if reductions else 'none'}")
     print(f"Wrote {len(created)} plot(s) to: {output_dir}")
     for p in created:
         print(f" - {p.name}")

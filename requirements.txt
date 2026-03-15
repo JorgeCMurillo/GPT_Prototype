@@ -2,7 +2,9 @@ torch
 accelerate
 transformers
 datasets
+jinja2
 numpy
 pandas
 tqdm
 matplotlib
+PyYAML

@@ -313,8 +313,11 @@ make_dataloader = make_bos_row_dataloader
 
 
 if __name__ == "__main__":
+    proto_root = os.path.dirname(os.path.dirname(__file__))
+    repo_root = os.path.dirname(os.path.dirname(proto_root))
+    sample_data_dir = os.path.join(repo_root, "fineweb_edu_10B_bosrow")
     dl = make_bos_row_dataloader(
-        data_dir="/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B",
+        data_dir=sample_data_dir,
         split="train",
         batch_size=4,
         seq_len=1024,

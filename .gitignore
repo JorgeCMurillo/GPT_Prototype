@@ -1,13 +1,26 @@
 # Python cache
 __pycache__/
 *.py[cod]
+.ipynb_checkpoints/
 
 # moonshotGPT artifacts and large data
 moonshotGPT/experiments/
+moonshotGPT/experiments_smoke/
 moonshotGPT/fineweb_edu_10B/
+moonshotGPT/fineweb_edu_100B_bosrow/
 moonshotGPT/fineweb_edu_10B_bosrow/
 moonshotGPT/ref_loss_gpt2m_*/
+moonshotGPT/runs/
+moonshotGPT/research/**/experiments/
+moonshotGPT/research/**/runs/
+moonshotGPT/research/**/.resume_state/
+moonshotGPT/data_augmentation/
+moonshotGPT/ewok_full_jsonl/
+moonshotGPT/ewok_fast_jsonl*.zip
+moonshotGPT/ewok_full_jsonl*.zip
 moonshotGPT/*.bin
 moonshotGPT/*.log
 moonshotGPT/openai_key.txt
-moonshotGPT/ewok_fast_jsonl*.zip
+moonshotGPT/**/*.safetensors
+moonshotGPT/**/*.bin
+moonshotGPT/**/*.log

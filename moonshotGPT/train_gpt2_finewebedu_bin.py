@@ -1,4 +1,9 @@
-# train_gpt2_finewebedu_bin.py
+"""Main training entrypoint for GPT-style pretraining on FineWeb token shards.
+
+It supports baseline and rho-guided training, resume-safe distributed logging,
+and periodic validation plus EWOK, HellaSwag, and BLiMP evaluation.
+"""
+
 import os, random, argparse, json, math, inspect, subprocess, sys, re
 from datetime import datetime
 from contextlib import nullcontext
@@ -31,6 +36,7 @@ from evaluation.ewok import evaluate, ewok_df as EWOK_DF
 from shard_loader import make_dataloader
 from evaluation.runner import (
     build_ewok_row_category_lookup,
+    run_blimp_eval_step,
     run_ewok_eval_step,
     run_final_ewok_eval_main_process,
     run_hellaswag_eval_step,
@@ -47,6 +53,11 @@ try:
     from evaluation import hellaswag as hellaswag_eval
 except Exception:
     hellaswag_eval = None
+
+try:
+    from evaluation import blimp as blimp_eval
+except Exception:
+    blimp_eval = None
 
 
 # -----------------------------
@@ -596,9 +607,12 @@ def main(
     hellaswag_dataset_config: str = None,
     hellaswag_split: str = "validation",
     hellaswag_local_files_only: bool = False,
+    blimp_every: int = 0,
+    blimp_batch_size: int = 8,
+    blimp_data_dir: str = "",
+    blimp_max_examples_per_subset: int = 0,
     ewok_every: int = 250,
     ewok_batch_size: int = 8,
-    skip_final_ewok: bool = False,
     save_every: int = 2000,
     exposure_every: int = 50,
     push_to_hub: bool = False,
@@ -729,6 +743,8 @@ def main(
     scalars_path = os.path.join(out_dir, "scalars.jsonl")
     ewok_items_path = os.path.join(out_dir, "ewok_items.jsonl")
     hellaswag_metrics_path = os.path.join(out_dir, "hellaswag_metrics.jsonl")
+    blimp_items_path = os.path.join(out_dir, "blimp_items.jsonl")
+    blimp_metrics_path = os.path.join(out_dir, "blimp_metrics.jsonl")
     metrics_path = os.path.join(out_dir, "step_metrics.json")
     run_config_path = os.path.join(out_dir, "run_config.json")
 
@@ -815,6 +831,13 @@ def main(
             print(f"rho_warmup_steps            = {rho_warmup_steps}")
             print(f"rho_ref_loss_cap            = {rho_ref_loss_cap}")
             print("---------------------")
+        if blimp_every > 0:
+            print("---- BLiMP eval ----")
+            print(f"blimp_every                 = {blimp_every}")
+            print(f"blimp_batch_size            = {blimp_batch_size}")
+            print(f"blimp_data_dir              = {blimp_data_dir or '<auto>'}")
+            print(f"blimp_max_examples_per_subset = {blimp_max_examples_per_subset}")
+            print("--------------------")
         print(f"out_dir = {out_dir}")
 
     # Tokenizer
@@ -936,7 +959,10 @@ def main(
             resid_pdrop=0.0,
             summary_first_dropout=0.0,
         )
+        # KV cache only helps incremental decoding; pretraining recomputes full sequences.
+        config.use_cache = False
         model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
+    model.config.use_cache = False
 
     if accelerator.is_local_main_process:
         if model_init_ckpt_dir:
@@ -1051,6 +1077,9 @@ def main(
     hellaswag_ds = None
     hellaswag_max_seq_len = None
     hellaswag_disabled = False
+    blimp_records = None
+    blimp_source_path = None
+    blimp_disabled = False
     ewok_category_columns = ("TargetDiff", "ContextDiff", "ContextType")
     ewok_row_category_lookup = build_ewok_row_category_lookup(EWOK_DF, ewok_category_columns)
 
@@ -1530,6 +1559,7 @@ def main(
         if accelerator.sync_gradients and (opt_step > 0):
             do_save = (save_every > 0 and opt_step % save_every == 0)
             do_hellaswag = (hellaswag_every > 0 and opt_step % hellaswag_every == 0)
+            do_blimp = (blimp_every > 0 and opt_step % blimp_every == 0)
             do_ewok = (ewok_every > 0 and opt_step % ewok_every == 0)
 
             if do_hellaswag:
@@ -1561,6 +1591,37 @@ def main(
                     append_jsonl_fn=append_jsonl,
                     save_metrics_fn=save_metrics,
                     get_current_lr_fn=get_current_lr,
+                    release_eval_memory_fn=release_eval_memory,
+                )
+
+            if do_blimp:
+                blimp_disabled, blimp_records, blimp_source_path = run_blimp_eval_step(
+                    accelerator=accelerator,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    blimp_eval_module=blimp_eval,
+                    blimp_disabled=blimp_disabled,
+                    blimp_records=blimp_records,
+                    blimp_source_path=blimp_source_path,
+                    blimp_data_dir=blimp_data_dir,
+                    blimp_max_examples_per_subset=blimp_max_examples_per_subset,
+                    blimp_batch_size=blimp_batch_size,
+                    opt_step=opt_step,
+                    last_train_loss=last_train_loss,
+                    loss_val=loss_val,
+                    last_lr=last_lr,
+                    optimizer=optimizer,
+                    tokens_seen_local_total=tokens_seen_local_total,
+                    scalars_path=scalars_path,
+                    blimp_items_path=blimp_items_path,
+                    blimp_metrics_path=blimp_metrics_path,
+                    step_metrics=step_metrics,
+                    metrics_path=metrics_path,
+                    append_jsonl_fn=append_jsonl,
+                    save_metrics_fn=save_metrics,
+                    get_current_lr_fn=get_current_lr,
+                    to_jsonable_fn=to_jsonable,
                     release_eval_memory_fn=release_eval_memory,
                 )
 
@@ -1606,28 +1667,25 @@ def main(
     # Final EWoK (+ per-item) + final checkpoint
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        if not skip_final_ewok:
-            run_final_ewok_eval_main_process(
-                accelerator=accelerator,
-                model=model,
-                tokenizer=tokenizer,
-                evaluate_fn=evaluate,
-                ewok_batch_size=ewok_batch_size,
-                opt_step=opt_step,
-                optimizer=optimizer,
-                tokens_seen_local_total=tokens_seen_local_total,
-                ewok_items_path=ewok_items_path,
-                step_metrics=step_metrics,
-                metrics_path=metrics_path,
-                ewok_row_category_lookup=ewok_row_category_lookup,
-                ewok_category_columns=ewok_category_columns,
-                append_jsonl_fn=append_jsonl,
-                save_metrics_fn=save_metrics,
-                get_current_lr_fn=get_current_lr,
-                to_jsonable_fn=to_jsonable,
-            )
-        else:
-            print("[info] skipping final EWoK evaluation (--skip_final_ewok)")
+        run_final_ewok_eval_main_process(
+            accelerator=accelerator,
+            model=model,
+            tokenizer=tokenizer,
+            evaluate_fn=evaluate,
+            ewok_batch_size=ewok_batch_size,
+            opt_step=opt_step,
+            optimizer=optimizer,
+            tokens_seen_local_total=tokens_seen_local_total,
+            ewok_items_path=ewok_items_path,
+            step_metrics=step_metrics,
+            metrics_path=metrics_path,
+            ewok_row_category_lookup=ewok_row_category_lookup,
+            ewok_category_columns=ewok_category_columns,
+            append_jsonl_fn=append_jsonl,
+            save_metrics_fn=save_metrics,
+            get_current_lr_fn=get_current_lr,
+            to_jsonable_fn=to_jsonable,
+        )
 
         # Auto-generate run-local analysis plots from step_metrics.json
         plot_script = os.path.join(os.path.dirname(__file__), "plot_step_metrics.py")
@@ -1740,12 +1798,18 @@ if __name__ == "__main__":
                         help="Dataset split used for HellaSwag eval")
     parser.add_argument("--hellaswag_local_files_only", action="store_true",
                         help="Load HellaSwag dataset from local cache/files only")
+    parser.add_argument("--blimp_every", type=int, default=0,
+                        help="Run BLiMP-fast eval every N optimizer steps (0 disables)")
+    parser.add_argument("--blimp_batch_size", type=int, default=8,
+                        help="Batch size inside BLiMP evaluate()")
+    parser.add_argument("--blimp_data_dir", type=str, default="",
+                        help="Directory containing BLiMP-fast JSONL files")
+    parser.add_argument("--blimp_max_examples_per_subset", type=int, default=0,
+                        help="Optional cap per BLiMP subset for faster smoke tests (0 uses all)")
     parser.add_argument("--ewok_every", type=int, default=250,
                         help="Run EWoK eval every N optimizer steps (0 disables)")
     parser.add_argument("--ewok_batch_size", type=int, default=4,
                         help="Batch size inside EWoK evaluate()")
-    parser.add_argument("--skip_final_ewok", action="store_true",
-                        help="Skip final EWoK eval at end of training (useful for quick smoke tests)")
     parser.add_argument("--save_every", type=int, default=2000,
                         help="Save checkpoint every N optimizer steps (0 disables)")
 

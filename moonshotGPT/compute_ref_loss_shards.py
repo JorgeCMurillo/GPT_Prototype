@@ -1,3 +1,9 @@
+"""Precompute per-token reference losses for tokenized FineWeb shards.
+
+The script runs a fixed causal LM over each shard, writes aligned ref-loss
+memmaps plus metadata, and prepares the inputs needed for rho-guided training.
+"""
+
 import argparse
 import json
 import os

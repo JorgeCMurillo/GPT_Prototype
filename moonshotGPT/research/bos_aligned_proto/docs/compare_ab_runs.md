@@ -23,7 +23,7 @@ python -m train_gpt2_finewebedu_bin \
 ### 1) Build BOS dataset
 
 ```bash
-python -m bos_aligned_proto.prepare_finewebedu_bos_rows \
+python -m research.bos_aligned_proto.data.prepare_finewebedu_bos_rows \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
   --split train \
@@ -39,7 +39,7 @@ python -m bos_aligned_proto.prepare_finewebedu_bos_rows \
 ### 2) Train BOS model
 
 ```bash
-python -m bos_aligned_proto.train_gpt2_finewebedu_bos_bin \
+python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
   --data_dir fineweb_edu_10B_bosrow \
   --micro_batch_size 10 \
   --seq_len 1024 \
@@ -72,6 +72,9 @@ BOS-only diagnostics:
   - `tokens_cropped_total`
   - `crop_fraction`
   - `rows_written_total`
+
+Future BOS runs default to `runs/research/bos_aligned_proto/`.
+Legacy BOS outputs already under `research/bos_aligned_proto/experiments/` remain unchanged.
 
 ## Result table template
 

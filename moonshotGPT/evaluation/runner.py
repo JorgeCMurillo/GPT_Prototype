@@ -1,3 +1,9 @@
+"""Shared training-time evaluation helpers for validation and benchmarks.
+
+These functions run distributed-safe validation plus EWOK, HellaSwag, BLiMP,
+and CORE evaluations, then merge the resulting metrics into run logs.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,6 +13,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn.attention import sdpa_kernel
+
+from .ewok import BABYLM_COMPLETION_CHOICE, EWOK_CONTEXT_SENSITIVITY
 
 
 def run_parallel_validation(
@@ -215,6 +223,277 @@ def run_hellaswag_eval_step(
     return bool(hellaswag_disabled), hellaswag_ds, hellaswag_max_seq_len
 
 
+def run_core_eval_step(
+    *,
+    accelerator,
+    model,
+    tokenizer,
+    device,
+    core_eval_module,
+    core_disabled: bool,
+    core_bundle_dir: str,
+    core_local_files_only: bool,
+    core_max_per_task: int,
+    opt_step: int,
+    last_train_loss,
+    loss_val: float,
+    last_lr,
+    optimizer,
+    tokens_seen_local_total: int,
+    scalars_path: str,
+    core_metrics_path: str,
+    step_metrics: list,
+    metrics_path: str,
+    append_jsonl_fn,
+    save_metrics_fn,
+    get_current_lr_fn,
+    release_eval_memory_fn,
+    final: bool = False,
+) -> bool:
+    """Run CORE eval on main process and synchronize all ranks."""
+    accelerator.wait_for_everyone()
+    model.eval()
+    release_eval_memory_fn()
+
+    if accelerator.is_main_process:
+        if core_disabled:
+            pass
+        elif core_eval_module is None:
+            print("[warn] core_eval import failed; skipping CORE eval.")
+            core_disabled = True
+        else:
+            try:
+                print("starting CORE evaluation on main process")
+                core_model = accelerator.unwrap_model(model)
+                core_model.eval()
+                with torch.no_grad():
+                    core_results = core_eval_module.evaluate_core(
+                        model=core_model,
+                        tokenizer=tokenizer,
+                        device=device,
+                        max_per_task=core_max_per_task,
+                        bundle_dir=(core_bundle_dir or None),
+                        local_files_only=core_local_files_only,
+                        distributed=False,
+                    )
+
+                core_record = {
+                    "step": int(opt_step),
+                    "timestamp": datetime.now().isoformat(),
+                    "train_loss_last": float(last_train_loss) if last_train_loss is not None else float(loss_val),
+                    "lr": float(last_lr) if last_lr is not None else get_current_lr_fn(optimizer),
+                    "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
+                    "core": {
+                        "num_tasks": int(core_results["num_tasks"]),
+                        "max_per_task": int(core_results["max_per_task"]),
+                        "bundle_source": str(core_results.get("bundle_source", core_results["bundle_dir"])),
+                        "bundle_dir": str(core_results["bundle_dir"]),
+                        "results": dict(core_results["results"]),
+                        "centered_results": dict(core_results["centered_results"]),
+                        "core_metric": float(core_results["core_metric"]),
+                    },
+                }
+                if final:
+                    core_record["final"] = True
+                step_metrics.append(core_record)
+                save_metrics_fn(step_metrics, metrics_path)
+
+                core_scalar = {
+                    "type": "core",
+                    "step": int(opt_step),
+                    "timestamp": datetime.now().isoformat(),
+                    "num_tasks": int(core_results["num_tasks"]),
+                    "max_per_task": int(core_results["max_per_task"]),
+                    "bundle_source": str(core_results.get("bundle_source", core_results["bundle_dir"])),
+                    "bundle_dir": str(core_results["bundle_dir"]),
+                    "core_metric": float(core_results["core_metric"]),
+                }
+                if final:
+                    core_scalar["final"] = True
+
+                core_metrics_record = {
+                    **core_scalar,
+                    "results": dict(core_results["results"]),
+                    "centered_results": dict(core_results["centered_results"]),
+                    "examples_per_task": dict(core_results["examples_per_task"]),
+                }
+
+                append_jsonl_fn(scalars_path, core_scalar)
+                append_jsonl_fn(core_metrics_path, core_metrics_record)
+                print(
+                    f"CORE @ step {int(opt_step)}: "
+                    f"core_metric={core_results['core_metric']:.4f}, "
+                    f"tasks={int(core_results['num_tasks'])}"
+                )
+            except Exception as exc:
+                print(f"[warn] failed to run CORE eval: {exc}")
+                core_disabled = True
+
+    accelerator.wait_for_everyone()
+    model.train()
+    return bool(core_disabled)
+
+
+def run_blimp_eval_step(
+    *,
+    accelerator,
+    model,
+    tokenizer,
+    device,
+    blimp_eval_module,
+    blimp_disabled: bool,
+    blimp_records,
+    blimp_source_path,
+    blimp_data_dir: str,
+    blimp_max_examples_per_subset: int,
+    blimp_batch_size: int,
+    opt_step: int,
+    last_train_loss,
+    loss_val: float,
+    last_lr,
+    optimizer,
+    tokens_seen_local_total: int,
+    scalars_path: str,
+    blimp_items_path: str,
+    blimp_metrics_path: str,
+    step_metrics: list,
+    metrics_path: str,
+    append_jsonl_fn,
+    save_metrics_fn,
+    get_current_lr_fn,
+    to_jsonable_fn,
+    release_eval_memory_fn,
+) -> Tuple[bool, Any, Any]:
+    """Run BLiMP-fast eval on main process and synchronize all ranks."""
+    accelerator.wait_for_everyone()
+    model.eval()
+    release_eval_memory_fn()
+
+    if accelerator.is_main_process:
+        if blimp_disabled:
+            pass
+        elif blimp_eval_module is None:
+            print("[warn] blimp_eval import failed; skipping BLiMP eval.")
+            blimp_disabled = True
+        else:
+            if blimp_records is None:
+                print("Loading BLiMP dataset")
+                try:
+                    blimp_records, blimp_source_path = blimp_eval_module.load_blimp_records(
+                        data_dir=(blimp_data_dir or None),
+                        max_examples_per_subset=blimp_max_examples_per_subset,
+                    )
+                except Exception as exc:
+                    print(f"[warn] failed to load BLiMP dataset: {exc}")
+                    blimp_records = None
+                    blimp_source_path = None
+                    blimp_disabled = True
+
+            if blimp_records is not None:
+                print("starting BLiMP evaluation on main process")
+                blimp_model = accelerator.unwrap_model(model)
+                blimp_model.eval()
+                with torch.no_grad():
+                    blimp_sum = blimp_eval_module.evaluate(
+                        blimp_model,
+                        tokenizer,
+                        batch_size=blimp_batch_size,
+                        return_per_item=True,
+                        score_reduction="sum",
+                        records=blimp_records,
+                        source_path=blimp_source_path,
+                        device=device,
+                    )
+                    blimp_mean = blimp_eval_module.evaluate(
+                        blimp_model,
+                        tokenizer,
+                        batch_size=blimp_batch_size,
+                        return_per_item=True,
+                        score_reduction="mean",
+                        records=blimp_records,
+                        source_path=blimp_source_path,
+                        device=device,
+                    )
+
+                per_item_sum = list(blimp_sum.pop("per_item", []))
+                per_item_mean = list(blimp_mean.pop("per_item", []))
+
+                for rec in per_item_sum:
+                    rr = dict(rec)
+                    rr.update(
+                        {
+                            "type": "blimp_item",
+                            "step": int(opt_step),
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+                    append_jsonl_fn(blimp_items_path, rr)
+                for rec in per_item_mean:
+                    rr = dict(rec)
+                    rr.update(
+                        {
+                            "type": "blimp_item_mean",
+                            "step": int(opt_step),
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+                    append_jsonl_fn(blimp_items_path, rr)
+
+                record = {
+                    "step": int(opt_step),
+                    "timestamp": datetime.now().isoformat(),
+                    "train_loss_last": float(last_train_loss) if last_train_loss is not None else float(loss_val),
+                    "lr": float(last_lr) if last_lr is not None else get_current_lr_fn(optimizer),
+                    "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
+                    "blimp_sum": to_jsonable_fn(blimp_sum),
+                    "blimp_mean": to_jsonable_fn(blimp_mean),
+                }
+                step_metrics.append(record)
+                save_metrics_fn(step_metrics, metrics_path)
+
+                sum_scalar = {
+                    "type": "blimp",
+                    "step": int(opt_step),
+                    "timestamp": datetime.now().isoformat(),
+                    "score_reduction": "sum",
+                    "num_examples": int(blimp_sum["num_examples"]),
+                    "num_subsets": int(blimp_sum["num_subsets"]),
+                    "accuracy": float(blimp_sum["accuracy"]),
+                    "accuracy_macro_uid": float(blimp_sum["accuracy_macro_uid"]),
+                    "tie_rate": float(blimp_sum["tie_rate"]),
+                    "batch_size": int(blimp_batch_size),
+                    "source": str(blimp_sum["source"]),
+                }
+                mean_scalar = {
+                    "type": "blimp",
+                    "step": int(opt_step),
+                    "timestamp": datetime.now().isoformat(),
+                    "score_reduction": "mean",
+                    "num_examples": int(blimp_mean["num_examples"]),
+                    "num_subsets": int(blimp_mean["num_subsets"]),
+                    "accuracy": float(blimp_mean["accuracy"]),
+                    "accuracy_macro_uid": float(blimp_mean["accuracy_macro_uid"]),
+                    "tie_rate": float(blimp_mean["tie_rate"]),
+                    "batch_size": int(blimp_batch_size),
+                    "source": str(blimp_mean["source"]),
+                }
+                append_jsonl_fn(scalars_path, sum_scalar)
+                append_jsonl_fn(scalars_path, mean_scalar)
+                append_jsonl_fn(blimp_metrics_path, sum_scalar)
+                append_jsonl_fn(blimp_metrics_path, mean_scalar)
+                print(
+                    f"BLiMP @ step {int(opt_step)}: "
+                    f"sum_acc={blimp_sum['accuracy']:.4f}, "
+                    f"sum_uid_macro={blimp_sum['accuracy_macro_uid']:.4f}, "
+                    f"mean_acc={blimp_mean['accuracy']:.4f}, "
+                    f"mean_uid_macro={blimp_mean['accuracy_macro_uid']:.4f}"
+                )
+
+    accelerator.wait_for_everyone()
+    model.train()
+    return bool(blimp_disabled), blimp_records, blimp_source_path
+
+
 def _unpack_ewok_per_item(result):
     """Backward/forward compatible unpack for ewok_eval.evaluate(return_per_item=True)."""
     if not isinstance(result, (list, tuple)):
@@ -226,6 +505,58 @@ def _unpack_ewok_per_item(result):
         eval_off, eval_full, per_item, margin_stats = result
         return eval_off, eval_full, per_item, margin_stats
     raise ValueError(f"Unexpected EWoK return tuple length: {len(result)}")
+
+
+def _evaluate_ewok_all_methods(
+    evaluate_fn,
+    model,
+    tokenizer,
+    *,
+    batch_size: int,
+    score_reduction: str,
+):
+    try:
+        result = evaluate_fn(
+            model,
+            tokenizer,
+            batch_size=batch_size,
+            return_per_item=True,
+            score_reduction=score_reduction,
+            return_all_methods=True,
+        )
+    except TypeError:
+        eval_off, eval_full, per_item, margin_stats = _unpack_ewok_per_item(
+            evaluate_fn(
+                model,
+                tokenizer,
+                batch_size=batch_size,
+                return_per_item=True,
+                score_reduction=score_reduction,
+            )
+        )
+        return {
+            BABYLM_COMPLETION_CHOICE: {
+                "domain_scores_official": eval_off,
+                "domain_scores_full": eval_full,
+                "domain_margin_stats": margin_stats,
+            },
+            EWOK_CONTEXT_SENSITIVITY: None,
+        }, per_item
+
+    if not isinstance(result, (list, tuple)) or len(result) != 2:
+        raise ValueError(
+            "Expected evaluate(return_all_methods=True, return_per_item=True) "
+            f"to return (metrics_by_method, per_item), got: {type(result)}"
+        )
+
+    metrics_by_method, per_item = result
+    if not isinstance(metrics_by_method, dict):
+        raise TypeError(f"Unexpected metrics_by_method type: {type(metrics_by_method)}")
+    if not isinstance(per_item, list):
+        raise TypeError(f"Unexpected per_item type: {type(per_item)}")
+    if BABYLM_COMPLETION_CHOICE not in metrics_by_method:
+        raise KeyError(f"Missing {BABYLM_COMPLETION_CHOICE} in EWoK metrics.")
+    return metrics_by_method, per_item
 
 
 def _canonicalize_category_value(value) -> str:
@@ -339,24 +670,30 @@ def run_ewok_eval_step(
     if accelerator.is_main_process:
         print("starting EWoK evaluation on main process")
         with torch.no_grad():
-            eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
-                evaluate_fn(
-                    accelerator.unwrap_model(model),
-                    tokenizer,
-                    batch_size=ewok_batch_size,
-                    return_per_item=True,
-                    score_reduction="sum",
-                )
+            metrics_by_method_sum, per_item_sum = _evaluate_ewok_all_methods(
+                evaluate_fn,
+                accelerator.unwrap_model(model),
+                tokenizer,
+                batch_size=ewok_batch_size,
+                score_reduction="sum",
             )
-            eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
-                evaluate_fn(
-                    accelerator.unwrap_model(model),
-                    tokenizer,
-                    batch_size=ewok_batch_size,
-                    return_per_item=True,
-                    score_reduction="mean",
-                )
+            metrics_by_method_mean, per_item_mean = _evaluate_ewok_all_methods(
+                evaluate_fn,
+                accelerator.unwrap_model(model),
+                tokenizer,
+                batch_size=ewok_batch_size,
+                score_reduction="mean",
             )
+            babylm_sum = metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
+            babylm_mean = metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
+            context_sum = metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
+            context_mean = metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
+            eval_off_sum = babylm_sum["domain_scores_official"]
+            eval_full_sum = babylm_sum["domain_scores_full"]
+            eval_margin_stats_sum = babylm_sum.get("domain_margin_stats")
+            eval_off_mean = babylm_mean["domain_scores_official"]
+            eval_full_mean = babylm_mean["domain_scores_full"]
+            eval_margin_stats_mean = babylm_mean.get("domain_margin_stats")
             eval_by_category_full_sum = _aggregate_eval_full_by_category(
                 per_item_sum,
                 ewok_row_category_lookup,
@@ -410,7 +747,82 @@ def run_ewok_eval_step(
             "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
             "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
             "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+            "eval_babylm_completion_choice_official": to_jsonable_fn(eval_off_sum),
+            "eval_babylm_completion_choice_full": to_jsonable_fn(eval_full_sum),
+            "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
+            "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
+            "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
+            "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
+            "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
+            "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+            "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+            "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+            "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
         }
+        if context_sum is not None:
+            record.update(
+                {
+                    "eval_context_sensitivity_official": to_jsonable_fn(
+                        context_sum["domain_scores_official"]
+                    ),
+                    "eval_context_sensitivity_full": to_jsonable_fn(
+                        context_sum["domain_scores_full"]
+                    ),
+                    "eval_context_sensitivity_official_sum": to_jsonable_fn(
+                        context_sum["domain_scores_official"]
+                    ),
+                    "eval_context_sensitivity_full_sum": to_jsonable_fn(
+                        context_sum["domain_scores_full"]
+                    ),
+                    "eval_context_sensitivity_margin_stats": to_jsonable_fn(
+                        context_sum.get("domain_margin_stats")
+                    ),
+                    "eval_context_sensitivity_margin_stats_sum": to_jsonable_fn(
+                        context_sum.get("domain_margin_stats")
+                    ),
+                    "eval_ewok_paper_context_sensitivity_official": to_jsonable_fn(
+                        context_sum["domain_scores_official"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_full": to_jsonable_fn(
+                        context_sum["domain_scores_full"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_official_sum": to_jsonable_fn(
+                        context_sum["domain_scores_official"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_full_sum": to_jsonable_fn(
+                        context_sum["domain_scores_full"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_margin_stats": to_jsonable_fn(
+                        context_sum.get("domain_margin_stats")
+                    ),
+                    "eval_ewok_paper_context_sensitivity_margin_stats_sum": to_jsonable_fn(
+                        context_sum.get("domain_margin_stats")
+                    ),
+                }
+            )
+        if context_mean is not None:
+            record.update(
+                {
+                    "eval_context_sensitivity_official_mean": to_jsonable_fn(
+                        context_mean["domain_scores_official"]
+                    ),
+                    "eval_context_sensitivity_full_mean": to_jsonable_fn(
+                        context_mean["domain_scores_full"]
+                    ),
+                    "eval_context_sensitivity_margin_stats_mean": to_jsonable_fn(
+                        context_mean.get("domain_margin_stats")
+                    ),
+                    "eval_ewok_paper_context_sensitivity_official_mean": to_jsonable_fn(
+                        context_mean["domain_scores_official"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_full_mean": to_jsonable_fn(
+                        context_mean["domain_scores_full"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_margin_stats_mean": to_jsonable_fn(
+                        context_mean.get("domain_margin_stats")
+                    ),
+                }
+            )
         step_metrics.append(record)
         save_metrics_fn(step_metrics, metrics_path)
         print(f"Saved metrics to {metrics_path}")
@@ -447,24 +859,30 @@ def run_final_ewok_eval_main_process(
     model.eval()
     accelerator.unwrap_model(model).eval()
     with torch.no_grad():
-        eval_off_sum, eval_full_sum, per_item_sum, eval_margin_stats_sum = _unpack_ewok_per_item(
-            evaluate_fn(
-                accelerator.unwrap_model(model),
-                tokenizer,
-                batch_size=ewok_batch_size,
-                return_per_item=True,
-                score_reduction="sum",
-            )
+        metrics_by_method_sum, per_item_sum = _evaluate_ewok_all_methods(
+            evaluate_fn,
+            accelerator.unwrap_model(model),
+            tokenizer,
+            batch_size=ewok_batch_size,
+            score_reduction="sum",
         )
-        eval_off_mean, eval_full_mean, per_item_mean, eval_margin_stats_mean = _unpack_ewok_per_item(
-            evaluate_fn(
-                accelerator.unwrap_model(model),
-                tokenizer,
-                batch_size=ewok_batch_size,
-                return_per_item=True,
-                score_reduction="mean",
-            )
+        metrics_by_method_mean, per_item_mean = _evaluate_ewok_all_methods(
+            evaluate_fn,
+            accelerator.unwrap_model(model),
+            tokenizer,
+            batch_size=ewok_batch_size,
+            score_reduction="mean",
         )
+        babylm_sum = metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
+        babylm_mean = metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
+        context_sum = metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
+        context_mean = metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
+        eval_off_sum = babylm_sum["domain_scores_official"]
+        eval_full_sum = babylm_sum["domain_scores_full"]
+        eval_margin_stats_sum = babylm_sum.get("domain_margin_stats")
+        eval_off_mean = babylm_mean["domain_scores_official"]
+        eval_full_mean = babylm_mean["domain_scores_full"]
+        eval_margin_stats_mean = babylm_mean.get("domain_margin_stats")
         eval_by_category_full_sum = _aggregate_eval_full_by_category(
             per_item_sum,
             ewok_row_category_lookup,
@@ -516,7 +934,82 @@ def run_final_ewok_eval_main_process(
         "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
         "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
         "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+        "eval_babylm_completion_choice_official": to_jsonable_fn(eval_off_sum),
+        "eval_babylm_completion_choice_full": to_jsonable_fn(eval_full_sum),
+        "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
+        "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
+        "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
+        "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
+        "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
+        "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+        "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+        "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+        "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
     }
+    if context_sum is not None:
+        record.update(
+            {
+                "eval_context_sensitivity_official": to_jsonable_fn(
+                    context_sum["domain_scores_official"]
+                ),
+                "eval_context_sensitivity_full": to_jsonable_fn(
+                    context_sum["domain_scores_full"]
+                ),
+                "eval_context_sensitivity_official_sum": to_jsonable_fn(
+                    context_sum["domain_scores_official"]
+                ),
+                "eval_context_sensitivity_full_sum": to_jsonable_fn(
+                    context_sum["domain_scores_full"]
+                ),
+                "eval_context_sensitivity_margin_stats": to_jsonable_fn(
+                    context_sum.get("domain_margin_stats")
+                ),
+                "eval_context_sensitivity_margin_stats_sum": to_jsonable_fn(
+                    context_sum.get("domain_margin_stats")
+                ),
+                "eval_ewok_paper_context_sensitivity_official": to_jsonable_fn(
+                    context_sum["domain_scores_official"]
+                ),
+                "eval_ewok_paper_context_sensitivity_full": to_jsonable_fn(
+                    context_sum["domain_scores_full"]
+                ),
+                "eval_ewok_paper_context_sensitivity_official_sum": to_jsonable_fn(
+                    context_sum["domain_scores_official"]
+                ),
+                "eval_ewok_paper_context_sensitivity_full_sum": to_jsonable_fn(
+                    context_sum["domain_scores_full"]
+                ),
+                "eval_ewok_paper_context_sensitivity_margin_stats": to_jsonable_fn(
+                    context_sum.get("domain_margin_stats")
+                ),
+                "eval_ewok_paper_context_sensitivity_margin_stats_sum": to_jsonable_fn(
+                    context_sum.get("domain_margin_stats")
+                ),
+            }
+        )
+    if context_mean is not None:
+        record.update(
+            {
+                "eval_context_sensitivity_official_mean": to_jsonable_fn(
+                    context_mean["domain_scores_official"]
+                ),
+                "eval_context_sensitivity_full_mean": to_jsonable_fn(
+                    context_mean["domain_scores_full"]
+                ),
+                "eval_context_sensitivity_margin_stats_mean": to_jsonable_fn(
+                    context_mean.get("domain_margin_stats")
+                ),
+                "eval_ewok_paper_context_sensitivity_official_mean": to_jsonable_fn(
+                    context_mean["domain_scores_official"]
+                ),
+                "eval_ewok_paper_context_sensitivity_full_mean": to_jsonable_fn(
+                    context_mean["domain_scores_full"]
+                ),
+                "eval_ewok_paper_context_sensitivity_margin_stats_mean": to_jsonable_fn(
+                    context_mean.get("domain_margin_stats")
+                ),
+            }
+        )
     step_metrics.append(record)
     save_metrics_fn(step_metrics, metrics_path)
     print(f"Saved final metrics to {metrics_path}")
