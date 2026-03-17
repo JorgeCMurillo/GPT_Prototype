@@ -19,6 +19,10 @@ from typing import Optional
 
 import numpy as np
 import torch
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    tqdm = None
 
 try:
     from .ewok_data import load_ewok_df
@@ -32,6 +36,12 @@ BABYLM_COMPLETION_CHOICE = "babylm_completion_choice"
 BABYLM_COMPLETION_CHOICE_SCORING = BABYLM_COMPLETION_CHOICE
 EWOK_CONTEXT_SENSITIVITY = "ewok_context_sensitivity"
 EWOK_PAPER_CONTEXT_SENSITIVITY = EWOK_CONTEXT_SENSITIVITY
+
+
+def _maybe_tqdm(iterable, *, enabled: bool, **kwargs):
+    if enabled and tqdm is not None:
+        return tqdm(iterable, **kwargs)
+    return iterable
 
 
 def _resolve_device(model, device_override=None):
@@ -131,6 +141,7 @@ def ewok_score_records_all_methods(
     batch_size=8,
     score_reduction="sum",
     margin_eps: float = 1e-6,
+    show_progress: bool = False,
 ):
     """Build per-item EWoK records for BabyLM and paper-style scoring methods."""
     score_reduction = _validate_score_reduction(score_reduction)
@@ -141,7 +152,14 @@ def ewok_score_records_all_methods(
     records = []
     domains = ewok_df["Domain"].unique()
 
-    for domain in domains:
+    domain_iter = _maybe_tqdm(
+        domains,
+        enabled=show_progress,
+        desc=f"EWoK domains ({score_reduction})",
+        total=len(domains),
+        leave=False,
+    )
+    for domain in domain_iter:
         df = ewok_df[ewok_df["Domain"] == domain].reset_index()
         s11, s12, s22, s21 = _score_domain_rows(
             model,
@@ -357,6 +375,7 @@ def evaluate(
     score_reduction="sum",
     margin_eps: float = 1e-6,
     return_all_methods: bool = False,
+    show_progress: bool = False,
 ):
     """Evaluate EWoK under BabyLM and paper-style scoring conventions."""
     score_reduction = _validate_score_reduction(score_reduction)
@@ -371,6 +390,7 @@ def evaluate(
         batch_size=batch_size,
         score_reduction=score_reduction,
         margin_eps=margin_eps,
+        show_progress=show_progress,
     )
     metrics_by_method = _summarize_records_all_methods(records, margin_eps)
     per_item = records if return_per_item else None
@@ -394,6 +414,7 @@ def evaluate_babylm_completion_choice(
     return_per_item=False,
     score_reduction="sum",
     margin_eps: float = 1e-6,
+    show_progress: bool = False,
 ):
     """Evaluate only the BabyLM completion-choice scoring view."""
     return evaluate(
@@ -404,6 +425,7 @@ def evaluate_babylm_completion_choice(
         score_reduction=score_reduction,
         margin_eps=margin_eps,
         return_all_methods=False,
+        show_progress=show_progress,
     )
 
 
@@ -414,6 +436,7 @@ def evaluate_all_ewok_scoring_methods(
     return_per_item=False,
     score_reduction="sum",
     margin_eps: float = 1e-6,
+    show_progress: bool = False,
 ):
     """Evaluate both BabyLM and EWoK paper-style scoring views."""
     return evaluate(
@@ -424,6 +447,7 @@ def evaluate_all_ewok_scoring_methods(
         score_reduction=score_reduction,
         margin_eps=margin_eps,
         return_all_methods=True,
+        show_progress=show_progress,
     )
 
 

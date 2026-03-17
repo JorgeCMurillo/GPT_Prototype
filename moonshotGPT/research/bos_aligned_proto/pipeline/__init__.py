@@ -1,4 +1,4 @@
-"""Data preparation and loaders for the BOS-aligned prototype."""
+"""Pipeline code for BOS-aligned dataset preparation and loading."""
 
 from .bos_row_loader import make_bos_row_dataloader
 

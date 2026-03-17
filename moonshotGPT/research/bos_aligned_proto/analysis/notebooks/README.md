@@ -152,15 +152,14 @@ whether the notebook is producing enough usable items.
 
 This notebook is exploratory and currently has several hardcoded assumptions:
 
-- it points at a specific completed BOS run under
-  `research/bos_aligned_proto/experiments/...steps18000`
+- it expects you to point it at a local BOS run directory under
+  `runs/research/bos_aligned_proto/<run_name>`
 - it expects exposure logs to exist for that run
 - it decodes with the default GPT-2 tokenizer
-- it expects an OpenAI API key at
-  `/home/jorge/tokenPred/moonshotGPT/openai_key.txt`
+- it expects `OPENAI_API_KEY` to be available in the environment
 - it calls `client.responses.create(..., model=\"gpt-5.2\")`
-- later statistics cells look for merged pair files under
-  `/home/jorge/tokenPred/moonshotGPT/data_augmentation/`
+- later statistics cells look for merged pair files under a local writable
+  output directory such as `data_augmentation/`
 
 In other words, this notebook is a research workbench tied to a specific local
 environment, not yet a fully packaged analysis pipeline.

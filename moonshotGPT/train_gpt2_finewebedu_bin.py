@@ -1,7 +1,8 @@
 """Main training entrypoint for GPT-style pretraining on FineWeb token shards.
 
-It supports baseline and rho-guided training, resume-safe distributed logging,
-and periodic validation plus EWOK, HellaSwag, and BLiMP evaluation.
+It supports baseline and rho-guided training, checkpoint resume with replay-safe
+dataloader alignment, optional train-shard caps for subset runs, and periodic
+validation plus EWOK, HellaSwag, and BLiMP evaluation.
 """
 
 import os, random, argparse, json, math, inspect, subprocess, sys, re
@@ -231,7 +232,7 @@ def _resolve_ref_loss_file(ref_loss_dir: str, shard_path: str):
     )
 
 
-def _list_split_shards(data_dir: str, split: str):
+def _list_split_shards(data_dir: str, split: str, max_shards: int | None = None):
     prefix = f"{split}_"
     shards = [
         os.path.join(data_dir, name)
@@ -243,6 +244,10 @@ def _list_split_shards(data_dir: str, split: str):
             f"No shards found for split='{split}' in '{data_dir}' "
             f"(expected files like {split}_*.bin)."
         )
+    if max_shards is not None:
+        if max_shards <= 0:
+            raise ValueError(f"max_shards must be > 0 when provided, got {max_shards}")
+        shards = shards[:max_shards]
     return shards
 
 
@@ -275,6 +280,7 @@ def _validate_rho_ref_loss_alignment(
     seq_len: int,
     micro_batch_size: int,
     split: str = "train",
+    max_shards: int | None = None,
     max_reported_errors: int = 12,
 ) -> int:
     """
@@ -285,7 +291,7 @@ def _validate_rho_ref_loss_alignment(
     - ref-loss token count matches source shard token count
     - metadata file exists and has matching seq_len / batch_size / stride / block
     """
-    shards = _list_split_shards(data_dir, split)
+    shards = _list_split_shards(data_dir, split, max_shards=max_shards)
     expected_seq_len = int(seq_len)
     expected_bs = int(micro_batch_size)
     expected_stride = expected_seq_len * expected_bs
@@ -607,7 +613,7 @@ def main(
     hellaswag_dataset_config: str = None,
     hellaswag_split: str = "validation",
     hellaswag_local_files_only: bool = False,
-    blimp_every: int = 0,
+    blimp_every: int = 2000,
     blimp_batch_size: int = 8,
     blimp_data_dir: str = "",
     blimp_max_examples_per_subset: int = 0,
@@ -624,6 +630,7 @@ def main(
     rho_ref_loss_cap: float = 0.0,
     init_from_ckpt: str = "",
     resume_from_run: str = "",
+    max_shards: int = 0,
 ) -> None:
     set_all_seeds(seed)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -636,14 +643,19 @@ def main(
         raise ValueError("Use only one of --init_from_ckpt or --resume_from_run, not both.")
     if init_from_ckpt and not os.path.isdir(init_from_ckpt):
         raise FileNotFoundError(f"--init_from_ckpt not found: {init_from_ckpt}")
+    if max_shards < 0:
+        raise ValueError(f"--max_shards must be >= 0, got {max_shards}")
+    train_max_shards = None if int(max_shards) <= 0 else int(max_shards)
 
     if rho_enabled:
         if not os.path.isdir(rho_ref_loss_dir):
             raise FileNotFoundError(f"--rho_ref_loss_dir not found: {rho_ref_loss_dir}")
         if not (0.0 < float(rho_keep_frac) <= 1.0):
             raise ValueError(f"--rho_keep_frac must be in (0,1], got {rho_keep_frac}")
-        if rho_mode not in {"delta", "ref_only"}:
-            raise ValueError(f"--rho_mode must be one of ['delta','ref_only'], got {rho_mode}")
+        if rho_mode not in {"delta", "ref_only", "student_only"}:
+            raise ValueError(
+                f"--rho_mode must be one of ['delta','ref_only','student_only'], got {rho_mode}"
+            )
         if rho_warmup_steps < 0:
             raise ValueError(f"--rho_warmup_steps must be >=0, got {rho_warmup_steps}")
         if rho_ref_loss_cap < 0:
@@ -667,6 +679,7 @@ def main(
             seq_len=seq_len,
             micro_batch_size=micro_batch_size,
             split="train",
+            max_shards=train_max_shards,
         )
         if accelerator.is_local_main_process:
             print(
@@ -706,10 +719,13 @@ def main(
             f"steps{max_train_steps}"
         )
         if rho_enabled:
+            rho_mode_tag = "studentfocus" if rho_mode == "student_only" else rho_mode
             run_name += (
-                f"_rho{rho_mode}_k{int(round(float(rho_keep_frac) * 1000.0)):04d}_"
+                f"_rho{rho_mode_tag}_k{int(round(float(rho_keep_frac) * 1000.0)):04d}_"
                 f"wu{int(rho_warmup_steps)}"
             )
+        if train_max_shards is not None:
+            run_name += f"_sh{train_max_shards}"
         out_dir = os.path.join(experiments_dir, run_name)
 
     model_init_ckpt_dir = ""
@@ -839,6 +855,7 @@ def main(
             print(f"blimp_max_examples_per_subset = {blimp_max_examples_per_subset}")
             print("--------------------")
         print(f"out_dir = {out_dir}")
+        print(f"max_train_shards            = {train_max_shards if train_max_shards is not None else 'all'}")
 
     # Tokenizer
     tokenizer_source = "gpt2"
@@ -887,6 +904,7 @@ def main(
                 seed=seed,
                 num_workers=num_workers,
                 max_blocks=None,
+                max_shards=train_max_shards,
                 shard_by_rank=True,
                 return_meta=True,
             )
@@ -910,6 +928,7 @@ def main(
                 seed=seed,
                 num_workers=num_workers,
                 max_blocks=None,
+                max_shards=train_max_shards,
                 shard_by_rank=True,
             )
     else:
@@ -922,6 +941,7 @@ def main(
             seed=seed,
             num_workers=num_workers,
             max_blocks=None,
+            max_shards=train_max_shards,
             shard_by_rank=True,
         )
 
@@ -1008,6 +1028,7 @@ def main(
             "num_workers": int(num_workers),
             "world_size": int(world_size),
             "data_dir": os.path.abspath(data_dir),
+            "max_shards": (None if train_max_shards is None else int(train_max_shards)),
         }
         replay_check = validate_replay_compatibility(
             current_cfg=current_replay_cfg,
@@ -1015,6 +1036,12 @@ def main(
             strict=True,
             fail_on_missing=False,
         )
+        if train_max_shards is not None and "max_shards" in replay_check.get("missing", []):
+            raise ValueError(
+                "Resume requested with --max_shards, but the checkpoint trainer_state "
+                "does not record max_shards. Replaying a capped shard subset from an "
+                "older checkpoint is not resume-safe."
+            )
         if accelerator.is_local_main_process:
             for msg in replay_check.get("warnings", []):
                 print(f"[resume][warn] {msg}")
@@ -1133,6 +1160,7 @@ def main(
                     "num_workers": int(num_workers),
                     "world_size": int(world_size),
                     "data_dir": os.path.abspath(data_dir),
+                    "max_shards": (None if train_max_shards is None else int(train_max_shards)),
                 },
             )
             print(f"Saved checkpoint to {ckpt_dir}/")
@@ -1297,11 +1325,12 @@ def main(
                     ref_loss = torch.from_numpy(ref_arr).to(device=device, non_blocking=True).reshape_as(labels)
                     ref_valid_mask = torch.from_numpy(ref_valid_np).to(device=device, non_blocking=True).reshape_as(labels)
 
-                    score = (
-                        token_loss.detach().float() - ref_loss
-                        if rho_mode == "delta"
-                        else -ref_loss
-                    )
+                    if rho_mode == "delta":
+                        score = token_loss.detach().float() - ref_loss
+                    elif rho_mode == "ref_only":
+                        score = -ref_loss
+                    else:
+                        score = token_loss.detach().float()
 
                     candidate_mask = ref_valid_mask
                     if rho_ref_loss_cap > 0:
@@ -1743,6 +1772,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing train_*.bin, val_*.bin, meta.json")
+    parser.add_argument("--max_shards", type=int, default=0,
+                        help="How many train shards to read; 0 means all shards")
     parser.add_argument("--num_workers", type=int, default=0)
 
     parser.add_argument(
@@ -1772,8 +1803,16 @@ if __name__ == "__main__":
                         help="Fraction of candidate tokens kept for optimization when rho is enabled")
     parser.add_argument("--rho_warmup_steps", type=int, default=0,
                         help="Number of optimizer steps to run without rho masking")
-    parser.add_argument("--rho_mode", type=str, default="delta", choices=["delta", "ref_only"],
-                        help="Token selection score: delta=(student_loss-ref_loss), ref_only=(-ref_loss)")
+    parser.add_argument(
+        "--rho_mode",
+        type=str,
+        default="delta",
+        choices=["delta", "ref_only", "student_only"],
+        help=(
+            "Token selection score: delta=(student_loss-ref_loss), "
+            "ref_only=(-ref_loss), student_only=(student_loss)"
+        ),
+    )
     parser.add_argument("--rho_ref_loss_cap", type=float, default=0.0,
                         help="Optional cap on acceptable ref_loss before top-k selection (0 disables)")
     parser.add_argument("--init_from_ckpt", type=str, default="",
@@ -1798,7 +1837,7 @@ if __name__ == "__main__":
                         help="Dataset split used for HellaSwag eval")
     parser.add_argument("--hellaswag_local_files_only", action="store_true",
                         help="Load HellaSwag dataset from local cache/files only")
-    parser.add_argument("--blimp_every", type=int, default=0,
+    parser.add_argument("--blimp_every", type=int, default=2000,
                         help="Run BLiMP-fast eval every N optimizer steps (0 disables)")
     parser.add_argument("--blimp_batch_size", type=int, default=8,
                         help="Batch size inside BLiMP evaluate()")

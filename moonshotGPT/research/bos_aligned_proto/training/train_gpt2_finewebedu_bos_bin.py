@@ -66,11 +66,11 @@ except ImportError:
     )
 
 try:
-    from research.bos_aligned_proto.data.bos_row_loader import (
+    from research.bos_aligned_proto.pipeline.bos_row_loader import (
         make_bos_row_dataloader as make_dataloader,
     )
 except ImportError:
-    from ..data.bos_row_loader import make_bos_row_dataloader as make_dataloader
+    from ..pipeline.bos_row_loader import make_bos_row_dataloader as make_dataloader
 
 try:
     from research.bos_aligned_proto.evaluation.ewok_category import (

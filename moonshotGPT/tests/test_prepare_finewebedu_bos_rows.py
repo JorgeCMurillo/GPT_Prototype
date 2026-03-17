@@ -1,7 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from research.bos_aligned_proto.data.prepare_finewebedu_bos_rows import (
+from research.bos_aligned_proto.pipeline.prepare_finewebedu_bos_rows import (
     PackingStats,
     ProgressMonitor,
     atomic_write_bytes,

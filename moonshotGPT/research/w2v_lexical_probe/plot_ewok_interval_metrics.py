@@ -86,6 +86,20 @@ def _load_baseline_scores(baseline_metrics_path: str | Path, metric_key: str) ->
     with baseline_metrics_path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
 
+    if isinstance(payload, list):
+        list_records = [record for record in payload if isinstance(record, dict)]
+        if metric_key == "domain_scores_full":
+            for record in reversed(list_records):
+                nested = record.get("eval_full_mean")
+                if isinstance(nested, dict):
+                    return nested
+        if metric_key == "domain_scores_official":
+            for record in reversed(list_records):
+                nested = record.get("eval_official_mean")
+                if isinstance(nested, dict):
+                    return nested
+        return None
+
     direct_payload = payload.get(metric_key)
     if isinstance(direct_payload, dict):
         return direct_payload

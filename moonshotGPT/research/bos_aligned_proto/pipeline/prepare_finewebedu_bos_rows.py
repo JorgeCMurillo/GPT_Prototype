@@ -40,6 +40,9 @@ CLI hyperparameters / knobs:
   but increase RAM and packing search work.
 - `--shard_rows`: Number of rows per output shard. `0` means auto-size to
   roughly 100M output tokens per shard.
+- `--max_shards`: Optional output cap. If set above zero, stop after writing
+  this many shard files total. The limit is enforced at shard boundaries so
+  resume snapshots remain exact.
 - `--val_shards`: Number of initial shard indices labeled as validation
   instead of training.
 - `--max_docs`: Optional debug limit. If set above zero, stop after this many
@@ -238,6 +241,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=0,
         help="Rows per shard. 0 means auto-size to about 100M tokens/shard.",
     )
+    parser.add_argument(
+        "--max_shards",
+        type=int,
+        default=0,
+        help="If >0, stop after writing this many shard files total. 0 means no limit.",
+    )
     parser.add_argument("--val_shards", type=int, default=1, help="Number of initial shards to label as val")
     parser.add_argument("--max_docs", type=int, default=0, help="If >0, stop after this many docs (debug)")
     parser.add_argument(
@@ -289,6 +298,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--buffer_docs must be > 0")
     if args.shard_rows < 0:
         raise ValueError("--shard_rows must be >= 0")
+    if args.max_shards < 0:
+        raise ValueError("--max_shards must be >= 0")
     if args.val_shards < 0:
         raise ValueError("--val_shards must be >= 0")
     if args.max_docs < 0:
@@ -1337,6 +1348,7 @@ def pack_rows(
     buffer_docs: int,
     sink: BosRowShardSink,
     stats: PackingStats,
+    max_shards: int | None = None,
     initial_doc_buffer: Sequence[np.ndarray] | None = None,
     on_shard_completed: Callable[[PackingResumeState], None] | None = None,
     on_buffer_state_changed: Callable[[int], None] | None = None,
@@ -1348,6 +1360,7 @@ def pack_rows(
     - if something fits, use the largest fitting document
     - otherwise crop the shortest buffered document to finish the row
     - drop the final incomplete row instead of padding it
+    - if `max_shards` is set, stop only at shard boundaries so resume snapshots remain exact
     """
 
     doc_buffer = [np.asarray(doc, dtype=np.uint16).copy() for doc in initial_doc_buffer or ()]
@@ -1355,6 +1368,8 @@ def pack_rows(
         raise ValueError(
             f"Resume state restored {len(doc_buffer)} buffered docs, which exceeds --buffer_docs={buffer_docs}."
         )
+    if max_shards is not None and max_shards < 0:
+        raise ValueError("max_shards must be >= 0 when provided")
 
     docs_exhausted = False
     docs_consumed = stats.docs_processed
@@ -1377,8 +1392,12 @@ def pack_rows(
         emit_buffer_state()
 
     emit_buffer_state()
+    if max_shards is not None and sink.current_shard_idx >= max_shards:
+        return
     refill_buffer()
     while True:
+        if max_shards is not None and sink.current_shard_idx >= max_shards:
+            break
         if not doc_buffer:
             break
 
@@ -1414,15 +1433,18 @@ def pack_rows(
             break
 
         next_shard_idx = sink.append_row(row)
-        if next_shard_idx is not None and on_shard_completed is not None:
-            on_shard_completed(
-                PackingResumeState(
-                    next_shard_idx=next_shard_idx,
-                    docs_consumed=docs_consumed,
-                    tokens_cropped_total=stats.tokens_cropped_total,
-                    buffered_docs=[doc.copy() for doc in doc_buffer],
+        if next_shard_idx is not None:
+            if on_shard_completed is not None:
+                on_shard_completed(
+                    PackingResumeState(
+                        next_shard_idx=next_shard_idx,
+                        docs_consumed=docs_consumed,
+                        tokens_cropped_total=stats.tokens_cropped_total,
+                        buffered_docs=[doc.copy() for doc in doc_buffer],
+                    )
                 )
-            )
+            if max_shards is not None and next_shard_idx >= max_shards:
+                break
 
 
 def build_meta(
@@ -1460,6 +1482,7 @@ def build_meta(
         "batch_docs": int(args.batch_docs),
         "buffer_docs": int(args.buffer_docs),
         "prefetch_batches": int(args.prefetch_batches),
+        "max_shards": (None if args.max_shards <= 0 else int(args.max_shards)),
         "bos_token_id": int(bos_token_id),
         "eos_token_id": int(bos_token_id),
         "bos_is_eos": True,
@@ -1527,6 +1550,10 @@ def run_pipeline(args: argparse.Namespace) -> dict:
         raise ValueError(
             f"--max_docs={args.max_docs} is smaller than the resume point docs_consumed={resume_state.docs_consumed}."
         )
+    if args.max_shards > 0 and resume_state.next_shard_idx > args.max_shards:
+        raise ValueError(
+            f"--max_shards={args.max_shards} is smaller than the resume point next_shard_idx={resume_state.next_shard_idx}."
+        )
 
     dataset = load_dataset_source(args)
 
@@ -1593,6 +1620,7 @@ def run_pipeline(args: argparse.Namespace) -> dict:
             buffer_docs=args.buffer_docs,
             sink=sink,
             stats=stats,
+            max_shards=(None if args.max_shards <= 0 else int(args.max_shards)),
             initial_doc_buffer=resume_state.buffered_docs,
             on_shard_completed=on_shard_completed,
             on_buffer_state_changed=monitor.set_doc_buffer_len,

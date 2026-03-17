@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from datetime import datetime
@@ -26,19 +27,20 @@ from typing import Dict, Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
 
-EWOK_WORD2VEC_MEAN_BASELINES: Dict[str, float] = {
-    "social-interactions": 0.69,
-    "social-properties": 0.73,
-    "material-dynamics": 0.62,
-    "social-relations": 0.51,
-    "quantitative-properties": 0.54,
-    "physical-dynamics": 0.62,
-    "agent-properties": 0.51,
-    "physical-interactions": 0.54,
-    "material-properties": 0.52,
-    "physical-relations": 0.51,
-    "spatial-relations": 0.42,
-}
+_PROJECT_DIR = Path(__file__).resolve().parent
+_DEFAULT_WORD2VEC_GLOB = _PROJECT_DIR / "runs" / "research" / "w2v_lexical_probe"
+WORD2VEC_BASELINE_LABEL = "FineWeb-Edu Word2Vec"
+
+
+def _default_word2vec_interval_metrics() -> Path:
+    env_path = os.environ.get("MOONSHOT_WORD2VEC_INTERVAL_METRICS")
+    if env_path:
+        return Path(env_path).expanduser()
+
+    candidates = sorted(_DEFAULT_WORD2VEC_GLOB.glob("*/ewok_interval_metrics.jsonl"))
+    if len(candidates) == 1:
+        return candidates[0]
+    return _DEFAULT_WORD2VEC_GLOB / "<run_name>" / "ewok_interval_metrics.jsonl"
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +67,12 @@ def parse_args() -> argparse.Namespace:
         "--overlay-word2vec-ewok-mean",
         action="store_true",
         help="Overlay Word2Vec baselines on ewok_full_mean_domains_4x3 plot and save a separate PNG",
+    )
+    parser.add_argument(
+        "--word2vec-interval-metrics",
+        type=str,
+        default=str(_default_word2vec_interval_metrics()),
+        help="Path to Word2Vec ewok_interval_metrics.jsonl used for the EWOK mean baseline overlay.",
     )
     parser.add_argument(
         "--compare-metrics",
@@ -141,6 +149,32 @@ def _parse_csv_list(value: str) -> List[str]:
         item = part.strip()
         if item:
             out.append(item)
+    return out
+
+
+def _load_word2vec_mean_baselines(interval_metrics_path: Path) -> Dict[str, float]:
+    rows = []
+    with interval_metrics_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            if isinstance(payload, dict) and isinstance(payload.get("domain_scores_full"), dict):
+                rows.append(payload)
+    if not rows:
+        raise ValueError(f"No domain_scores_full payloads found in {interval_metrics_path}")
+
+    final_payload = rows[-1]["domain_scores_full"]
+    out: Dict[str, float] = {}
+    for domain, value in final_payload.items():
+        if str(domain) == "average":
+            continue
+        scalar = _pair_to_scalar(value)
+        if scalar is not None:
+            out[str(domain)] = float(scalar)
+    if not out:
+        raise ValueError(f"Could not extract Word2Vec baselines from {interval_metrics_path}")
     return out
 
 
@@ -395,7 +429,7 @@ def plot_ewok_full(
                 color="#1b9e77",
                 linestyle=(0, (3, 2)),
                 linewidth=1.2,
-                label=f"word2vec {float(w2v):.2f}",
+                label=WORD2VEC_BASELINE_LABEL,
             )
         ax.set_title(domain, fontsize=10)
         ax.set_xlabel("Step", fontsize=9)
@@ -407,9 +441,11 @@ def plot_ewok_full(
     for idx in range(len(domains), len(flat_axes)):
         flat_axes[idx].axis("off")
 
-    fig.suptitle(f"EWOK Full (avg of both components) by Domain ({reduction})", fontsize=14)
-    suffix = "_word2vec" if word2vec_baselines else ""
-    out = output_dir / f"ewok_full_{reduction}_domains_4x3{suffix}.png"
+    title = f"EWOK Full (avg of both components) by Domain ({reduction})"
+    if word2vec_baselines:
+        title += " with Word2Vec baseline"
+    fig.suptitle(title, fontsize=14)
+    out = output_dir / f"ewok_full_{reduction}_domains_4x3.png"
     fig.savefig(out, dpi=dpi)
     plt.close(fig)
     created.append(out)
@@ -823,7 +859,7 @@ def plot_ewok_full_mean_domains_compare(
                 color="#1b9e77",
                 linestyle=(0, (3, 2)),
                 linewidth=1.3,
-                label=f"word2vec {float(w2v):.2f}",
+                label=WORD2VEC_BASELINE_LABEL,
             )
         ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="random chance = 50%")
 
@@ -1175,10 +1211,14 @@ def main() -> None:
         compare_ewok_records, compare_dup_info = dedupe_ewok_by_step(compare_ewok_all)
         compare_ewok_records = filter_records_by_max_step(compare_ewok_records, args.max_step)
 
+    word2vec_baselines = None
+    if args.overlay_word2vec_ewok_mean:
+        word2vec_baselines = _load_word2vec_mean_baselines(Path(args.word2vec_interval_metrics).expanduser().resolve())
+
     created: List[Path] = []
     created.extend(plot_training_scalars(ewok_records, output_dir, args.dpi))
     for reduction in reductions:
-        word2vec = EWOK_WORD2VEC_MEAN_BASELINES if (args.overlay_word2vec_ewok_mean and reduction == "mean") else None
+        word2vec = word2vec_baselines if (word2vec_baselines is not None and reduction == "mean") else None
         created.extend(plot_ewok_full(ewok_records, output_dir, reduction, args.dpi, word2vec_baselines=word2vec))
         created.extend(plot_ewok_margin_domains(ewok_records, output_dir, reduction, args.dpi))
         created.extend(plot_ewok_margin_average_all_domains(ewok_records, output_dir, reduction, args.dpi))
@@ -1199,7 +1239,7 @@ def main() -> None:
             )
         )
         if args.compare_full_mean_domains_4x3:
-            compare_word2vec = EWOK_WORD2VEC_MEAN_BASELINES if args.overlay_word2vec_ewok_mean else None
+            compare_word2vec = word2vec_baselines if args.overlay_word2vec_ewok_mean else None
             created.extend(
                 plot_ewok_full_mean_domains_compare(
                     ewok_records,

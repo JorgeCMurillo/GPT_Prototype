@@ -63,7 +63,20 @@ This is enough to make detokenized GPT-2 shard text cleaner for Word2Vec without
 
 ## Setup
 
-Run from `tokenPred/moonshotGPT`.
+Run from `moonshotGPT`.
+
+Recommended derived-data layout:
+
+```text
+data/
+  processed/
+    fineweb_edu_10B/
+    bos_aligned_proto/
+      fineweb_edu_10B_bosrow/
+```
+
+Legacy top-level paths such as `fineweb_edu_10B/` remain available as compatibility
+symlinks, but new commands should prefer the `data/processed/` locations.
 
 Install `gensim` into the active Python environment if needed:
 
@@ -84,14 +97,14 @@ Basic run:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
-  --data_dir fineweb_edu_10B
+  --data_dir data/processed/fineweb_edu_10B
 ```
 
 More explicit small-run example:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --max_train_shards 1 \
   --max_docs 2000 \
   --embedding_dim 128 \
@@ -103,7 +116,7 @@ Exposure-aligned example using all BOS-row shards:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
-  --data_dir fineweb_edu_10B_bosrow \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --max_train_shards 0 \
   --max_docs 0 \
   --workers 44 \
@@ -114,7 +127,7 @@ Full-EWoK periodic evaluation example:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --workers 44 \
   --eval_every_words 1000000000 \
   --ewok_variant full
@@ -372,7 +385,7 @@ Training can also run EWoK periodically without saving an intermediate Word2Vec 
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --max_train_shards 1 \
   --max_docs 2000 \
   --epochs 1 \

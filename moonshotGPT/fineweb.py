@@ -14,6 +14,11 @@ Resume support:
 - `--resume_from_shard N` restarts from the beginning of shard `N`.
 - Resume works even if a document crossed the shard boundary, because the script
   stores the pending token suffix needed to reconstruct the exact stream.
+
+CLI knobs:
+- `--max_shards`: Optional output cap. If set above zero, stop after writing
+  this many shard files total. The limit is enforced at shard boundaries so
+  the existing resume snapshots remain exact.
 """
 
 import argparse
@@ -84,6 +89,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=100_000_000,
         help="Tokens per shard (uint16). 100M tokens is about 200 MB on disk",
     )
+    parser.add_argument(
+        "--max_shards",
+        type=int,
+        default=0,
+        help="If >0, stop after writing this many shard files total. 0 means no limit.",
+    )
     parser.add_argument("--val_shards", type=int, default=1, help="Number of initial shards to label as 'val'")
     parser.add_argument("--max_docs", type=int, default=0, help="If >0, stop after this many docs (debug)")
     parser.add_argument(
@@ -113,6 +124,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--batch_docs must be > 0")
     if args.shard_tokens <= 0:
         raise ValueError("--shard_tokens must be > 0")
+    if args.max_shards < 0:
+        raise ValueError("--max_shards must be >= 0")
     if args.val_shards < 0:
         raise ValueError("--val_shards must be >= 0")
     if args.max_docs < 0:
@@ -581,6 +594,7 @@ class TokenShardSink:
         self,
         out_dir: str,
         shard_tokens: int,
+        max_shards: int | None,
         val_shards: int,
         writer: ShardWriter,
         on_tokens_written: Callable[[int], None] | None = None,
@@ -589,6 +603,7 @@ class TokenShardSink:
     ) -> None:
         self._out_dir = out_dir
         self._shard_tokens = shard_tokens
+        self._max_shards = max_shards
         self._val_shards = val_shards
         self._writer = writer
         self._on_tokens_written = on_tokens_written
@@ -623,6 +638,8 @@ class TokenShardSink:
         """Flush the final partial shard, if any, after all documents were processed."""
         if self._buf_len == 0:
             return
+        if self._max_shards is not None and self._shard_idx >= self._max_shards:
+            return
 
         path = self._shard_path(self._shard_idx)
         # Partial shards need a trimmed copy because only the populated prefix is valid.
@@ -633,6 +650,9 @@ class TokenShardSink:
         self._buf_len = 0
 
     def _append_tokens(self, tokens: np.ndarray, docs_consumed: int) -> None:
+        if self._max_shards is not None and self._shard_idx >= self._max_shards:
+            return
+
         offset = 0
         total = int(tokens.size)
 
@@ -649,6 +669,8 @@ class TokenShardSink:
             if self._buf_len == self._shard_tokens:
                 pending_tokens = tokens[offset:].copy()
                 self._flush_full_shard(docs_consumed=docs_consumed, pending_tokens=pending_tokens)
+                if self._max_shards is not None and self._shard_idx >= self._max_shards:
+                    return
 
     def _flush_full_shard(self, docs_consumed: int, pending_tokens: np.ndarray) -> None:
         path = self._shard_path(self._shard_idx)
@@ -705,6 +727,7 @@ def build_meta(
         "bos_is_eos": True,
         "doc_format": "[BOS] + gpt2_bpe(text)",
         "shard_tokens": int(args.shard_tokens),
+        "max_shards": (None if args.max_shards <= 0 else int(args.max_shards)),
         "val_shards": int(args.val_shards),
         "prefetch_batches": int(args.prefetch_batches),
         "write_queue_shards": int(args.write_queue_shards),
@@ -744,6 +767,10 @@ def run_pipeline(args: argparse.Namespace) -> dict:
         raise ValueError(
             f"--max_docs={args.max_docs} is smaller than the resume point docs_consumed={resume_state.docs_consumed}."
         )
+    if args.max_shards > 0 and resume_state.next_shard_idx > args.max_shards:
+        raise ValueError(
+            f"--max_shards={args.max_shards} is smaller than the resume point next_shard_idx={resume_state.next_shard_idx}."
+        )
     dataset = load_streaming_dataset(args)
     prefetcher = TextBatchPrefetcher(
         dataset=dataset,
@@ -758,6 +785,7 @@ def run_pipeline(args: argparse.Namespace) -> dict:
     sink = TokenShardSink(
         out_dir=args.out_dir,
         shard_tokens=args.shard_tokens,
+        max_shards=(None if args.max_shards <= 0 else int(args.max_shards)),
         val_shards=args.val_shards,
         writer=writer,
         on_tokens_written=progress.update,
@@ -774,14 +802,18 @@ def run_pipeline(args: argparse.Namespace) -> dict:
         if resume_state.pending_tokens.size > 0:
             sink.append_raw_tokens(resume_state.pending_tokens, docs_consumed=resume_state.docs_consumed)
 
-        for doc in iter_tokenized_documents(
-            prefetcher=prefetcher,
-            tokenizer=tokenizer,
-            bos_token_id=bos_token_id,
-            docs_consumed_start=resume_state.docs_consumed,
-        ):
-            docs_processed = doc.docs_consumed
-            sink.append_raw_tokens(doc.tokens, docs_consumed=doc.docs_consumed)
+        shard_limit_reached = args.max_shards > 0 and sink.num_shards_total >= args.max_shards
+        if not shard_limit_reached:
+            for doc in iter_tokenized_documents(
+                prefetcher=prefetcher,
+                tokenizer=tokenizer,
+                bos_token_id=bos_token_id,
+                docs_consumed_start=resume_state.docs_consumed,
+            ):
+                docs_processed = doc.docs_consumed
+                sink.append_raw_tokens(doc.tokens, docs_consumed=doc.docs_consumed)
+                if args.max_shards > 0 and sink.num_shards_total >= args.max_shards:
+                    break
 
         sink.finalize()
     except BaseException as exc:

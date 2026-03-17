@@ -16,15 +16,22 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    tqdm = None
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 _THIS_DIR = Path(__file__).resolve().parent
 _PROJECT_DIR = _THIS_DIR.parent
 _DEFAULT_DIR = _PROJECT_DIR / "blimp_fast"
-_LEGACY_SRC = Path(
-    "/home/jorge/tokenPred/babylm_10m/evaluation-pipeline-2025/evaluation_data/fast_eval/blimp_fast"
-)
+
+
+def _maybe_tqdm(iterable, *, enabled: bool, **kwargs):
+    if enabled and tqdm is not None:
+        return tqdm(iterable, **kwargs)
+    return iterable
 
 
 def _normalize_optional_limit(value: Optional[int]) -> Optional[int]:
@@ -43,7 +50,7 @@ def _blimp_source_candidates(data_dir: Optional[str] = None) -> List[Path]:
     if env_src:
         candidates.append(Path(env_src))
 
-    candidates.extend([_DEFAULT_DIR, _THIS_DIR / "blimp_fast", _LEGACY_SRC])
+    candidates.extend([_DEFAULT_DIR, _THIS_DIR / "blimp_fast"])
 
     deduped: List[Path] = []
     seen = set()
@@ -147,13 +154,23 @@ def per_token_sentence_log_likelihood(
     *,
     batch_size: int = 8,
     device=None,
+    show_progress: bool = False,
+    progress_desc: str = "BLiMP batches",
 ) -> List[torch.Tensor]:
     """Return per-token log-probs for complete sentences with a prepended BOS-style token."""
     device = _resolve_device(model, device=device)
     bos_token_id = _resolve_bos_token_id(tokenizer)
     all_results: List[torch.Tensor] = []
 
-    for start in range(0, len(input_texts), int(batch_size)):
+    starts = range(0, len(input_texts), int(batch_size))
+    iterator = _maybe_tqdm(
+        starts,
+        enabled=show_progress,
+        desc=progress_desc,
+        total=len(starts),
+        leave=False,
+    )
+    for start in iterator:
         batch_texts = list(input_texts[start : start + int(batch_size)])
         inputs = tokenizer(
             batch_texts,
@@ -281,6 +298,7 @@ def blimp_per_item_records(
     score_reduction: str = "sum",
     margin_eps: float = 1e-6,
     device=None,
+    show_progress: bool = False,
 ) -> List[Dict[str, Any]]:
     score_reduction = _validate_score_reduction(score_reduction)
     margin_eps = float(margin_eps)
@@ -293,6 +311,8 @@ def blimp_per_item_records(
         [rec["sentence_good"] for rec in records],
         batch_size=batch_size,
         device=device,
+        show_progress=show_progress,
+        progress_desc=f"BLiMP {score_reduction}:good",
     )
     bad_scores = per_token_sentence_log_likelihood(
         model,
@@ -300,6 +320,8 @@ def blimp_per_item_records(
         [rec["sentence_bad"] for rec in records],
         batch_size=batch_size,
         device=device,
+        show_progress=show_progress,
+        progress_desc=f"BLiMP {score_reduction}:bad",
     )
 
     per_item: List[Dict[str, Any]] = []
@@ -341,6 +363,7 @@ def evaluate(
     records: Optional[Sequence[Dict[str, Any]]] = None,
     source_path: Optional[Path] = None,
     device=None,
+    show_progress: bool = False,
 ) -> Dict[str, Any]:
     score_reduction = _validate_score_reduction(score_reduction)
     if records is None:
@@ -365,6 +388,7 @@ def evaluate(
         score_reduction=score_reduction,
         margin_eps=margin_eps,
         device=device,
+        show_progress=show_progress,
     )
 
     correct = np.asarray([1.0 if rec["correct"] else 0.0 for rec in per_item], dtype=np.float64)

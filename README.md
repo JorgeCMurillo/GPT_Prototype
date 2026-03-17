@@ -8,6 +8,11 @@ This repo is centered on `moonshotGPT`, including:
 - EWoK/HellaSwag evaluation,
 - checkpointing, resume support, and run-level analysis artifacts.
 
+This public branch intentionally versions code, docs, tests, notebooks, the
+local `blimp_fast/` evaluation subset, and the encrypted `ewok_fast_jsonl.zip`.
+It does not include runs, checkpoints, processed datasets, reference-loss
+artifacts, or the CORE `eval_bundle/`.
+
 ## Start Here
 If you only need to run experiments, use the detailed runner-first guide:
 - [`moonshotGPT/README.md`](moonshotGPT/README.md)
@@ -33,14 +38,14 @@ cd moonshotGPT
 python fineweb.py \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
-  --out_dir fineweb_edu_10B
+  --out_dir data/processed/fineweb_edu_10B
 ```
 
 ### 3) Train baseline GPT-2 Medium
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -58,8 +63,8 @@ Quick smoke-test tip:
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes 8 compute_ref_loss_shards.py \
-  --data_dir fineweb_edu_10B \
-  --out_dir ref_loss_gpt2m_T1024_B4 \
+  --data_dir data/processed/fineweb_edu_10B \
+  --out_dir data/ref_loss/gpt2m_T1024_B4 \
   --split train \
   # must match training --seq_len
   --seq_len 1024 \
@@ -79,7 +84,7 @@ Alignment note:
 ```bash
 cd moonshotGPT
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   # must match precompute --batch_size
   --micro_batch_size 4 \
   # must match precompute --seq_len
@@ -91,7 +96,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_layer 24 \
   --mixed_precision bf16 \
   # must be generated from same shard set
-  --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
+  --rho_ref_loss_dir data/ref_loss/gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta
@@ -126,8 +131,10 @@ Training runs write under `moonshotGPT/experiments/<run_name>/`:
 This repo is intended to version code and docs, not generated artifacts.
 Keep large runtime outputs out of git, especially:
 - `moonshotGPT/experiments/`
-- token shard datasets (for example `fineweb_edu_10B/`)
-- reference-loss binaries (for example `ref_loss_gpt2m_*/`)
+- `moonshotGPT/runs/`
+- token shard datasets under `moonshotGPT/data/processed/`
+- reference-loss binaries under `moonshotGPT/data/ref_loss/`
+- `moonshotGPT/eval_bundle/`
 
 ## Notes
 - Default reference model for rho workflows is `openai-community/gpt2-medium`.

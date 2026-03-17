@@ -17,6 +17,7 @@ Key features:
   - PyTorch IterableDataset (fast, simple)
   - Safe with DataLoader(num_workers>0): each worker opens its own memmaps
   - Optional block-level shuffle (shuffle the order of non-overlapping blocks)
+  - Optional shard cap (`max_shards`) for smoke tests / subset training
   - Default seq_len=1024, configurable
   - Rank/world_size shard partitioning (torchrun / accelerate)
     - Each rank gets a disjoint subset of shards when possible
@@ -61,11 +62,15 @@ def _load_meta(data_dir: str) -> dict:
         return json.load(f)
 
 
-def _list_shards(data_dir: str, split: str) -> List[str]:
+def _list_shards(data_dir: str, split: str, max_shards: Optional[int] = None) -> List[str]:
     pat = os.path.join(data_dir, f"{split}_*.bin")
     shards = _natural_sort(glob.glob(pat))
     if not shards:
         raise FileNotFoundError(f"No shards found for split='{split}' with pattern: {pat}")
+    if max_shards is not None:
+        if max_shards <= 0:
+            raise ValueError(f"max_shards must be > 0 when provided, got {max_shards}")
+        shards = shards[:max_shards]
     return shards
 
 
@@ -134,6 +139,7 @@ class ShardDatasetConfig:
 
     stride_tokens: Optional[int] = None
     max_blocks: Optional[int] = None
+    max_shards: Optional[int] = None
 
     allow_cross_shard: bool = False
     shard_by_rank: bool = True
@@ -160,10 +166,12 @@ class MemmapTokenShardDataset(IterableDataset):
             raise ValueError("batch_size must be > 0")
         if cfg.seq_len <= 0:
             raise ValueError("seq_len must be > 0")
+        if cfg.max_shards is not None and cfg.max_shards <= 0:
+            raise ValueError("max_shards must be > 0 when provided")
 
         self.cfg = cfg
         self.meta = _load_meta(cfg.data_dir)
-        self.shards = _list_shards(cfg.data_dir, cfg.split)
+        self.shards = _list_shards(cfg.data_dir, cfg.split, max_shards=cfg.max_shards)
 
         self.shard_sizes = [_count_tokens_in_shard(p) for p in self.shards]
 
@@ -304,6 +312,7 @@ def make_dataloader(
     persistent_workers: bool = True,
     prefetch_factor: int = 2,
     max_blocks: Optional[int] = None,
+    max_shards: Optional[int] = None,
     shard_by_rank: bool = True,
     return_meta: bool = False,   # NEW
 ) -> DataLoader:
@@ -313,6 +322,7 @@ def make_dataloader(
     Notes:
     - This DataLoader returns already-batched tensors (batch_size is part of dataset).
       So DataLoader(batch_size=...) is not used; keep it at default.
+    - max_shards caps the visible shard list to the first N sorted shard files.
     - shard_by_rank partitions shards/blocks across ranks using env vars.
     - return_meta adds a small dict per batch for replay/debug.
     """
@@ -324,6 +334,7 @@ def make_dataloader(
         shuffle_blocks=shuffle_blocks,
         seed=seed,
         max_blocks=max_blocks,
+        max_shards=max_shards,
         shard_by_rank=shard_by_rank,
         return_meta=return_meta,
     )
@@ -342,7 +353,7 @@ def make_dataloader(
 
 if __name__ == "__main__":
     dl = make_dataloader(
-        data_dir="/home/jorge/tokenPred/moonshotGPT/fineweb_edu_10B",
+        data_dir="data/processed/fineweb_edu_10B",
         split="train",
         batch_size=4,
         seq_len=1024,

@@ -26,6 +26,10 @@ import torch
 import torch.distributed as dist
 import yaml
 from jinja2 import Template
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    tqdm = None
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -44,6 +48,12 @@ class CoreTaskMeta:
     num_fewshot: int
     continuation_delimiter: str
     random_baseline_pct: float
+
+
+def _maybe_tqdm(iterable, *, enabled: bool, **kwargs):
+    if enabled and tqdm is not None:
+        return tqdm(iterable, **kwargs)
+    return iterable
 
 
 def parse_args() -> argparse.Namespace:
@@ -445,13 +455,22 @@ def evaluate_task(
     task_meta: CoreTaskMeta,
     *,
     distributed: bool = True,
+    show_progress: bool = False,
 ):
     use_distributed = bool(distributed and dist.is_available() and dist.is_initialized())
     rank = dist.get_rank() if use_distributed else 0
     world_size = dist.get_world_size() if use_distributed else 1
 
     correct = torch.zeros(len(data), dtype=torch.float32, device=device)
-    for idx in range(rank, len(data), world_size):
+    local_indices = range(rank, len(data), world_size)
+    iterator = _maybe_tqdm(
+        local_indices,
+        enabled=bool(show_progress and rank == 0),
+        desc=f"CORE:{task_meta.label}",
+        total=len(local_indices),
+        leave=False,
+    )
+    for idx in iterator:
         correct[idx] = float(evaluate_example(idx, model, tokenizer, data, device, task_meta))
 
     if use_distributed and world_size > 1:
@@ -583,6 +602,7 @@ def evaluate_core(
     local_files_only: bool = False,
     url: str = CORE_BUNDLE_URL,
     distributed: bool = True,
+    show_progress: bool = False,
 ) -> Dict[str, object]:
     if device is None:
         try:
@@ -596,7 +616,14 @@ def evaluate_core(
     centered_results: Dict[str, float] = {}
     examples_per_task: Dict[str, int] = {}
 
-    for task in tasks:
+    task_iter = _maybe_tqdm(
+        tasks,
+        enabled=bool(show_progress),
+        desc="CORE tasks",
+        total=len(tasks),
+        leave=True,
+    )
+    for task in task_iter:
         data_path = data_base_path / task.dataset_uri
         data = _load_jsonl_rows(data_path)
         shuffle_rng = random.Random(1337)
@@ -610,6 +637,7 @@ def evaluate_core(
             device,
             task,
             distributed=distributed,
+            show_progress=show_progress,
         )
         results[task.label] = float(accuracy)
         baseline = 0.01 * float(task.random_baseline_pct)

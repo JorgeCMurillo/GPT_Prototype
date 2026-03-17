@@ -64,8 +64,12 @@ s(t) = \ell_s(t) - \ell_r(t)
 \[
 s(t) = -\ell_r(t)
 \]
+- `student_only` mode:
+\[
+s(t) = \ell_s(t)
+\]
 
-What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier.
+What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier; `student_only` prioritizes tokens the current student finds hardest in absolute terms.
 
 4) Candidate set with optional cap:
 
@@ -117,8 +121,14 @@ Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-referenc
 Run commands from this directory:
 
 ```bash
-cd tokenPred/moonshotGPT
+cd moonshotGPT
 ```
+
+Public repo note:
+- This branch includes source, tests, notebooks, `blimp_fast/`, and the encrypted
+  `ewok_fast_jsonl.zip`.
+- It intentionally does not include `runs/`, `experiments/`, processed datasets,
+  reference-loss binaries, or `eval_bundle/`.
 
 Minimal dependencies used by these scripts include:
 - `torch`
@@ -138,6 +148,20 @@ If needed, initialize Accelerate once:
 accelerate config
 ```
 
+Recommended derived-data layout:
+
+```text
+data/
+  processed/
+    fineweb_edu_10B/
+  ref_loss/
+    gpt2m_T1024_B4/
+```
+
+Legacy top-level paths such as `fineweb_edu_10B/` and `ref_loss_gpt2m_T1024_B4/`
+are kept as compatibility symlinks, but new commands below use the `data/`
+tree directly.
+
 ## End-to-End Commands
 
 ### 1) Tokenize FineWeb-Edu
@@ -150,7 +174,7 @@ python fineweb.py \
   --split train \
   --text_field text \
   --tokenizer gpt2 \
-  --out_dir fineweb_edu_10B \
+  --out_dir data/processed/fineweb_edu_10B \
   --shard_tokens 100000000 \
   --val_shards 1
 ```
@@ -160,7 +184,7 @@ Why you run this now: establish a reference run before token filtering.
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -178,8 +202,8 @@ Why you run this now: rho mode needs precomputed per-token reference losses alig
 
 ```bash
 accelerate launch --num_processes 8 compute_ref_loss_shards.py \
-  --data_dir fineweb_edu_10B \
-  --out_dir ref_loss_gpt2m_T1024_B4 \
+  --data_dir data/processed/fineweb_edu_10B \
+  --out_dir data/ref_loss/gpt2m_T1024_B4 \
   --split train \
   --seq_len 1024 \
   --batch_size 4 \
@@ -198,7 +222,7 @@ Why you run this now: this is the modified training mode that keeps only selecte
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -207,7 +231,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
-  --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
+  --rho_ref_loss_dir data/ref_loss/gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta \
@@ -223,7 +247,7 @@ Why you run this now: continue an interrupted run from an existing run folder or
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -232,7 +256,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
-  --rho_ref_loss_dir ref_loss_gpt2m_T1024_B4 \
+  --rho_ref_loss_dir data/ref_loss/gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta \
@@ -254,6 +278,10 @@ python plot_step_metrics.py \
 ```
 
 ## Outputs And Where To Look
+Derived data artifacts now live under:
+- `data/processed/` for token shard datasets
+- `data/ref_loss/` for precomputed reference-loss shards
+
 Each run creates an `experiments/<run_name>/` directory with:
 - `step_metrics.json` (main structured metrics history)
 - `scalars.jsonl` (step-level scalar logs)

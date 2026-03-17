@@ -15,8 +15,10 @@ moonshotGPT/research/**/experiments/
 moonshotGPT/research/**/runs/
 moonshotGPT/research/**/.resume_state/
 moonshotGPT/data_augmentation/
+moonshotGPT/data/processed/
+moonshotGPT/data/ref_loss/
+moonshotGPT/eval_bundle/
 moonshotGPT/ewok_full_jsonl/
-moonshotGPT/ewok_fast_jsonl*.zip
 moonshotGPT/ewok_full_jsonl*.zip
 moonshotGPT/*.bin
 moonshotGPT/*.log
@@ -24,3 +26,8 @@ moonshotGPT/openai_key.txt
 moonshotGPT/**/*.safetensors
 moonshotGPT/**/*.bin
 moonshotGPT/**/*.log
+
+# publish-safe committed artifacts
+!moonshotGPT/blimp_fast/
+!moonshotGPT/blimp_fast/**
+!moonshotGPT/ewok_fast_jsonl.zip

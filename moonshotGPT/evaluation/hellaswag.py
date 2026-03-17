@@ -18,6 +18,10 @@ from typing import Dict, List, Sequence, Tuple
 
 import torch
 from datasets import load_dataset
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    tqdm = None
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -130,6 +134,12 @@ class Candidate:
     choice_idx: int
     prompt: str
     continuation: str
+
+
+def _maybe_tqdm(iterable, *, enabled: bool, **kwargs):
+    if enabled and tqdm is not None:
+        return tqdm(iterable, **kwargs)
+    return iterable
 
 
 def infer_max_seq_len(model, tokenizer) -> int:
@@ -276,6 +286,8 @@ def score_candidates(
     batch_size: int,
     device: torch.device,
     max_seq_len: int,
+    *,
+    show_progress: bool = False,
 ) -> Tuple[List[float], List[int]]:
     all_sums: List[float] = []
     all_lens: List[int] = []
@@ -284,7 +296,15 @@ def score_candidates(
     if pad_id is None:
         raise RuntimeError("Tokenizer has no pad_token_id; set pad_token before scoring")
 
-    for start in range(0, len(candidates), batch_size):
+    starts = range(0, len(candidates), batch_size)
+    iterator = _maybe_tqdm(
+        starts,
+        enabled=show_progress,
+        desc="HellaSwag batches",
+        total=len(starts),
+        leave=False,
+    )
+    for start in iterator:
         batch = candidates[start : start + batch_size]
 
         input_id_rows: List[List[int]] = []
@@ -356,6 +376,8 @@ def evaluate_hellaswag(
     batch_size: int,
     device: torch.device,
     max_seq_len: int,
+    *,
+    show_progress: bool = False,
 ) -> Dict:
     candidates: List[Candidate] = []
     labels: List[int] = []
@@ -386,6 +408,7 @@ def evaluate_hellaswag(
         batch_size=batch_size,
         device=device,
         max_seq_len=max_seq_len,
+        show_progress=show_progress,
     ) 
 
     n_examples = len(labels)

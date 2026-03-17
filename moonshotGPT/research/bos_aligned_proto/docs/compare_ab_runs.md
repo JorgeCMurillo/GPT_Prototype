@@ -1,6 +1,6 @@
 # A/B Experiment Plan: Baseline vs BOS Row-Packed
 
-Run from `tokenPred/moonshotGPT`.
+Run from `moonshotGPT`.
 
 ## Goal
 
@@ -10,7 +10,7 @@ Measure impact of BOS-aligned supervision on training dynamics and benchmark per
 
 ```bash
 python -m train_gpt2_finewebedu_bin \
-  --data_dir fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_10B \
   --micro_batch_size 10 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -23,13 +23,13 @@ python -m train_gpt2_finewebedu_bin \
 ### 1) Build BOS dataset
 
 ```bash
-python -m research.bos_aligned_proto.data.prepare_finewebedu_bos_rows \
+python -m research.bos_aligned_proto.pipeline.prepare_finewebedu_bos_rows \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
   --split train \
   --text_field text \
   --tokenizer gpt2 \
-  --out_dir fineweb_edu_10B_bosrow \
+  --out_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --seq_len 1024 \
   --batch_docs 256 \
   --buffer_docs 1000 \
@@ -40,7 +40,7 @@ python -m research.bos_aligned_proto.data.prepare_finewebedu_bos_rows \
 
 ```bash
 python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
-  --data_dir fineweb_edu_10B_bosrow \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --micro_batch_size 10 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -74,7 +74,7 @@ BOS-only diagnostics:
   - `rows_written_total`
 
 Future BOS runs default to `runs/research/bos_aligned_proto/`.
-Legacy BOS outputs already under `research/bos_aligned_proto/experiments/` remain unchanged.
+This public branch does not include legacy BOS outputs.
 
 ## Result table template
 

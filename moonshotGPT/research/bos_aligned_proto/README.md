@@ -10,7 +10,7 @@ Current package layout:
 research/bos_aligned_proto/
   README.md
   __init__.py
-  data/
+  pipeline/
     __init__.py
     bos_row_loader.py
     prepare_finewebedu_bos_rows.py
@@ -27,23 +27,23 @@ research/bos_aligned_proto/
   docs/
     compare_ab_runs.md
   analysis/
+    run_checkpoint_evals.py
     notebooks/
       mine_synthetic_minimal_pairs.ipynb
-  experiments/   # legacy outputs kept in place
-  bos_train.log  # legacy log kept in place
+      ewok_score_columns_material_dynamics.ipynb
 ```
 
 ## Package layout
 
-### `data/`
+### `pipeline/`
 
-- `data/prepare_finewebedu_bos_rows.py`
+- `pipeline/prepare_finewebedu_bos_rows.py`
   - Offline preprocessor for FineWeb-Edu.
   - Builds row-packed `uint16` shards where each row has length `seq_len + 1` and starts with BOS.
   - Packing logic matches nanochat-style behavior:
     - pick the largest doc that fits remaining row space;
     - if none fit, pick the shortest doc and crop to exact remaining space.
-- `data/bos_row_loader.py`
+- `pipeline/bos_row_loader.py`
   - Runtime memmap loader for the row-packed format.
   - Produces `(x, y)` with shape `(B, T)` from row data.
   - Supports optional metadata for exposure logging.
@@ -84,12 +84,16 @@ research/bos_aligned_proto/
 
 ### `analysis/`
 
+- `analysis/run_checkpoint_evals.py`
+  - Post-hoc benchmark runner for a single resolved BOS checkpoint.
+  - Accepts a run directory, a direct `ckpt_*_stepXXXXXXX/` path, or `--hf-model <model_id>`.
+  - Runs evaluations in priority order: CORE first, then HellaSwag, then EWoK, then BLiMP.
+  - The EWoK stage stores only the mean-reduction `domain_scores_full` outputs
+    for BabyLM completion choice and EWoK paper context sensitivity.
+  - Writes resumable standalone outputs under `posthoc_eval/<checkpoint_name>/` for local checkpoints,
+    or `runs/research/bos_aligned_proto/posthoc_hf_eval/<model_slug>/` for Hugging Face models.
 - `analysis/notebooks/mine_synthetic_minimal_pairs.ipynb`
   - Notebook-based analysis for synthetic minimal pairs and run inspection.
-
-### `experiments/`
-
-- Legacy outputs and comparison plots kept in place for reference.
 
 ## Training files at a glance
 
@@ -178,6 +182,69 @@ When CORE is enabled, BOS runs write:
 - `run_config.json`
   - A copy of the resolved run config, including the CORE flags.
 
+## Post-hoc checkpoint evaluation
+
+If you want to evaluate one finished BOS checkpoint after training, use the
+analysis-layer runner:
+
+```bash
+conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  runs/research/bos_aligned_proto/<run_name>
+```
+
+This resolves the latest checkpoint under the run by default and writes outputs
+to:
+
+- `runs/research/bos_aligned_proto/<run_name>/posthoc_eval/<checkpoint_name>/`
+
+Useful variants:
+
+```bash
+conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  runs/research/bos_aligned_proto/<run_name> \
+  --step 30000
+```
+
+```bash
+conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  runs/research/bos_aligned_proto/<run_name>/ckpt_final_step0030000
+```
+
+```bash
+conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  --hf-model gpt2-medium
+```
+
+When using `--hf-model`, the evaluator now prints whether model/tokenizer files
+appear cached locally and whether it is about to download from the Hugging Face
+Hub. This status mode is enabled by default and can be turned off with:
+
+```bash
+--no-show-hf-download-status
+```
+
+The task order is always normalized to:
+
+1. CORE
+2. HellaSwag
+3. EWoK
+4. BLiMP
+
+That way the most important aggregate metric is produced first, and reruns can
+skip already-completed tasks unless you pass `--force`.
+
+The analysis runner defaults to `--device cuda`, so it will fail loudly instead
+of quietly evaluating on CPU. If you intentionally want CPU fallback for a
+smoke test, pass `--device auto` or `--device cpu`.
+
+When you use `--hf-model`, outputs default to:
+
+- `runs/research/bos_aligned_proto/posthoc_hf_eval/<model_slug>/`
+
+So for GPT-2 Medium, the default output directory is:
+
+- `runs/research/bos_aligned_proto/posthoc_hf_eval/gpt2-medium/`
+
 ## EWoK scoring modes and outputs
 
 The shared EWoK evaluator now computes two scoring views in one pass:
@@ -236,20 +303,30 @@ Expected files in `--data_dir`:
 
 Important: this dataset is `seq_len`-specific. Loader validates `seq_len` against `meta.json`.
 
+Recommended BOS artifact layout:
+
+```text
+data/
+  processed/
+    bos_aligned_proto/
+      fineweb_edu_10B_bosrow/
+      fineweb_edu_100B_bosrow/
+```
+
 ## End-to-end commands
 
-Run from `tokenPred/moonshotGPT`.
+Run from `moonshotGPT`.
 
 ### 1) Build BOS row-packed dataset
 
 ```bash
-python -m research.bos_aligned_proto.data.prepare_finewebedu_bos_rows \
+python -m research.bos_aligned_proto.pipeline.prepare_finewebedu_bos_rows \
   --dataset HuggingFaceFW/fineweb-edu \
   --config sample-10BT \
   --split train \
   --text_field text \
   --tokenizer gpt2 \
-  --out_dir fineweb_edu_10B_bosrow \
+  --out_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --seq_len 1024 \
   --batch_docs 256 \
   --buffer_docs 1000 \
@@ -262,7 +339,7 @@ python -m research.bos_aligned_proto.data.prepare_finewebedu_bos_rows \
 
 ```bash
 python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
-  --data_dir fineweb_edu_10B_bosrow \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --micro_batch_size 10 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -276,7 +353,7 @@ Start with a smaller `micro_batch_size` and increase only if GPU memory allows:
 
 ```bash
 python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
-  --data_dir fineweb_edu_10B_bosrow \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --n_embd 1024 \
   --n_head 16 \
   --n_layer 24 \
@@ -288,7 +365,7 @@ python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
 ```
 
 Future runs go to `runs/research/bos_aligned_proto/babygpt_fineweb_bosrow_*` by default.
-Historical outputs already under `research/bos_aligned_proto/experiments/` remain as legacy artifacts.
+This public branch does not include historical run outputs or checkpoints.
 
 ## Notes and tradeoffs
 

@@ -10,12 +10,6 @@ from typing import Optional
 
 import pandas as pd
 
-_FAST_LEGACY_SRC = Path(
-    "/home/jorge/tokenPred/babylm_10m/test_eval/evaluation-pipeline-2025/evaluation_data/fast_eval/ewok_fast"
-)
-_FULL_LEGACY_SRC = Path(
-    "/home/jorge/tokenPred/babylm_10m/test_eval/evaluation-pipeline-2025/evaluation_data/full_eval/ewok_filtered"
-)
 _THIS_DIR = Path(__file__).resolve().parent
 _PROJECT_DIR = _THIS_DIR.parent
 _DEFAULT_FAST_ZIP = _PROJECT_DIR / "ewok_fast_jsonl.zip"
@@ -82,10 +76,10 @@ def _ewok_source_candidates(variant: str) -> list[Path]:
     candidates = []
     if variant == "fast":
         env_keys = ("EWOK_FAST_SRC", "EWOK_SRC")
-        defaults = (_DEFAULT_FAST_ZIP, _DEFAULT_FAST_DIR, _FAST_LEGACY_SRC)
+        defaults = (_DEFAULT_FAST_ZIP, _DEFAULT_FAST_DIR)
     else:
         env_keys = ("EWOK_FULL_SRC",)
-        defaults = (_DEFAULT_FULL_ZIP, _DEFAULT_FULL_DIR, _FULL_LEGACY_SRC)
+        defaults = (_DEFAULT_FULL_ZIP, _DEFAULT_FULL_DIR)
 
     for env_key in env_keys:
         env_src = os.environ.get(env_key)
