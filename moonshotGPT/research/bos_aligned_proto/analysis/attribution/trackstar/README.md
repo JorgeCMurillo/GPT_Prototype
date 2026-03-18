@@ -6,12 +6,37 @@ The name `TrackStar` is the local backend label used in this repo. Under the
 hood, it uses EleutherAI Bergson programmatically for gradient collection,
 gradient loading, and query-time scoring.
 
+If you have not seen TrackStar before, the main reference point is the paper
+"Scalable Influence and Fact Tracing for Large Language Model Pretraining":
+
+- arXiv abstract:
+  https://arxiv.org/abs/2410.17413
+- arXiv HTML:
+  https://arxiv.org/html/2410.17413
+
+In the paper's framing, TrackStar is a scalable gradient-based attribution
+method for asking which pretraining examples most influence a model prediction
+or evaluation target. The core idea is not simple text similarity. Instead, it
+represents examples using corrected gradient features and ranks training
+examples by how much their update directions align with improving the query of
+interest.
+
 Its practical goal is:
 
 Which training rows look most likely to improve EWoK performance if the model
 were pushed a little further in the direction of those rows?
 
 That is the attribution question this backend is built to answer.
+
+So this README is doing two things at once:
+
+- explaining the general TrackStar idea for readers who do not know the paper
+- documenting the specific TrackStar-inspired implementation used in this repo
+  for EWoK-focused BOS-row attribution
+
+This distinction matters because the implementation here is adapted to the
+repo's setting. It borrows important ideas from the paper, but it is not meant
+to be a claim of exact paper reproduction unless stated explicitly.
 
 ## What We Are Actually Ranking
 
@@ -613,10 +638,20 @@ The preferred multi-GPU launcher is `torchrun`.
 
 Examples:
 
+Note on naming:
+
+- any `conda run -n <your_env_name> ...` command below is just an example of
+  how this was run locally
+- earlier local notes used `babylm` as the conda environment name because that
+  is Jorge's personal environment on this machine
+- you should replace it with whatever environment name you actually use
+- this is unrelated to `babylm_completion_choice`, which is the name of the
+  EWoK score view, not the name of a required environment
+
 Single GPU:
 
 ```bash
-conda run -n babylm python -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
   --run_dir /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
   --data_dir /home/jorge/tokenPred/moonshotGPT/data/<bos_data_dir> \
   --exp_name trackstar_smoke \
@@ -841,9 +876,14 @@ A straightforward setup is:
 cd /home/jorge/tokenPred
 git clone https://github.com/EleutherAI/bergson.git
 
-conda run -n babylm pip install -e /home/jorge/tokenPred/bergson
-conda run -n babylm python -c "import bergson; print(bergson.__file__)"
+conda run -n <your_env_name> pip install -e /home/jorge/tokenPred/bergson
+conda run -n <your_env_name> python -c "import bergson; print(bergson.__file__)"
 ```
 
 The clone directory is not special. It can live anywhere you want. The key
-requirement is that `babylm` can import `bergson` after installation.
+requirement is that your chosen Python environment can import `bergson` after
+installation.
+
+If you are reading old local notes or terminal logs from this repo, you may see
+`babylm` used as the environment name. That is just one developer's local conda
+environment, not a requirement of the backend.
