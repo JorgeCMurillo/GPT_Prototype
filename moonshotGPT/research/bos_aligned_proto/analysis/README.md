@@ -5,6 +5,11 @@ artifacts already exist. The goal is to keep post-training inspection,
 attribution, and exploratory work separate from the training and evaluation
 entrypoints elsewhere in the repo.
 
+For readers arriving from outside this repo: `analysis/` is the post-hoc layer.
+It does not train models. It reads finished checkpoints, evaluation outputs,
+and exposure logs, then tries to answer what the model learned and which
+training examples seem most related to that behavior.
+
 In practice, `analysis/` is where we put code that answers questions like:
 
 - What patterns show up in finished runs?
@@ -45,19 +50,23 @@ The evaluator defaults to `--device cuda` so it does not silently fall back to
 CPU. On shared machines, a good default launch pattern is:
 
 ```bash
-conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals ...
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals ...
 ```
+
+Here, `<your_env_name>` is just a placeholder. Older local notes may show
+`babylm`, but that was only one developer's conda environment name on this
+machine.
 
 Examples:
 
 ```bash
-conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  runs/research/bos_aligned_proto/<run_name> \
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
   --step 30000
 ```
 
 ```bash
-conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
   --hf-model gpt2-medium
 ```
 
@@ -76,19 +85,33 @@ investigations, visualization drafts, and one-off analyses that are still being
 shaped. Notebooks should consume existing outputs rather than becoming the
 source of truth for reusable analysis logic.
 
-### `trak/`
+### `attribution/`
 
-The structured attribution package for BOS-row TRAK analysis. This folder is
-where the reusable implementation lives for:
+The structured attribution package for BOS-row analysis. This folder is where
+the reusable implementation lives for:
 
 - resolving checkpoints from a finished run
 - mapping exposure logs back to BOS-packed training rows
 - constructing EWoK targets
-- computing checkpoint-local TRAK scores
+- computing checkpoint-local attribution scores
 - exporting summaries and checkpoint-to-checkpoint comparisons
 
 If you want the maintained analysis pipeline rather than an exploratory notebook,
 start here.
+
+This is also where the repo's two attribution backends live:
+
+- `TRAK`
+  the TRAK-based baseline backend
+- `TrackStar`
+  the Bergson-backed, TrackStar-inspired backend used to ask which BOS-packed
+  training rows look most helpful or harmful for improving EWoK behavior at a
+  given checkpoint
+
+The higher-level analysis question is:
+
+which training rows appear most aligned with better world-knowledge behavior on
+the EWoK targets we care about?
 
 ### `__init__.py`
 
@@ -112,7 +135,10 @@ read-only view of those components.
 
 - If you want post-training benchmark numbers for a checkpoint, start with
   `run_checkpoint_evals.py`.
-- If you want quick orientation to the analysis area, read `trak/README.md`.
+- If you want quick orientation to the attribution area, read
+  `attribution/README.md`.
 - If you want the implementation entrypoint for attribution, read
-  `trak/run_trak.py`.
+  `attribution/run_trak.py` or `attribution/run_trackstar.py`.
+- If you specifically want the Bergson/TrackStar backend, read
+  `attribution/trackstar/README.md`.
 - If you want a looser exploratory workflow, look in `notebooks/`.
