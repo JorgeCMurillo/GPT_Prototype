@@ -13,3 +13,4 @@ scipy
 safetensors
 huggingface_hub
 trak
+bergson
