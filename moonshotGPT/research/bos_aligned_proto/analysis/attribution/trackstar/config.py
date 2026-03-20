@@ -13,7 +13,8 @@ from ..common.config_base import AttributionConfigBase, add_common_args
 class TrackstarConfig(AttributionConfigBase):
     backend: str = "trackstar"
     use_hessian_correction: bool = True
-    hessian_lambda: float = 0.9
+    hessian_lambda: float | None = None
+    hessian_target_components: int = 1000
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -38,10 +39,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hessian_lambda",
         type=float,
-        default=0.9,
+        default=None,
         help=(
-            "Paper-style lambda for the mixed Hessian correction: "
-            "H_mix = lambda * H_query + (1 - lambda) * H_index."
+            "Optional fixed override for the mixed Hessian coefficient. When omitted, "
+            "TrackStar uses Bergson-style compute_lambda on the pooled query/index spectra."
+        ),
+    )
+    parser.add_argument(
+        "--hessian_target_components",
+        type=int,
+        default=1000,
+        help=(
+            "Target spectral component k for Bergson-style compute_lambda. "
+            "Ignored when --hessian_lambda is provided."
         ),
     )
     return parser
@@ -74,6 +84,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrackstarConfig:
         use_fast_jl=ns.use_fast_jl,
         use_hessian_correction=ns.use_hessian_correction,
         hessian_lambda=ns.hessian_lambda,
+        hessian_target_components=ns.hessian_target_components,
         max_targets=ns.max_targets,
     ).resolved()
 

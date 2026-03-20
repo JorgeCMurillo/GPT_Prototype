@@ -180,7 +180,7 @@ For a checkpoint `theta`, an EWoK target item `t`, and a candidate training row
 - a candidate-side gradient for each module `m`:
   `g_m(x) = H_mix,m^(-1/2) proj(corr_m(x))`
 - a query-side gradient for each module `m`:
-  `q_m(t) = H_mix,m^(-1/2) proj(grad_{theta_m} L_EWoK(t))`
+  `q_m(t) = H_mix,m^(-1/2) proj(corr_m^q(t))`
 
 Here:
 
@@ -189,6 +189,8 @@ Here:
   `t`
 - `corr_m(x)` is the candidate training gradient after optional Adam
   second-moment correction
+- `corr_m^q(t)` is the query gradient after the same optional module-wise
+  Adam second-moment correction
 - `proj(...)` means:
   flatten the raw module gradient if projection is disabled, or
   apply Bergson's left/right random projection and then flatten if projection
@@ -204,9 +206,16 @@ the corrected candidate direction is closer to the parameter-update geometry of
 AdamW. For Hugging Face `Conv1D` modules, this same correction is applied after
 transposing the saved second-moment matrix into Bergson's `[out, in]` layout.
 
+When `optimizer.pt` is available next to the checkpoint, the query-side
+correction mirrors that same geometry:
+
+`corr_m^q(t) = D_m^{-1/2} grad_{theta_m} L_EWoK(t)`
+
 If `optimizer.pt` is missing, the backend falls back to:
 
 `corr_m(x) = grad_{theta_m} CE(x)`
+
+`corr_m^q(t) = grad_{theta_m} L_EWoK(t)`
 
 After projection, the backend computes a mixed Hessian-style preconditioner for
 each module:
@@ -220,10 +229,9 @@ where:
 - `H_ewok,m` is the autocorrelation of the projected EWoK query gradients for
   module `m`
 - `lambda` is the paper-style query-side mixing coefficient
-- the default is:
-  `lambda = 0.9`
-  so the effective mix is:
-  `0.1 * H_ce,m + 0.9 * H_ewok,m`
+- by default, `lambda` is chosen with Bergson's `compute_lambda` rule on the
+  pooled query/index eigenspectra using target component `k = 1000`
+- if you pass `--hessian_lambda`, that fixed override is used instead
 
 The wrapper then applies the split TrackStar-style preconditioner:
 
@@ -252,7 +260,8 @@ the top/bottom row summaries.
 
 So the present backend is best understood as:
 
-- query = gradient of the custom EWoK softplus loss
+- query = Adam-corrected gradient of the custom EWoK softplus loss when
+  optimizer state is available, otherwise the raw EWoK gradient
 - candidate = Adam-corrected gradient of training CE on a BOS row when
   optimizer state is available, otherwise the raw CE gradient
 - score = cosine similarity between the mixed-Hessian-corrected projected
@@ -282,7 +291,7 @@ The current backend now has:
 
 - query gradients from the custom EWoK softplus loss
 - candidate gradients from BOS-row CE
-- optional Adam second-moment correction on the candidate side
+- optional Adam second-moment correction on both candidate and query sides
 - mixed Hessian-style split preconditioning on both sides
 - cosine normalization
 
@@ -291,8 +300,6 @@ plain raw gradient dot product.
 
 However, the Section 6 paper setup still differs in a few important ways:
 
-- optimizer-state correction on both sides
-- automatic lambda selection rather than a fixed lambda
 - different projection details and layer blocking
 - open-set retrieval over C4 rather than checkpoint-local BOS candidates
 
@@ -325,9 +332,10 @@ gradient before comparison. Intuitively:
 - the corrected gradient is closer to the direction the optimizer would really
   use during training
 
-This repo now does that with Adam second moments on the candidate side when
-`optimizer.pt` is available, because AdamW is what these runs were actually
-trained with. The query side is still not optimizer-corrected.
+This repo now does that with Adam second moments on both candidate and
+query gradients when `optimizer.pt` is available, because AdamW is what these
+runs were actually trained with. The same checkpoint-local second moments are
+used to keep both sides in one shared comparison geometry.
 
 ### What The Hessian Correction Is
 
@@ -386,20 +394,18 @@ For the open-set setup, the paper goes one step further and mixes:
 This mixture is meant to suppress directions that are common for the task
 itself, such as template-like query components.
 
-This wrapper now does the same style of split preconditioning, but with a
-fixed paper-style default:
+This wrapper now does the same style of split preconditioning and by default
+chooses `lambda` with Bergson's `compute_lambda` rule. In practice that means
+it pools the per-module query and candidate spectra and picks `lambda` so that
+at component `k = 1000` the scaled curves cross:
 
-- `lambda = 0.9`
+- `lambda * sigma_query[k] = (1 - lambda) * sigma_index[k]`
 
-which means:
+You can still force a fixed `lambda` with `--hessian_lambda` for ablations.
 
-- `10%` candidate CE Hessian
-- `90%` EWoK query Hessian
-
-That is much closer to the paper's intended semantics than the earlier local
-two-weight interface. It is still not identical to the paper's Section 6 setup,
-because the paper chooses lambda automatically rather than fixing it by hand,
-and for C4 the effective lambda is often even more query-heavy.
+That is materially closer to the paper's Section 6 setup than the earlier local
+fixed-`0.9` interface. The main remaining differences are now in projection
+details and retrieval setup rather than in the lambda rule itself.
 
 ### Why We Still Care About It
 
@@ -417,12 +423,12 @@ depart from paper TrackStar in how it values:
 - coordinates that are large but not especially influential after curvature is
   accounted for
 
-So if we want to move this backend closer to paper TrackStar, the biggest
-remaining method gap is:
+So if we want to move this backend closer to paper TrackStar, the main
+remaining method gaps are:
 
-- add query-side optimizer correction, then replace the fixed
-  `lambda = 0.9` with either the paper's automatic rule or a better-justified
-  EWoK-specific choice
+- different projection details and layer blocking
+- checkpoint-local BOS candidate retrieval rather than the paper's open-set C4
+  retrieval
 
 ## Bergson Audit Summary
 
@@ -758,6 +764,11 @@ already fixed to the TrackStar backend. The CLI surface is:
 
 - `--proj_dim`
   Per-side Bergson projection dimension.
+- `--hessian_target_components`
+  Target spectral component `k` used by automatic `compute_lambda` selection.
+- `--hessian_lambda`
+  Optional fixed lambda override for ablations; otherwise lambda is computed
+  automatically.
 - `--use_fast_jl`
   Shared inherited flag that enables projected gradients.
   For TrackStar this is already the default, so passing it is usually

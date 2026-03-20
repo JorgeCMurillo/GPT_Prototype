@@ -15,7 +15,7 @@ import importlib
 import json
 from pathlib import Path
 import shutil
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -502,20 +502,74 @@ class BergsonAttributionBackend:
 
         return normalizers
 
-    def _resolve_hessian_lambda(self) -> tuple[float, float, float]:
-        """Return paper-style lambda plus derived index/query weights.
+    @staticmethod
+    def _compute_trackstar_lambda(
+        *,
+        query_covariances: Mapping[str, torch.Tensor],
+        index_covariances: Mapping[str, torch.Tensor],
+        target_components: int,
+    ) -> float:
+        """Mirror Bergson's pooled-spectrum compute_lambda logic locally."""
 
-        TrackStar mixes preconditioners as:
+        query_eigvals_list: list[torch.Tensor] = []
+        index_eigvals_list: list[torch.Tensor] = []
 
-        `H_mix = lambda * H_query + (1 - lambda) * H_index`
+        for name, query_cov in query_covariances.items():
+            index_cov = index_covariances.get(name)
+            if index_cov is None:
+                continue
 
-        so larger lambda means more query-side Hessian weight.
-        """
+            query_eigvals = torch.linalg.eigvalsh(query_cov.to(dtype=torch.float64)).clamp(min=0)
+            index_eigvals = torch.linalg.eigvalsh(index_cov.to(dtype=torch.float64)).clamp(min=0)
+            query_eigvals_list.append(query_eigvals)
+            index_eigvals_list.append(index_eigvals)
 
-        lam = float(self.config.hessian_lambda)
-        if not 0.0 <= lam <= 1.0:
-            raise ValueError(f"Hessian lambda must be in [0, 1], got {lam}")
-        return lam, 1.0 - lam, lam
+        if not query_eigvals_list:
+            return 0.99
+
+        all_query = torch.cat(query_eigvals_list)
+        all_index = torch.cat(index_eigvals_list)
+        total = int(all_query.numel())
+
+        if target_components <= 0:
+            return 1.0
+        if target_components > total:
+            target_components = total
+
+        sorted_query = torch.sort(all_query, descending=True).values
+        sorted_index = torch.sort(all_index, descending=True).values
+        k = target_components - 1
+        sigma_query = float(sorted_query[k].item())
+        sigma_index = float(sorted_index[k].item())
+
+        denom = sigma_query + sigma_index
+        if denom == 0.0:
+            return 0.99
+
+        lam = sigma_index / denom
+        return max(0.0, min(1.0, lam))
+
+    def _resolve_hessian_lambda(
+        self,
+        *,
+        query_covariances: Mapping[str, torch.Tensor],
+        index_covariances: Mapping[str, torch.Tensor],
+    ) -> tuple[float, float, float, str]:
+        """Return TrackStar lambda, derived weights, and where lambda came from."""
+
+        if self.config.hessian_lambda is not None:
+            lam = float(self.config.hessian_lambda)
+            if not 0.0 <= lam <= 1.0:
+                raise ValueError(f"Hessian lambda must be in [0, 1], got {lam}")
+            return lam, 1.0 - lam, lam, "fixed override"
+
+        target_components = int(self.config.hessian_target_components)
+        lam = self._compute_trackstar_lambda(
+            query_covariances=query_covariances,
+            index_covariances=index_covariances,
+            target_components=target_components,
+        )
+        return lam, 1.0 - lam, lam, f"compute_lambda(k={target_components})"
 
     @staticmethod
     def _feature_gram_matrix(features: torch.Tensor) -> torch.Tensor:
@@ -576,26 +630,36 @@ class BergsonAttributionBackend:
         if not modules:
             raise ValueError("No overlapping modules were found for mixed Hessian correction")
 
-        lam, index_weight, query_weight = self._resolve_hessian_lambda()
-        self._status(
-            "building mixed Hessian-style preconditioners with "
-            f"lambda={lam:.3f} (index/query mix {index_weight:.3f}/{query_weight:.3f})",
-            root_only=not self.execution_context.is_distributed,
-        )
-
         query_grams, total_query_count = self._global_query_gram_matrices(query_grads, modules)
         if total_query_count <= 0:
             raise ValueError("Cannot build query-side Hessian correction with zero query gradients")
 
-        split_preconditioners: dict[str, torch.Tensor] = {}
+        index_covariances: dict[str, torch.Tensor] = {}
+        query_covariances: dict[str, torch.Tensor] = {}
         for name in modules:
             index_features = torch.from_numpy(np.asarray(index_grads[name])).to(dtype=torch.float32)
             index_count = int(index_features.shape[0])
             if index_count <= 0:
                 raise ValueError(f"Cannot build index-side Hessian correction with zero rows for module {name!r}")
 
-            H_index = self._feature_gram_matrix(index_features) / float(index_count)
-            H_query = query_grams[name].to(dtype=torch.float32) / float(total_query_count)
+            index_covariances[str(name)] = self._feature_gram_matrix(index_features) / float(index_count)
+            query_covariances[str(name)] = query_grams[name].to(dtype=torch.float32) / float(total_query_count)
+
+        lam, index_weight, query_weight, lambda_source = self._resolve_hessian_lambda(
+            query_covariances=query_covariances,
+            index_covariances=index_covariances,
+        )
+        self._status(
+            "building mixed Hessian-style preconditioners with "
+            f"lambda={lam:.3f} from {lambda_source} "
+            f"(index/query mix {index_weight:.3f}/{query_weight:.3f})",
+            root_only=not self.execution_context.is_distributed,
+        )
+
+        split_preconditioners: dict[str, torch.Tensor] = {}
+        for name in modules:
+            H_index = index_covariances[name]
+            H_query = query_covariances[name]
             H_mixed = index_weight * H_index + query_weight * H_query
             split_preconditioners[str(name)] = _damped_psd_power(H_mixed, power=-0.5).to(
                 dtype=torch.float32,
@@ -1188,6 +1252,15 @@ class BergsonAttributionBackend:
         if local_bundle.items:
             self._status(f"loading index gradients from {index_dir}", root_only=not self.execution_context.is_distributed)
             index_grads = self._load_index_gradients(index_dir)
+            query_weight_normalizers: dict[str, Any] = {}
+            if self._candidate_uses_adam_second_moment_correction(checkpoint):
+                query_weight_normalizers = self._load_candidate_adam_normalizers(checkpoint)
+                corrected_modules = sum(1 for name in index_grads if name in query_weight_normalizers)
+                self._status(
+                    "applying Adam second-moment correction to "
+                    f"query gradients for {corrected_modules} module(s)",
+                    root_only=not self.execution_context.is_distributed,
+                )
             self._status(
                 f"collecting query gradients for {len(local_bundle.items)} local target(s) "
                 f"across {len(index_grads)} module(s)",
@@ -1203,6 +1276,7 @@ class BergsonAttributionBackend:
                 reduction="item",
                 projection_dim=int(self.config.proj_dim) if self.config.use_fast_jl else None,
                 projection_type="rademacher",
+                weight_normalizers=query_weight_normalizers,
             )
             if tuple(query_target_ids) != local_bundle.target_ids:
                 raise ValueError("Item-level query gradient ordering drifted away from target bundle ordering")

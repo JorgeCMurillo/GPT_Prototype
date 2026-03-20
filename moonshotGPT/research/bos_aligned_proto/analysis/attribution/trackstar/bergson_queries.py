@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 import hashlib
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 import torch
 from transformers.pytorch_utils import Conv1D as HFConv1D
@@ -215,6 +215,35 @@ def _project_query_grad(
     return projected.reshape(-1)
 
 
+def _apply_weight_normalizer(
+    module_name: str,
+    grad: torch.Tensor,
+    *,
+    weight_normalizers: Mapping[str, Any] | None,
+) -> torch.Tensor:
+    """Apply an optional Bergson-style weight normalizer before projection."""
+
+    if not weight_normalizers:
+        return grad
+
+    normalizer = weight_normalizers.get(module_name)
+    if normalizer is None:
+        return grad
+
+    normalize_weight = getattr(normalizer, "normalize_weight", None)
+    if normalize_weight is None:
+        raise TypeError(
+            f"Weight normalizer for query module {module_name!r} does not expose normalize_weight(...)"
+        )
+
+    corrected = normalize_weight(grad.clone())
+    if not isinstance(corrected, torch.Tensor):
+        raise TypeError(
+            f"Weight normalizer for query module {module_name!r} returned {type(corrected)!r}, expected torch.Tensor"
+        )
+    return corrected
+
+
 def collect_query_module_grads(
     model: torch.nn.Module,
     tokenizer,
@@ -226,6 +255,7 @@ def collect_query_module_grads(
     reduction: str = "item",
     projection_dim: int | None = None,
     projection_type: str = "rademacher",
+    weight_normalizers: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[str, ...], dict[str, torch.Tensor]]:
     if not bundle.items:
         return (), {}
@@ -253,6 +283,11 @@ def collect_query_module_grads(
             if grad is None:
                 raise RuntimeError(f"Missing gradient for query module {name!r}")
             normalized = _normalize_module_weight_grad(module, grad.detach())
+            normalized = _apply_weight_normalizer(
+                name,
+                normalized,
+                weight_normalizers=weight_normalizers,
+            )
             projected = _project_query_grad(
                 name,
                 normalized,

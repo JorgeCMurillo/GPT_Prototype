@@ -78,20 +78,46 @@ and an `exposures/` directory with per-rank JSONL exposure logs.
 
 ### Data Directory
 
-`--data_dir` should point at the BOS row-packed training data directory. The
-pipeline expects:
+`--data_dir` should point at the BOS training-data view that matches the run you
+are analyzing.
+
+The attribution code now supports two BOS data formats:
+
+- materialized BOS rows
+- exact BOS packed-index artifacts
+
+For the older materialized BOS-row path, the pipeline expects:
 
 - `meta.json`
 - `train_*.bin`
 
+For the newer packed-index path, the pipeline expects:
+
+- `meta.json`
+- `train.row_ptr.bin`
+- `train.segments.bin`
+- `train.virtual_shards.jsonl`
+
+and reconstructs rows from the packed index plus the original raw token shards
+recorded in `meta.json` or overridden through the training config.
+
 The row manifest is built from these files and is used to map exposure offsets
-back to stable global row ids.
+back to stable global row ids in either format.
 
 ### Candidate Rows
 
 Candidate rows are always BOS-packed training rows selected from exposure logs.
 The pipeline does not score the full dataset by default. It scores a checkpoint-
 local candidate subset chosen from rows that were actually exposed.
+
+For packed-index runs, the exposed shard identities are synthetic virtual shards
+such as `train_000123.vrow`, but the attribution contract stays the same:
+
+- `row_id`
+- `shard_path`
+- `local_row_idx`
+
+still refer to stable BOS-packed training rows.
 
 Supported strategies:
 
@@ -239,6 +265,15 @@ what each file means, and comes with prebuilt checks for:
 By default it points at the local `trackstar_step16000` example output. In most
 cases the only thing you need to change is the `OUTPUT_DIR` cell.
 
+Two practical notes:
+
+- Most of the notebook's reusable logic lives in
+  `analysis/attribution/common/notebook_analysis.py`.
+- The bundled `trackstar_step16000` example is a smoke-sized run, so
+  `max_targets` truncation can leave it with only a subset of EWoK domains.
+  The domain leaderboard cell now defaults to the first domain actually
+  exported by the loaded folder rather than assuming a fixed domain name.
+
 ## Dependencies
 
 ### Shared
@@ -296,7 +331,9 @@ Both runners support the same outer configuration surface:
 - `--run_dir`
   Finished BOS run directory.
 - `--data_dir`
-  BOS row-packed training data directory.
+  BOS training data directory for the analyzed run.
+  This can be either a materialized BOS-row dataset or an exact BOS packed-index
+  artifact.
 - `--exp_name`
   Name of the analysis subdirectory created under
   `run_dir/analysis/attribution/`.

@@ -1,14 +1,61 @@
 # Analysis Notebooks
 
-This folder currently contains one exploratory notebook:
+This folder currently contains two notebooks:
 
+- `analyze_attribution_outputs.ipynb`
 - `mine_synthetic_minimal_pairs.ipynb`
 
-The notebook is not just a decoding demo. It is a working notebook for mining
-synthetic EWoK-style minimal pairs out of BOS exposure text, then pushing those
-candidates through generation, verification, repair, and summary analysis.
+## `analyze_attribution_outputs.ipynb`
+
+This notebook is a guided viewer for exported attribution outputs, especially
+TrackStar runs.
+
+It is meant for the stage after a run has already finished and written files
+such as:
+
+- `top_rows_stepXXXXXXXX.csv`
+- `bottom_rows_stepXXXXXXXX.csv`
+- `row_summary_stepXXXXXXXX.csv`
+- `domain_summary_stepXXXXXXXX.csv`
+- `target_diagnostics_stepXXXXXXXX.jsonl`
+- `target_items.jsonl`
+- `run_summary.json`
+
+The notebook is intentionally written for someone who does not already know the
+internal TrackStar or Bergson code. It starts from one output directory,
+discovers the files that exist there, explains what each file means, and then
+walks through useful checks such as:
+
+- hardest targets by softplus loss
+- most influential rows overall
+- most negative rows overall
+- rows that recur across many targets
+- domain specialization heatmaps
+- inspection of one target item
+- inspection of one candidate row
+- checkpoint-to-checkpoint comparisons when multiple steps are present
+
+By default it points at the local successful `trackstar_step16000` run, but the
+only value you need to change is `OUTPUT_DIR`.
+
+Two small orientation notes that help when reading the notebook:
+
+- Most of the reusable loading, ranking, and plotting helpers live in
+  `analysis/attribution/common/notebook_analysis.py`, so the notebook itself is
+  intentionally thin.
+- The notebook can now decode exported rows from both materialized BOS-row
+  datasets and exact BOS packed-index artifacts, so newer `*.vrow` shard paths
+  are expected and valid.
+- The bundled `trackstar_step16000` example is a smoke-sized run with
+  `max_targets` truncation, so it may expose only a subset of EWoK domains.
+  The domain leaderboard cell now auto-selects the first exported domain from
+  the loaded folder.
 
 ## `mine_synthetic_minimal_pairs.ipynb`
+
+This notebook is not just a decoding demo. It is a working notebook for mining
+synthetic EWoK-style minimal pairs out of BOS exposure text, then pushing those
+candidates through generation, verification, repair, and summary analysis.
 
 ### Big Picture
 
@@ -152,14 +199,15 @@ whether the notebook is producing enough usable items.
 
 This notebook is exploratory and currently has several hardcoded assumptions:
 
-- it expects you to point it at a local BOS run directory under
-  `runs/research/bos_aligned_proto/<run_name>`
+- it points at a specific completed BOS run under
+  `research/bos_aligned_proto/experiments/...steps18000`
 - it expects exposure logs to exist for that run
 - it decodes with the default GPT-2 tokenizer
-- it expects `OPENAI_API_KEY` to be available in the environment
+- it expects an OpenAI API key at
+  `/home/jorge/tokenPred/moonshotGPT/openai_key.txt`
 - it calls `client.responses.create(..., model=\"gpt-5.2\")`
-- later statistics cells look for merged pair files under a local writable
-  output directory such as `data_augmentation/`
+- later statistics cells look for merged pair files under
+  `/home/jorge/tokenPred/moonshotGPT/data_augmentation/`
 
 In other words, this notebook is a research workbench tied to a specific local
 environment, not yet a fully packaged analysis pipeline.
