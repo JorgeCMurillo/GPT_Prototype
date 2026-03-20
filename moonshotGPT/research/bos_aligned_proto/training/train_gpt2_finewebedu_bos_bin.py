@@ -210,7 +210,10 @@ def build_llmc_style_optimizer(
     ]
 
     fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-    use_fused = fused_available and device.type == "cuda"
+    supported_fused_devices = {"cuda", "xpu", "privateuseone"}
+    param_devices = {p.device.type for p in param_dict.values()}
+    params_already_on_supported_device = len(param_devices) == 1 and next(iter(param_devices)) in supported_fused_devices
+    use_fused = fused_available and params_already_on_supported_device
     optimizer_kwargs = {"fused": use_fused} if fused_available else {}
 
     optimizer = AdamW(

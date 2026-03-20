@@ -1,3 +1,4 @@
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,21 @@ class _FakeTokenizer:
             ),
             encoding="utf-8",
         )
+
+
+def test_optimizer_disables_fused_until_params_are_on_accelerator_device() -> None:
+    model = _TinyLM(vocab_size=32, hidden_size=8)
+    optimizer, _, _, use_fused = train_mod.build_llmc_style_optimizer(
+        model=model,
+        learning_rate=1e-3,
+        weight_decay=0.0,
+        beta1=0.9,
+        beta2=0.95,
+        device=torch.device("cuda"),
+    )
+    assert use_fused is False
+    if "fused" in inspect.signature(torch.optim.AdamW).parameters:
+        assert optimizer.defaults.get("fused", False) is False
 
 
 def test_top_level_trainer_smoke_skips_final_ewok(tmp_path, monkeypatch) -> None:
