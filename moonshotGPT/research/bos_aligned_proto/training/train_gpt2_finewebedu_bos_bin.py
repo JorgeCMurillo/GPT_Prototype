@@ -44,6 +44,10 @@ try:
     from attention_compat import sdpa_kernel, SDPBackend
 except ImportError:
     from moonshotGPT.attention_compat import sdpa_kernel, SDPBackend
+try:
+    from runtime_memory import format_memory_usage_postfix, reset_peak_memory_stats
+except ImportError:
+    from moonshotGPT.runtime_memory import format_memory_usage_postfix, reset_peak_memory_stats
 
 try:
     from research.bos_aligned_proto.training.config import (
@@ -903,6 +907,7 @@ def main(cfg: TrainConfig) -> None:
         print(f"Using fused AdamW: {use_fused}")
 
     model, optimizer = accelerator.prepare(model, optimizer)
+    reset_peak_memory_stats(device)
 
     # Plot buffers
     train_loss_history = []
@@ -1028,7 +1033,11 @@ def main(cfg: TrainConfig) -> None:
             delta = tokens_seen_local_recent - last_report_tokens_local
             tps_local = delta / max(dt, 1e-9)
             tps_global = tps_local * accelerator.num_processes
-            pbar.set_postfix_str(f"tok/s≈{tps_global:,.0f}")
+            postfix = f"tok/s≈{tps_global:,.0f}"
+            mem_postfix = format_memory_usage_postfix(device)
+            if mem_postfix:
+                postfix = f"{postfix} {mem_postfix}"
+            pbar.set_postfix_str(postfix)
             last_report_t = now
             last_report_tokens_local = tokens_seen_local_recent
 
