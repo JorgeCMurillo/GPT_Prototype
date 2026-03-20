@@ -12,7 +12,10 @@ from typing import Any, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.attention import sdpa_kernel
+try:
+    from attention_compat import sdpa_kernel
+except ImportError:
+    from moonshotGPT.attention_compat import sdpa_kernel
 
 from .ewok import BABYLM_COMPLETION_CHOICE, EWOK_CONTEXT_SENSITIVITY
 

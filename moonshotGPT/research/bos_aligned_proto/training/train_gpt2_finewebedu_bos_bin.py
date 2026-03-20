@@ -20,7 +20,6 @@ from tqdm import tqdm
 import time
 
 import torch.nn.functional as F
-from torch.nn.attention import sdpa_kernel, SDPBackend
 from transformers import AutoModelForCausalLM
 
 from torch.optim import AdamW
@@ -40,6 +39,11 @@ _REPO_ROOT = os.path.dirname(_RESEARCH_ROOT)
 PLOT_STEP_METRICS_SCRIPT = os.path.join(_REPO_ROOT, "plot_step_metrics.py")
 if _REPO_ROOT not in sys.path:
     sys.path.append(_REPO_ROOT)
+
+try:
+    from attention_compat import sdpa_kernel, SDPBackend
+except ImportError:
+    from moonshotGPT.attention_compat import sdpa_kernel, SDPBackend
 
 try:
     from research.bos_aligned_proto.training.config import (

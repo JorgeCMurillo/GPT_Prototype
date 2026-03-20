@@ -20,8 +20,11 @@ from tqdm import tqdm
 import time
 
 import torch.nn.functional as F
-from torch.nn.attention import sdpa_kernel, SDPBackend
 from transformers import AutoModelForCausalLM
+try:
+    from attention_compat import sdpa_kernel, SDPBackend
+except ImportError:
+    from moonshotGPT.attention_compat import sdpa_kernel, SDPBackend
 
 from torch.optim import AdamW
 
