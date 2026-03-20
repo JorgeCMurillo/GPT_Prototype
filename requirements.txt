@@ -8,9 +8,5 @@ pandas
 tqdm
 matplotlib
 PyYAML
-gensim
-scipy
 safetensors
 huggingface_hub
-trak
-bergson

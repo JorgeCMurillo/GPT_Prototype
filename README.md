@@ -32,6 +32,21 @@ That README includes end-to-end commands for:
 pip install -r requirements.txt
 ```
 
+Optional installs:
+- `pip install -r requirements-dev.txt` for repo-root test runs such as `pytest -q moonshotGPT/tests`
+- `pip install -r requirements-research.txt` for attribution and other research extras like Bergson/TRAK/word2vec analysis
+
+External runtime downloads/cache used by the core train/eval workflow:
+- FineWeb-Edu via `datasets` during tokenization
+- the `gpt2` tokenizer during tokenization/training
+- `openai-community/gpt2-medium` during reference-loss precompute
+- the HellaSwag dataset when HellaSwag eval is enabled
+
+The public branch intentionally does not include generated shard data under
+`moonshotGPT/data/processed/` or reference-loss artifacts under
+`moonshotGPT/data/ref_loss/`; those are expected to be created on the target
+server.
+
 ### 2) Prepare data
 ```bash
 cd moonshotGPT
@@ -139,3 +154,4 @@ Keep large runtime outputs out of git, especially:
 ## Notes
 - Default reference model for rho workflows is `openai-community/gpt2-medium`.
 - For stable rho alignment, keep training `--micro_batch_size` equal to precompute `--batch_size`, and keep `--seq_len` matched.
+- Repo-root tests are intended to work directly via `pytest -q moonshotGPT/tests` without needing to set `PYTHONPATH` manually.

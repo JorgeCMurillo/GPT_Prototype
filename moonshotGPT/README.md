@@ -130,7 +130,12 @@ Public repo note:
 - It intentionally does not include `runs/`, `experiments/`, processed datasets,
   reference-loss binaries, or `eval_bundle/`.
 
-Minimal dependencies used by these scripts include:
+Install surfaces:
+- `pip install -r ../requirements.txt` for the core GPT-2 train/eval workflow
+- `pip install -r ../requirements-dev.txt` if you also want to run tests
+- `pip install -r ../requirements-research.txt` for optional attribution and other research extras
+
+Core dependencies used by these scripts include:
 - `torch`
 - `accelerate`
 - `transformers`
@@ -141,6 +146,14 @@ Minimal dependencies used by these scripts include:
 - `matplotlib`
 - `pandas`
 - `PyYAML`
+
+External runtime downloads/cache used by this workflow:
+- FineWeb-Edu via `datasets` during tokenization
+- the `gpt2` tokenizer during tokenization/training
+- `openai-community/gpt2-medium` during reference-loss precompute
+- the HellaSwag dataset when HellaSwag eval is enabled
+
+If you need an offline server run, pre-cache those assets before launch.
 
 If needed, initialize Accelerate once:
 
@@ -193,6 +206,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
+  --skip_final_ewok \
   --num_workers 0 \
   --shuffle_blocks
 ```
@@ -341,5 +355,4 @@ Success criteria:
 - produce reproducible evidence from exposure + evaluation logs.
 
 ## Public Interface Notes
-- This README adds documentation only.
-- No code API or CLI changes are required to use this workflow.
+- `train_gpt2_finewebedu_bin.py` now accepts `--skip_final_ewok` for smoke tests and other runs where you want to skip only the end-of-run EWoK pass.

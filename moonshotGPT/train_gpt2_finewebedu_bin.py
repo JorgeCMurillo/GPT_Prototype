@@ -622,6 +622,7 @@ def main(
     save_every: int = 2000,
     exposure_every: int = 50,
     push_to_hub: bool = False,
+    skip_final_ewok: bool = False,
     mixed_precision: str = "bf16",
     rho_ref_loss_dir: str = "",
     rho_keep_frac: float = 1.0,
@@ -1696,25 +1697,28 @@ def main(
     # Final EWoK (+ per-item) + final checkpoint
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        run_final_ewok_eval_main_process(
-            accelerator=accelerator,
-            model=model,
-            tokenizer=tokenizer,
-            evaluate_fn=evaluate,
-            ewok_batch_size=ewok_batch_size,
-            opt_step=opt_step,
-            optimizer=optimizer,
-            tokens_seen_local_total=tokens_seen_local_total,
-            ewok_items_path=ewok_items_path,
-            step_metrics=step_metrics,
-            metrics_path=metrics_path,
-            ewok_row_category_lookup=ewok_row_category_lookup,
-            ewok_category_columns=ewok_category_columns,
-            append_jsonl_fn=append_jsonl,
-            save_metrics_fn=save_metrics,
-            get_current_lr_fn=get_current_lr,
-            to_jsonable_fn=to_jsonable,
-        )
+        if skip_final_ewok:
+            print("Skipping final EWoK evaluation (--skip_final_ewok).")
+        else:
+            run_final_ewok_eval_main_process(
+                accelerator=accelerator,
+                model=model,
+                tokenizer=tokenizer,
+                evaluate_fn=evaluate,
+                ewok_batch_size=ewok_batch_size,
+                opt_step=opt_step,
+                optimizer=optimizer,
+                tokens_seen_local_total=tokens_seen_local_total,
+                ewok_items_path=ewok_items_path,
+                step_metrics=step_metrics,
+                metrics_path=metrics_path,
+                ewok_row_category_lookup=ewok_row_category_lookup,
+                ewok_category_columns=ewok_category_columns,
+                append_jsonl_fn=append_jsonl,
+                save_metrics_fn=save_metrics,
+                get_current_lr_fn=get_current_lr,
+                to_jsonable_fn=to_jsonable,
+            )
 
         # Auto-generate run-local analysis plots from step_metrics.json
         plot_script = os.path.join(os.path.dirname(__file__), "plot_step_metrics.py")
@@ -1856,5 +1860,7 @@ if __name__ == "__main__":
                         help="Log exposure meta every N optimizer steps (0 disables)")
 
     parser.add_argument("--push_to_hub", action="store_true")
+    parser.add_argument("--skip_final_ewok", action="store_true",
+                        help="Skip final EWoK eval at the end (useful for smoke tests)")
     args = parser.parse_args()
     main(**vars(args))
