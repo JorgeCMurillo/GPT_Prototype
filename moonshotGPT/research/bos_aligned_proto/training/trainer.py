@@ -1,14 +1,9 @@
-"""Train GPT-style models on BOS-aligned row-packed token shards.
-
-This prototype entrypoint mirrors the main training loop while using the
-BOS-row loader and the same evaluation hooks for architecture comparisons.
-"""
+"""Train GPT-style models from either raw token streams or exact BOS packed rows."""
 
 from dataclasses import asdict
-import os, random, json, math, inspect, subprocess, sys
+import os, random, math, inspect, subprocess, sys
 from datetime import datetime
 from contextlib import nullcontext
-import gc
 
 import torch
 import numpy as np
@@ -20,6 +15,7 @@ from tqdm import tqdm
 import time
 
 import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
 from transformers import AutoModelForCausalLM
 
 from torch.optim import AdamW
@@ -41,15 +37,6 @@ if _REPO_ROOT not in sys.path:
     sys.path.append(_REPO_ROOT)
 
 try:
-    from attention_compat import sdpa_kernel, SDPBackend
-except ImportError:
-    from moonshotGPT.attention_compat import sdpa_kernel, SDPBackend
-try:
-    from runtime_memory import format_memory_usage_postfix, reset_peak_memory_stats
-except ImportError:
-    from moonshotGPT.runtime_memory import format_memory_usage_postfix, reset_peak_memory_stats
-
-try:
     from research.bos_aligned_proto.training.config import (
         DEFAULT_EXPERIMENTS_DIR,
         TrainConfig,
@@ -60,37 +47,39 @@ except ImportError:
 
 try:
     from research.bos_aligned_proto.evaluation.ewok import (
-        BABYLM_COMPLETION_CHOICE,
-        EWOK_CONTEXT_SENSITIVITY,
         evaluate,
         ewok_df as EWOK_DF,
     )
 except ImportError:
     from evaluation.ewok import (
-        BABYLM_COMPLETION_CHOICE,
-        EWOK_CONTEXT_SENSITIVITY,
         evaluate,
         ewok_df as EWOK_DF,
     )
 
+from shard_loader import make_dataloader as make_stream_dataloader
+
 try:
-    from research.bos_aligned_proto.pipeline.bos_row_loader import (
-        make_bos_row_dataloader as make_dataloader,
+    from research.bos_aligned_proto.pipeline.bos_packed_index import (
+        PACKED_INDEX_FORMAT,
+        fingerprint_packed_index_artifact,
+        fingerprint_source_shards,
+        make_bos_packed_index_dataloader,
     )
 except ImportError:
-    from ..pipeline.bos_row_loader import make_bos_row_dataloader as make_dataloader
+    from ..pipeline.bos_packed_index import (
+        PACKED_INDEX_FORMAT,
+        fingerprint_packed_index_artifact,
+        fingerprint_source_shards,
+        make_bos_packed_index_dataloader,
+    )
 
 try:
     from research.bos_aligned_proto.evaluation.ewok_category import (
-        aggregate_eval_full_by_category as _aggregate_eval_full_by_category,
-        build_ewok_row_category_lookup as _build_ewok_row_category_lookup,
-        plot_ewok_category_subplots as _plot_ewok_category_subplots,
+        build_ewok_row_category_lookup,
     )
 except ImportError:
     from ..evaluation.ewok_category import (
-        aggregate_eval_full_by_category as _aggregate_eval_full_by_category,
-        build_ewok_row_category_lookup as _build_ewok_row_category_lookup,
-        plot_ewok_category_subplots as _plot_ewok_category_subplots,
+        build_ewok_row_category_lookup,
     )
 
 try:
@@ -124,36 +113,48 @@ except Exception:
     run_hellaswag_eval_step = None
     run_parallel_validation = None
 
+try:
+    from research.bos_aligned_proto.training.checkpoints import (
+        load_existing_step_metrics,
+        load_trainer_state,
+        resolve_resume_paths,
+        save_trainer_state,
+        validate_ckpt_model_config_alignment,
+    )
+except ImportError:
+    from checkpoints import (
+        load_existing_step_metrics,
+        load_trainer_state,
+        resolve_resume_paths,
+        save_trainer_state,
+        validate_ckpt_model_config_alignment,
+    )
 
-# -----------------------------
-# JSON helpers
+try:
+    from research.bos_aligned_proto.training.eval_hooks import (
+        refresh_ewok_analysis_plots,
+        release_eval_memory,
+    )
+except ImportError:
+    from eval_hooks import refresh_ewok_analysis_plots, release_eval_memory
 
-def to_jsonable(x):
-    """Convert tensors / numpy / scalars inside dicts to JSON-safe Python types."""
-    if isinstance(x, dict):
-        return {k: to_jsonable(v) for k, v in x.items()}
-    if isinstance(x, (list, tuple)):
-        return [to_jsonable(v) for v in x]
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    if isinstance(x, (np.floating, np.integer)):
-        return x.item()
-    if torch.is_tensor(x):
-        return x.detach().cpu().tolist() if x.ndim > 0 else x.item()
-    return x
+try:
+    from research.bos_aligned_proto.training.reporting import (
+        append_jsonl,
+        atomic_write_json,
+        load_json,
+        save_metrics,
+        to_jsonable,
+    )
+except ImportError:
+    from reporting import append_jsonl, atomic_write_json, load_json, save_metrics, to_jsonable
 
-
-def save_metrics(metrics_list, out_path):
-    tmp_path = out_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(to_jsonable(metrics_list), f, indent=2)
-    os.replace(tmp_path, out_path)  # atomic write
-
-
-def append_jsonl(path: str, record: dict):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
-        f.write(json.dumps(to_jsonable(record)) + "\n")
+from training_utils.resume_trim import (
+    derive_resume_skip_microsteps,
+    fast_forward_iterator_data_only,
+    trim_run_logs_after_step,
+    validate_replay_compatibility,
+)
 
 
 # -----------------------------
@@ -214,10 +215,7 @@ def build_llmc_style_optimizer(
     ]
 
     fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-    supported_fused_devices = {"cuda", "xpu", "privateuseone"}
-    param_devices = {p.device.type for p in param_dict.values()}
-    params_already_on_supported_device = len(param_devices) == 1 and next(iter(param_devices)) in supported_fused_devices
-    use_fused = fused_available and params_already_on_supported_device
+    use_fused = fused_available and device.type == "cuda"
     optimizer_kwargs = {"fused": use_fused} if fused_available else {}
 
     optimizer = AdamW(
@@ -264,347 +262,46 @@ def _flatten_meta(meta_obj):
             out.extend(_flatten_meta(x))
     return out
 
-
-def release_eval_memory():
-    """Best-effort cleanup before heavy eval runs."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-def _unpack_ewok_per_item(result):
-    """
-    Backward/forward compatible unpack for ewok_eval.evaluate(return_per_item=True).
-    Older API returns 3 values, newer API returns 4 (with margin stats).
-    """
-    if not isinstance(result, (list, tuple)):
-        raise TypeError(f"Unexpected EWoK return type: {type(result)}")
-    if len(result) == 3:
-        eval_off, eval_full, per_item = result
-        return eval_off, eval_full, per_item, None
-    if len(result) == 4:
-        eval_off, eval_full, per_item, margin_stats = result
-        return eval_off, eval_full, per_item, margin_stats
-    raise ValueError(f"Unexpected EWoK return tuple length: {len(result)}")
-
-
-def _evaluate_ewok_all_methods(model, tokenizer, *, batch_size: int, score_reduction: str):
-    try:
-        result = evaluate(
-            model,
-            tokenizer,
-            batch_size=batch_size,
-            return_per_item=True,
-            score_reduction=score_reduction,
-            return_all_methods=True,
-        )
-    except TypeError:
-        eval_off, eval_full, per_item, margin_stats = _unpack_ewok_per_item(
-            evaluate(
-                model,
-                tokenizer,
-                batch_size=batch_size,
-                return_per_item=True,
-                score_reduction=score_reduction,
-            )
-        )
-        return {
-            BABYLM_COMPLETION_CHOICE: {
-                "domain_scores_official": eval_off,
-                "domain_scores_full": eval_full,
-                "domain_margin_stats": margin_stats,
-            },
-            EWOK_CONTEXT_SENSITIVITY: None,
-        }, per_item
-
-    if not isinstance(result, (list, tuple)) or len(result) != 2:
-        raise ValueError(
-            "Expected evaluate(return_all_methods=True, return_per_item=True) "
-            f"to return (metrics_by_method, per_item), got: {type(result)}"
-        )
-
-    metrics_by_method, per_item = result
-    if not isinstance(metrics_by_method, dict):
-        raise TypeError(f"Unexpected metrics_by_method type: {type(metrics_by_method)}")
-    if not isinstance(per_item, list):
-        raise TypeError(f"Unexpected per_item type: {type(per_item)}")
-    if BABYLM_COMPLETION_CHOICE not in metrics_by_method:
-        raise KeyError(f"Missing {BABYLM_COMPLETION_CHOICE} in EWoK metrics.")
-    return metrics_by_method, per_item
-
-
-def _is_finite_number(x) -> bool:
-    return isinstance(x, (int, float)) and math.isfinite(float(x))
-
-
-def _pair_to_scalar(value):
-    if isinstance(value, (list, tuple)) and len(value) >= 2 and _is_finite_number(value[0]) and _is_finite_number(value[1]):
-        return 0.5 * (float(value[0]) + float(value[1]))
-    if _is_finite_number(value):
-        return float(value)
-    return None
-
-
-def _extract_full_average_scalar(full_payload):
-    if not isinstance(full_payload, dict):
-        return None
-
-    avg = _pair_to_scalar(full_payload.get("average"))
-    if avg is not None:
-        return avg
-
-    vals = []
-    for domain, value in full_payload.items():
-        if str(domain) == "average":
-            continue
-        y = _pair_to_scalar(value)
-        if y is not None:
-            vals.append(y)
-    if not vals:
-        return None
-    return float(sum(vals) / len(vals))
-
-
-def _plot_ewok_full_mean_average(step_metrics, out_dir):
-    """Plot EWOK full-mean average across optimizer steps from in-memory step_metrics."""
-    if plt is None or not step_metrics:
-        return
-
-    by_step = {}
-    for rec in step_metrics:
-        step = rec.get("step")
-        full_mean = rec.get("eval_full_mean")
-        if not isinstance(step, int) or not isinstance(full_mean, dict):
-            continue
-        y = _extract_full_average_scalar(full_mean)
-        if y is None:
-            continue
-        by_step[step] = float(y)
-
-    if not by_step:
-        return
-
-    points = sorted(by_step.items(), key=lambda t: t[0])
-    xs = [x for x, _ in points]
-    ys = [y for _, y in points]
-
-    fig = plt.figure(figsize=(9, 5.2))
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(xs, ys, marker="o", linewidth=1.8, markersize=3.5, color="#2a6f97", label="full_mean_average")
-    ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
-    ax.set_title("EWOK Full Mean Average Across Steps")
-    ax.set_xlabel("Optimizer Step")
-    ax.set_ylabel("Accuracy")
-    ax.set_ylim(0.0, 1.0)
-    ax.grid(True, alpha=0.25)
-    ax.legend()
-
-    out_path = os.path.join(out_dir, "ewok_full_mean_average_by_step.png")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def _extract_margin_average_scalar(margin_payload, metric_key):
-    if not isinstance(margin_payload, dict):
-        return None
-
-    avg = margin_payload.get("average")
-    if isinstance(avg, dict) and _is_finite_number(avg.get(metric_key)):
-        return float(avg[metric_key])
-
-    vals = []
-    for domain, stats in margin_payload.items():
-        if str(domain) == "average" or not isinstance(stats, dict):
-            continue
-        if _is_finite_number(stats.get(metric_key)):
-            vals.append(float(stats[metric_key]))
-    if not vals:
-        return None
-    return float(sum(vals) / len(vals))
-
-
-def _plot_ewok_margin_domains(step_metrics, out_dir, metric_key="eval_margin_stats_mean"):
-    if plt is None or not step_metrics:
-        return
-
-    ewok_records = [
-        r for r in step_metrics
-        if isinstance(r, dict) and isinstance(r.get("step"), int) and isinstance(r.get(metric_key), dict)
-    ]
-    if not ewok_records:
-        return
-
-    reduction_suffix = metric_key.replace("eval_margin_stats_", "").strip("_") or "unknown"
-    by_domain = {}
-    for rec in ewok_records:
-        margin_payload = rec.get(metric_key, {})
-        for domain, stats in margin_payload.items():
-            if str(domain) == "average" or not isinstance(stats, dict):
-                continue
-            y_signed = stats.get("mean_signed_m")
-            y_abs = stats.get("mean_abs_m")
-            if _is_finite_number(y_signed) and _is_finite_number(y_abs):
-                by_domain.setdefault(str(domain), []).append(
-                    (rec["step"], float(y_signed), float(y_abs))
-                )
-
-    if not by_domain:
-        return
-
-    domains = sorted(by_domain)
-    ncols = 3
-    nrows = max(1, int(math.ceil(len(domains) / ncols)))
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(18, max(14, nrows * 3.5)),
-        squeeze=False,
-    )
-    axes_flat = axes.flatten()
-
-    for idx, domain in enumerate(domains):
-        ax = axes_flat[idx]
-        pts = sorted(by_domain[domain], key=lambda t: t[0])
-        xs = [x for x, _, _ in pts]
-        ys_signed = [a for _, a, _ in pts]
-        ys_abs = [b for _, _, b in pts]
-        ax.plot(xs, ys_signed, marker="o", linewidth=1.6, markersize=3.5, color="#1f77b4", label="mean signed margin")
-        ax.plot(
-            xs,
-            ys_abs,
-            marker="s",
-            linewidth=1.4,
-            markersize=3.2,
-            linestyle=(0, (4, 2)),
-            color="#ff7f0e",
-            label="mean abs margin",
-        )
-        ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
-        ax.set_title(domain, fontsize=10)
-        ax.set_xlabel("Step", fontsize=9)
-        ax.set_ylabel("Margin", fontsize=9)
-        ax.grid(True, alpha=0.25)
-        ax.legend(fontsize=7)
-
-    for idx in range(len(domains), len(axes_flat)):
-        axes_flat[idx].axis("off")
-
-    fig.suptitle(f"EWOK Mean Margins by Domain ({reduction_suffix})", fontsize=14)
-    out_path = os.path.join(out_dir, f"ewok_margin_{reduction_suffix}_domains_4x3.png")
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def _plot_ewok_margin_average_all_domains(step_metrics, out_dir, metric_key="eval_margin_stats_mean"):
-    if plt is None or not step_metrics:
-        return
-
-    reduction_suffix = metric_key.replace("eval_margin_stats_", "").strip("_") or "unknown"
-    signed = []
-    abs_margin = []
-    for rec in step_metrics:
-        step = rec.get("step")
-        margin_payload = rec.get(metric_key)
-        if not isinstance(step, int) or not isinstance(margin_payload, dict):
-            continue
-        y_signed = _extract_margin_average_scalar(margin_payload, "mean_signed_m")
-        y_abs = _extract_margin_average_scalar(margin_payload, "mean_abs_m")
-        if y_signed is not None:
-            signed.append((step, float(y_signed)))
-        if y_abs is not None:
-            abs_margin.append((step, float(y_abs)))
-
-    if not signed and not abs_margin:
-        return
-
-    fig = plt.figure(figsize=(10, 5.6))
-    ax = fig.add_subplot(1, 1, 1)
-
-    if signed:
-        xs = [x for x, _ in signed]
-        ys = [y for _, y in signed]
-        ax.plot(xs, ys, linewidth=1.9, marker="o", markersize=3.5, color="#1f77b4", label="mean signed margin")
-
-    if abs_margin:
-        xs = [x for x, _ in abs_margin]
-        ys = [y for _, y in abs_margin]
-        ax.plot(
-            xs,
-            ys,
-            linewidth=1.6,
-            marker="s",
-            markersize=3.4,
-            linestyle=(0, (4, 2)),
-            color="#ff7f0e",
-            alpha=0.45,
-            label="mean abs margin (reference)",
-        )
-
-    ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
-    ax.set_title(f"EWOK Mean Margins Across Domains ({reduction_suffix})")
-    ax.set_xlabel("Optimizer Step")
-    ax.set_ylabel("Margin")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
-
-    reduction_label = (
-        r"$s(C,T)=\sum_t \log P_{\theta}(t\mid C)$"
-        if reduction_suffix == "sum"
-        else r"$s(C,T)=\frac{1}{|T|}\sum_t \log P_{\theta}(t\mid C)$"
-    )
-    expl = (
-        r"$m_1=s(C_1,T_1)-s(C_1,T_2),\ m_2=s(C_2,T_2)-s(C_2,T_1),\ m=\frac{1}{2}(m_1+m_2)$"
-        "\n"
-        r"$\mu_d=\mathbb{E}_i[m_i],\ \mathrm{plotted}=\frac{1}{D}\sum_d \mu_d$"
-        "\n"
-        + reduction_label
-        + "; "
-        + r"$\mathrm{abs\ ref}=\frac{1}{D}\sum_d \mathbb{E}_i[|m_i|]$"
-        + "\n"
-        + "Intuition: signed > 0 favors the correct direction; near 0 with high abs can indicate strong but inconsistent or biased discrimination."
-    )
-    ax.text(
-        0.015,
-        0.015,
-        expl,
-        transform=ax.transAxes,
-        fontsize=8,
-        va="bottom",
-        ha="left",
-        bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "edgecolor": "#cccccc", "alpha": 0.75},
-    )
-
-    out_path = os.path.join(out_dir, f"ewok_margin_{reduction_suffix}_average_all_domains.png")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def _refresh_ewok_analysis_plots(step_metrics, out_dir, include_sum_plots=False):
-    _plot_ewok_full_mean_average(step_metrics, out_dir)
-    _plot_ewok_category_subplots(step_metrics, out_dir, metric_key="eval_by_category_full_mean")
-    _plot_ewok_margin_domains(step_metrics, out_dir, metric_key="eval_margin_stats_mean")
-    _plot_ewok_margin_average_all_domains(step_metrics, out_dir, metric_key="eval_margin_stats_mean")
-    if include_sum_plots:
-        _plot_ewok_margin_domains(step_metrics, out_dir, metric_key="eval_margin_stats_sum")
-        _plot_ewok_margin_average_all_domains(step_metrics, out_dir, metric_key="eval_margin_stats_sum")
-
-def _has_row_shards(path: str) -> bool:
-    """Best-effort check for expected BOS row-packed dataset layout."""
+def _has_stream_shards(path: str) -> bool:
+    """Best-effort check for raw token stream shards."""
     if not os.path.isdir(path):
         return False
     try:
         entries = os.listdir(path)
     except OSError:
         return False
-    has_meta = "meta.json" in entries
-    has_train_bin = any(name.startswith("train_") and name.endswith(".bin") for name in entries)
-    return has_meta and has_train_bin
+    return any(name.startswith("train_") and name.endswith(".bin") for name in entries)
 
 
-def _resolve_row_data_dir(path: str) -> str:
-    """Resolve BOS row-packed datasets from common repo-relative locations."""
+def _has_packed_index(path: str) -> bool:
+    if not os.path.isdir(path):
+        return False
+    meta_path = os.path.join(path, "meta.json")
+    if not os.path.exists(meta_path):
+        return False
+    try:
+        meta = load_json(meta_path)
+    except Exception:
+        return False
+    return meta.get("format") == PACKED_INDEX_FORMAT
+
+
+def _resolve_data_dir(path: str, *, loader_kind: str) -> str:
+    """Resolve stream or packed-index artifacts from common repo-relative locations."""
+    requested = os.path.expanduser(path)
+    predicate = _has_packed_index if loader_kind == "bos_packed_index" else _has_stream_shards
+    for candidate in (
+        requested,
+        os.path.join(_PROTO_ROOT, requested),
+        os.path.join(_REPO_ROOT, requested),
+        os.path.join(_REPO_ROOT, "data", requested),
+    ):
+        if predicate(candidate):
+            return os.path.abspath(candidate)
+    return requested
+
+
+def _resolve_optional_source_data_dir(path: str) -> str:
     requested = os.path.expanduser(path)
     for candidate in (
         requested,
@@ -612,7 +309,7 @@ def _resolve_row_data_dir(path: str) -> str:
         os.path.join(_REPO_ROOT, requested),
         os.path.join(_REPO_ROOT, "data", requested),
     ):
-        if _has_row_shards(candidate):
+        if _has_stream_shards(candidate):
             return os.path.abspath(candidate)
     return requested
 
@@ -621,11 +318,14 @@ def _resolve_row_data_dir(path: str) -> str:
 # Main
 
 def main(cfg: TrainConfig) -> None:
+    invocation_args = sys.argv[1:]
+    loader_kind = str(cfg.loader_kind).strip()
     seed = cfg.seed
     micro_batch_size = cfg.micro_batch_size
     total_batch_tokens = cfg.total_batch_tokens
     max_train_steps = cfg.max_train_steps
     data_dir = cfg.data_dir
+    source_data_dir = str(cfg.source_data_dir).strip()
     experiments_dir = cfg.experiments_dir
     seq_len = cfg.seq_len
     vocab_size = cfg.vocab_size
@@ -660,13 +360,42 @@ def main(cfg: TrainConfig) -> None:
     push_to_hub = cfg.push_to_hub
     skip_final_ewok = cfg.skip_final_ewok
     include_ewok_sum_plots = cfg.include_ewok_sum_plots
+    init_from_ckpt = str(cfg.init_from_ckpt).strip()
+    resume_from_run = str(cfg.resume_from_run).strip()
+
+    if loader_kind not in {"stream", "bos_packed_index"}:
+        raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
+
+    if init_from_ckpt and resume_from_run:
+        raise ValueError("Use only one of --init_from_ckpt or --resume_from_run, not both.")
+    if init_from_ckpt and not os.path.isdir(init_from_ckpt):
+        raise FileNotFoundError(f"--init_from_ckpt not found: {init_from_ckpt}")
 
     set_all_seeds(seed)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    # Resolve relative BOS datasets against the prototype root, repo root,
-    # and a future top-level repo data/ directory.
-    data_dir = _resolve_row_data_dir(data_dir)
+    data_dir = _resolve_data_dir(data_dir, loader_kind=loader_kind)
+    if source_data_dir:
+        source_data_dir = _resolve_optional_source_data_dir(source_data_dir)
+    artifact_fingerprint = ""
+    source_shards_fingerprint = ""
+    packing_algo = None
+    row_tokens = seq_len + 1
+    virtual_shard_rows = None
+    if loader_kind == "stream":
+        source_shards_fingerprint = fingerprint_source_shards(data_dir)
+    elif loader_kind == "bos_packed_index":
+        packed_index_meta = load_json(os.path.join(data_dir, "meta.json"))
+        artifact_fingerprint = fingerprint_packed_index_artifact(data_dir)
+        if not source_data_dir:
+            source_data_dir = packed_index_meta.get("source_data_dir", "")
+            if source_data_dir:
+                source_data_dir = _resolve_optional_source_data_dir(source_data_dir)
+        if source_data_dir:
+            source_shards_fingerprint = fingerprint_source_shards(source_data_dir)
+        packing_algo = packed_index_meta.get("packing_algo")
+        row_tokens = int(packed_index_meta.get("row_tokens", seq_len + 1))
+        virtual_shard_rows = packed_index_meta.get("virtual_shard_rows", packed_index_meta.get("shard_rows"))
 
     # [FIX 1] Initialize Accelerator FIRST so we know the real world_size
     dataloader_config = DataLoaderConfiguration(dispatch_batches=False, split_batches=False)
@@ -681,9 +410,9 @@ def main(cfg: TrainConfig) -> None:
     tokens_per_microstep_global = world_size * micro_batch_size * seq_len
     if tokens_per_microstep_global <= 0:
         raise ValueError("Bad micro_batch_size/seq_len/world_size.")
-    
+
     grad_accum_steps = max(1, math.ceil(total_batch_tokens / tokens_per_microstep_global))
-    
+
     # Update accelerator with the calculated steps
     accelerator.gradient_accumulation_steps = grad_accum_steps
 
@@ -691,14 +420,41 @@ def main(cfg: TrainConfig) -> None:
     effective_global_batch_seqs = grad_accum_steps * micro_batch_size * world_size
     per_gpu_tokens_per_opt_step = grad_accum_steps * micro_batch_size * seq_len
 
-    run_name = (
-        f"babygpt_fineweb_bosrow_mbs{micro_batch_size}_T{seq_len}_"
-        f"d{n_embd}_h{n_head}_L{n_layer}_"
-        f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
-        f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
-        f"steps{max_train_steps}"
-    )
-    out_dir = os.path.join(experiments_dir, run_name)
+    resume_mode = bool(resume_from_run)
+    resume_run_dir = ""
+    resume_ckpt_dir = ""
+    resume_step_hint = 0
+    resume_state = {}
+    if resume_mode:
+        resume_run_dir, resume_ckpt_dir, resume_step_hint = resolve_resume_paths(resume_from_run)
+        resume_state = load_trainer_state(resume_ckpt_dir)
+        out_dir = resume_run_dir
+    else:
+        loader_tag = "stream" if loader_kind == "stream" else "bospackedindex"
+        run_name = (
+            f"babygpt_fineweb_{loader_tag}_mbs{micro_batch_size}_T{seq_len}_"
+            f"d{n_embd}_h{n_head}_L{n_layer}_"
+            f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
+            f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
+            f"steps{max_train_steps}"
+        )
+        out_dir = os.path.join(experiments_dir, run_name)
+
+    model_init_ckpt_dir = ""
+    if resume_mode:
+        model_init_ckpt_dir = resume_ckpt_dir
+    elif init_from_ckpt:
+        model_init_ckpt_dir = os.path.abspath(init_from_ckpt)
+
+    if model_init_ckpt_dir:
+        validate_ckpt_model_config_alignment(
+            ckpt_dir=model_init_ckpt_dir,
+            seq_len=seq_len,
+            vocab_size=vocab_size,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_layer=n_layer,
+        )
     analysis_plot_dir = os.path.join(out_dir, "plots_from_step_metrics")
 
     if accelerator.is_main_process:
@@ -721,19 +477,28 @@ def main(cfg: TrainConfig) -> None:
     metrics_path = os.path.join(out_dir, "step_metrics.json")
     run_config_path = os.path.join(out_dir, "run_config.json")
 
-    if accelerator.is_main_process and not os.path.exists(run_config_path):
-        tmp_path = run_config_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(
+    if accelerator.is_main_process:
+        if resume_mode:
+            append_jsonl(
+                os.path.join(out_dir, "resume_history.jsonl"),
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "resume_from_run": resume_run_dir,
+                    "resume_ckpt_dir": resume_ckpt_dir,
+                    "resume_step_hint": int(resume_step_hint),
+                    "invocation_args": invocation_args,
+                },
+            )
+        elif not os.path.exists(run_config_path):
+            atomic_write_json(
+                run_config_path,
                 {
                     "created_at": datetime.now().isoformat(),
                     "script": os.path.abspath(__file__),
                     "config": to_jsonable(asdict(cfg)),
+                    "args": invocation_args,
                 },
-                handle,
-                indent=2,
             )
-        os.replace(tmp_path, run_config_path)
 
     min_lr = learning_rate * learning_rate_decay_frac
     lr_step0 = get_llmc_lr(
@@ -759,6 +524,12 @@ def main(cfg: TrainConfig) -> None:
     )
 
     if accelerator.is_local_main_process:
+        if resume_mode:
+            print(f"resume_from_run             = {resume_run_dir}")
+            print(f"resume_ckpt_dir             = {resume_ckpt_dir}")
+            print(f"resume_step_hint            = {resume_step_hint}")
+        elif model_init_ckpt_dir:
+            print(f"init_from_ckpt              = {model_init_ckpt_dir}")
         print("---- Batch math ----")
         print("# Global token/accounting settings used to derive optimizer-step batch size.")
         print(f"world_size (processes)      = {world_size}")
@@ -780,7 +551,10 @@ def main(cfg: TrainConfig) -> None:
         print(f"lr@warmup_end               = {lr_warmup_end}")
         print(f"lr@final_step               = {lr_final}")
         print("--------------------")
+        print(f"loader_kind                 = {loader_kind}")
         print(f"data_dir                    = {data_dir}")
+        if source_data_dir:
+            print(f"source_data_dir             = {source_data_dir}")
         print(f"out_dir = {out_dir}")
         print("---- Eval settings ----")
         print("# Interval settings are in optimizer steps; 0 disables that recurring action.")
@@ -804,7 +578,14 @@ def main(cfg: TrainConfig) -> None:
         print(f"include_ewok_sum_plots      = {include_ewok_sum_plots}")
 
     # Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+    tokenizer_source = "gpt2"
+    if model_init_ckpt_dir:
+        ckpt_tok_cfg = os.path.join(model_init_ckpt_dir, "tokenizer_config.json")
+        if os.path.exists(ckpt_tok_cfg):
+            tokenizer_source = model_init_ckpt_dir
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
+    if accelerator.is_local_main_process:
+        print(f"tokenizer source             = {tokenizer_source}")
     tokenizer.pad_token = tokenizer.eos_token
     EOS_ID = tokenizer.pad_token_id  # 50256
     tokenizer_vocab_size = int(tokenizer.vocab_size)
@@ -827,8 +608,8 @@ def main(cfg: TrainConfig) -> None:
     can_probe_generate = (vocab_size == tokenizer_vocab_size)
 
     # Dataloaders
-    try:
-        train_loader = make_dataloader(
+    if loader_kind == "stream":
+        train_loader = make_stream_dataloader(
             data_dir=data_dir,
             split="train",
             batch_size=micro_batch_size,
@@ -840,10 +621,19 @@ def main(cfg: TrainConfig) -> None:
             shard_by_rank=True,
             return_meta=True,
         )
-    except TypeError:
-        if accelerator.is_local_main_process:
-            print("[warn] bos_row_loader.make_bos_row_dataloader does not accept return_meta=True yet; exposure meta will be empty.")
-        train_loader = make_dataloader(
+        val_loader = make_stream_dataloader(
+            data_dir=data_dir,
+            split="val",
+            batch_size=micro_batch_size,
+            seq_len=seq_len,
+            shuffle_blocks=False,
+            seed=seed,
+            num_workers=max(0, min(num_workers, 2)),
+            max_blocks=None,
+            shard_by_rank=False,
+        )
+    elif loader_kind == "bos_packed_index":
+        train_loader = make_bos_packed_index_dataloader(
             data_dir=data_dir,
             split="train",
             batch_size=micro_batch_size,
@@ -853,42 +643,54 @@ def main(cfg: TrainConfig) -> None:
             num_workers=num_workers,
             max_blocks=None,
             shard_by_rank=True,
+            return_meta=True,
+            source_data_dir=(source_data_dir or None),
         )
-
-    val_loader = make_dataloader(
-        data_dir=data_dir,
-        split="val",
-        batch_size=micro_batch_size,
-        seq_len=seq_len,
-        shuffle_blocks=False,
-        seed=seed,
-        num_workers=max(0, min(num_workers, 2)),
-        max_blocks=None,
-        # Keep validation prefix identical across ranks for comparable val-loss tracking.
-        shard_by_rank=False,
-    )
+        val_loader = make_bos_packed_index_dataloader(
+            data_dir=data_dir,
+            split="val",
+            batch_size=micro_batch_size,
+            seq_len=seq_len,
+            shuffle_blocks=False,
+            seed=seed,
+            num_workers=max(0, min(num_workers, 2)),
+            max_blocks=None,
+            shard_by_rank=False,
+            return_meta=False,
+            source_data_dir=(source_data_dir or None),
+        )
+    else:
+        raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
 
     # Model
-    config = GPT2Config(
-        vocab_size=vocab_size,
-        bos_token_id=EOS_ID,
-        eos_token_id=EOS_ID,
-        n_ctx=seq_len,
-        n_positions=seq_len,
-        n_embd=n_embd,
-        n_head=n_head,
-        n_layer=n_layer,
-        attn_pdrop=0.0,
-        embd_pdrop=0.0,
-        resid_pdrop=0.0,
-        summary_first_dropout=0.0,
-    )
-    # KV cache only helps incremental decoding; pretraining recomputes full sequences.
-    config.use_cache = False
-    model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
+    if model_init_ckpt_dir:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_init_ckpt_dir,
+            attn_implementation="sdpa",
+        )
+    else:
+        config = GPT2Config(
+            vocab_size=vocab_size,
+            bos_token_id=EOS_ID,
+            eos_token_id=EOS_ID,
+            n_ctx=seq_len,
+            n_positions=seq_len,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_layer=n_layer,
+            attn_pdrop=0.0,
+            embd_pdrop=0.0,
+            resid_pdrop=0.0,
+            summary_first_dropout=0.0,
+        )
+        # KV cache only helps incremental decoding; pretraining recomputes full sequences.
+        config.use_cache = False
+        model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
     model.config.use_cache = False
 
     if accelerator.is_local_main_process:
+        if model_init_ckpt_dir:
+            print(f"model init source            = {model_init_ckpt_dir}")
         print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Optimizer (llm.c-style defaults + param grouping)
@@ -907,20 +709,108 @@ def main(cfg: TrainConfig) -> None:
         print(f"Using fused AdamW: {use_fused}")
 
     model, optimizer = accelerator.prepare(model, optimizer)
-    reset_peak_memory_stats(device)
+
+    resume_opt_step = 0
+    resume_tokens_seen_local_total = 0
+    resume_skip_microsteps = 0
+    resume_trim_summary = None
+    replay_check = None
+    if resume_mode:
+        def _state_int(name: str, fallback: int):
+            if name not in resume_state:
+                return int(fallback)
+            return int(resume_state.get(name))
+
+        resume_opt_step = _state_int("opt_step", resume_step_hint)
+        resume_tokens_seen_local_total = _state_int("tokens_seen_local_total", 0)
+        current_replay_cfg = {
+            "loader_kind": str(loader_kind),
+            "seed": int(seed),
+            "micro_batch_size": int(micro_batch_size),
+            "seq_len": int(seq_len),
+            "grad_accum_steps": int(grad_accum_steps),
+            "shuffle_blocks": bool(shuffle_blocks),
+            "num_workers": int(num_workers),
+            "world_size": int(world_size),
+            "data_dir": os.path.abspath(data_dir),
+            "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
+            "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
+            "packed_index_fingerprint": (str(artifact_fingerprint) if artifact_fingerprint else None),
+            "packing_algo": (str(packing_algo) if packing_algo else None),
+            "row_tokens": int(row_tokens),
+            "virtual_shard_rows": (None if virtual_shard_rows is None else int(virtual_shard_rows)),
+        }
+        replay_check = validate_replay_compatibility(
+            current_cfg=current_replay_cfg,
+            trainer_state=resume_state,
+            strict=True,
+            fail_on_missing=False,
+        )
+        if accelerator.is_local_main_process:
+            for msg in replay_check.get("warnings", []):
+                print(f"[resume][warn] {msg}")
+
+        if resume_opt_step < 0:
+            raise ValueError(f"Invalid opt_step in trainer state: {resume_opt_step}")
+        if resume_opt_step >= max_train_steps:
+            raise ValueError(
+                f"Checkpoint opt_step={resume_opt_step} is already >= max_train_steps={max_train_steps}."
+            )
+        resume_skip_microsteps = derive_resume_skip_microsteps(
+            trainer_state=resume_state,
+            resume_opt_step=resume_opt_step,
+            grad_accum_steps=grad_accum_steps,
+        )
+
+        opt_state_path = os.path.join(resume_ckpt_dir, "optimizer.pt")
+        if not os.path.exists(opt_state_path):
+            raise FileNotFoundError(
+                f"Resume requested but optimizer state is missing: {opt_state_path}\n"
+                "Expected checkpoints saved by this script (which include optimizer.pt). "
+                "If you only want weight initialization, use --init_from_ckpt instead."
+            )
+        accelerator.wait_for_everyone()
+        opt_state = torch.load(opt_state_path, map_location="cpu")
+        optimizer.load_state_dict(opt_state)
+        del opt_state
+        optimizer.zero_grad(set_to_none=True)
+        accelerator.wait_for_everyone()
+        if accelerator.is_local_main_process:
+            print(f"Loaded optimizer state from {opt_state_path}")
+            print(
+                f"Resuming at optimizer step {resume_opt_step} "
+                f"(tokens_seen_local_total={resume_tokens_seen_local_total}, "
+                f"micro_steps_seen={resume_skip_microsteps})"
+            )
+        if accelerator.is_main_process:
+            resume_trim_summary = trim_run_logs_after_step(
+                run_dir=out_dir,
+                max_step=resume_opt_step,
+                include_exposure_logs=True,
+                create_backup=True,
+            )
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process and resume_trim_summary is not None:
+            print(
+                f"Resume preflight trim complete: removed "
+                f"{int(resume_trim_summary.get('total_removed', 0))} records "
+                f"with step > {resume_opt_step}."
+            )
 
     # Plot buffers
     train_loss_history = []
     val_loss_history = []
 
     # EWoK/step metrics JSON (list)
-    step_metrics = []
+    step_metrics = load_existing_step_metrics(metrics_path) if resume_mode else []
+    if accelerator.is_local_main_process and resume_mode:
+        print(f"Loaded {len(step_metrics)} existing step_metrics entries from {metrics_path}")
     hellaswag_ds = None
     hellaswag_max_seq_len = None
     hellaswag_disabled = False
     core_disabled = False
     ewok_category_columns = ("TargetDiff", "ContextDiff", "ContextType")
-    ewok_row_category_lookup = _build_ewok_row_category_lookup(EWOK_DF, ewok_category_columns)
+    ewok_row_category_lookup = build_ewok_row_category_lookup(EWOK_DF, ewok_category_columns)
 
     def save_plot():
         if not accelerator.is_main_process:
@@ -953,6 +843,32 @@ def main(cfg: TrainConfig) -> None:
             os.makedirs(ckpt_dir, exist_ok=True)
             accelerator.unwrap_model(model).save_pretrained(ckpt_dir)
             tokenizer.save_pretrained(ckpt_dir)
+            torch.save(optimizer.state_dict(), os.path.join(ckpt_dir, "optimizer.pt"))
+            save_trainer_state(
+                ckpt_dir,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "opt_step": int(step),
+                    "loader_kind": str(loader_kind),
+                    "tokens_seen_local_total": int(tokens_seen_local_total),
+                    "micro_batch_size": int(micro_batch_size),
+                    "seq_len": int(seq_len),
+                    "row_tokens": int(row_tokens),
+                    "grad_accum_steps": int(grad_accum_steps),
+                    "micro_steps_seen": int(step) * int(grad_accum_steps),
+                    "effective_total_tokens": int(effective_total_tokens),
+                    "seed": int(seed),
+                    "shuffle_blocks": bool(shuffle_blocks),
+                    "num_workers": int(num_workers),
+                    "world_size": int(world_size),
+                    "data_dir": os.path.abspath(data_dir),
+                    "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
+                    "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
+                    "packed_index_fingerprint": (str(artifact_fingerprint) if artifact_fingerprint else None),
+                    "packing_algo": (str(packing_algo) if packing_algo else None),
+                    "virtual_shard_rows": (None if virtual_shard_rows is None else int(virtual_shard_rows)),
+                },
+            )
             print(f"Saved checkpoint to {ckpt_dir}/")
 
     # Training loop
@@ -964,23 +880,61 @@ def main(cfg: TrainConfig) -> None:
     win_loss_sum = 0.0
     win_tokens = 0
 
-    opt_step = 0
+    opt_step = int(resume_opt_step)
     micro_steps_total = max_train_steps * grad_accum_steps
+    start_micro_step = int(resume_skip_microsteps) if resume_mode else 0
+    if start_micro_step < 0:
+        raise ValueError(f"Invalid start_micro_step={start_micro_step} (must be >= 0).")
+    if start_micro_step > int(micro_steps_total):
+        raise ValueError(
+            f"Resume micro_steps_seen={start_micro_step} exceeds total micro-steps "
+            f"for this run ({micro_steps_total})."
+        )
+
+    train_iter = iter(train_loader)
+    resume_fast_forward_stats = None
+    if resume_mode and start_micro_step > 0:
+        resume_fast_forward_stats = fast_forward_iterator_data_only(
+            iterator=train_iter,
+            skip_count=start_micro_step,
+            report_every_s=5.0,
+            is_main=accelerator.is_local_main_process,
+        )
+        if int(resume_fast_forward_stats.get("actual_skipped", 0)) != int(start_micro_step):
+            raise RuntimeError(
+                f"Resume dataloader fast-forward skipped "
+                f"{resume_fast_forward_stats.get('actual_skipped')} micro-steps, "
+                f"expected {start_micro_step}."
+            )
+        if bool(resume_fast_forward_stats.get("exhausted", False)):
+            raise RuntimeError(
+                "Resume dataloader fast-forward exhausted iterator early. "
+                "Replay state cannot be reconstructed safely."
+            )
 
     pbar = tqdm(
-        train_loader,
+        train_iter,
         total=micro_steps_total,
+        initial=start_micro_step,
         desc=f"Train (micro={micro_steps_total}, opt={max_train_steps})",
         disable=not accelerator.is_local_main_process,
     )
 
     # Throughput + exposure counters
     REPORT_EVERY_S = 5.0
-    tokens_seen_local_recent = 0
-    last_report_tokens_local = 0
+    tokens_seen_local_recent = int(resume_tokens_seen_local_total)
+    last_report_tokens_local = int(resume_tokens_seen_local_total)
     last_report_t = time.perf_counter()
 
-    tokens_seen_local_total = 0  # cumulative on this rank
+    tokens_seen_local_total = int(resume_tokens_seen_local_total)  # cumulative on this rank
+    if accelerator.is_local_main_process and resume_mode:
+        if resume_fast_forward_stats is not None:
+            print(
+                f"[resume] dataloader replay aligned by skipping "
+                f"{int(resume_fast_forward_stats.get('actual_skipped', 0))} micro-steps."
+            )
+        else:
+            print("[resume] dataloader replay aligned with zero micro-step skip.")
 
     # SDPA backend preference (Flash -> Efficient -> Math)
     sdpa_backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
@@ -1002,7 +956,7 @@ def main(cfg: TrainConfig) -> None:
     opt_step_loss_sum = 0.0
     opt_step_loss_count = 0
 
-    for micro_step, batch in enumerate(pbar):
+    for micro_step, batch in enumerate(pbar, start=start_micro_step):
         if opt_step >= max_train_steps:
             break
 
@@ -1033,11 +987,7 @@ def main(cfg: TrainConfig) -> None:
             delta = tokens_seen_local_recent - last_report_tokens_local
             tps_local = delta / max(dt, 1e-9)
             tps_global = tps_local * accelerator.num_processes
-            postfix = f"tok/s≈{tps_global:,.0f}"
-            mem_postfix = format_memory_usage_postfix(device)
-            if mem_postfix:
-                postfix = f"{postfix} {mem_postfix}"
-            pbar.set_postfix_str(postfix)
+            pbar.set_postfix_str(f"tok/s≈{tps_global:,.0f}")
             last_report_t = now
             last_report_tokens_local = tokens_seen_local_recent
 
@@ -1186,7 +1136,7 @@ def main(cfg: TrainConfig) -> None:
                 print(f"[Opt {opt_step:07d}/{max_train_steps}] last={step_train_loss:.4f} avg_token={avg:.4f}")
                 win_loss_sum = 0.0
                 win_tokens = 0
-            
+
             # Generation check (Rank 0 only)
             if can_probe_generate and opt_step % 199 == 0:
                 prompts = [
@@ -1326,7 +1276,7 @@ def main(cfg: TrainConfig) -> None:
                     release_eval_memory_fn=release_eval_memory,
                 )
                 if accelerator.is_main_process:
-                    _refresh_ewok_analysis_plots(
+                    refresh_ewok_analysis_plots(
                         step_metrics,
                         analysis_plot_dir,
                         include_sum_plots=include_ewok_sum_plots,
@@ -1394,7 +1344,7 @@ def main(cfg: TrainConfig) -> None:
             get_current_lr_fn=get_current_lr,
             to_jsonable_fn=to_jsonable,
         )
-        _refresh_ewok_analysis_plots(
+        refresh_ewok_analysis_plots(
             step_metrics,
             analysis_plot_dir,
             include_sum_plots=include_ewok_sum_plots,
@@ -1403,7 +1353,7 @@ def main(cfg: TrainConfig) -> None:
         print("[info] skipping final EWoK evaluation (--skip_final_ewok)")
 
     if accelerator.is_main_process:
-        _refresh_ewok_analysis_plots(
+        refresh_ewok_analysis_plots(
             step_metrics,
             analysis_plot_dir,
             include_sum_plots=include_ewok_sum_plots,

@@ -1,6 +1,6 @@
 # A/B Experiment Plan: Baseline vs BOS Row-Packed
 
-Run from `moonshotGPT`.
+Run from `tokenPred/moonshotGPT`.
 
 ## Goal
 
@@ -39,7 +39,7 @@ python -m research.bos_aligned_proto.pipeline.prepare_finewebedu_bos_rows \
 ### 2) Train BOS model
 
 ```bash
-python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
+python -m research.bos_aligned_proto.training.trainer \
   --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --micro_batch_size 10 \
   --seq_len 1024 \
@@ -74,7 +74,7 @@ BOS-only diagnostics:
   - `rows_written_total`
 
 Future BOS runs default to `runs/research/bos_aligned_proto/`.
-This public branch does not include legacy BOS outputs.
+Legacy BOS outputs already under `research/bos_aligned_proto/experiments/` remain unchanged.
 
 ## Result table template
 

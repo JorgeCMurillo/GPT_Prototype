@@ -121,21 +121,10 @@ Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-referenc
 Run commands from this directory:
 
 ```bash
-cd moonshotGPT
+cd tokenPred/moonshotGPT
 ```
 
-Public repo note:
-- This branch includes source, tests, notebooks, `blimp_fast/`, and the encrypted
-  `ewok_fast_jsonl.zip`.
-- It intentionally does not include `runs/`, `experiments/`, processed datasets,
-  reference-loss binaries, or `eval_bundle/`.
-
-Install surfaces:
-- `pip install -r ../requirements.txt` for the core GPT-2 train/eval workflow
-- `pip install -r ../requirements-dev.txt` if you also want to run tests
-- `pip install -r ../requirements-research.txt` for optional attribution and other research extras
-
-Core dependencies used by these scripts include:
+Minimal dependencies used by these scripts include:
 - `torch`
 - `accelerate`
 - `transformers`
@@ -146,14 +135,6 @@ Core dependencies used by these scripts include:
 - `matplotlib`
 - `pandas`
 - `PyYAML`
-
-External runtime downloads/cache used by this workflow:
-- FineWeb-Edu via `datasets` during tokenization
-- the `gpt2` tokenizer during tokenization/training
-- `openai-community/gpt2-medium` during reference-loss precompute
-- the HellaSwag dataset when HellaSwag eval is enabled
-
-If you need an offline server run, pre-cache those assets before launch.
 
 If needed, initialize Accelerate once:
 
@@ -166,14 +147,15 @@ Recommended derived-data layout:
 ```text
 data/
   processed/
-    fineweb_edu_10B/
+    fineweb_edu_100B/
   ref_loss/
-    gpt2m_T1024_B4/
+    fineweb_edu_100B/
+      gpt2m_T1024_B4/
 ```
 
 Legacy top-level paths such as `fineweb_edu_10B/` and `ref_loss_gpt2m_T1024_B4/`
-are kept as compatibility symlinks, but new commands below use the `data/`
-tree directly.
+are kept as compatibility symlinks, but new commands below assume the 100B
+dataset under the `data/` tree.
 
 ## End-to-End Commands
 
@@ -183,11 +165,11 @@ Why you run this now: training expects memmapped `train_*.bin` and `val_*.bin` s
 ```bash
 python fineweb.py \
   --dataset HuggingFaceFW/fineweb-edu \
-  --config sample-10BT \
+  --config sample-100BT \
   --split train \
   --text_field text \
   --tokenizer gpt2 \
-  --out_dir data/processed/fineweb_edu_10B \
+  --out_dir data/processed/fineweb_edu_100B \
   --shard_tokens 100000000 \
   --val_shards 1
 ```
@@ -197,7 +179,7 @@ Why you run this now: establish a reference run before token filtering.
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir data/processed/fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_100B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -206,7 +188,6 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
-  --skip_final_ewok \
   --num_workers 0 \
   --shuffle_blocks
 ```
@@ -216,8 +197,8 @@ Why you run this now: rho mode needs precomputed per-token reference losses alig
 
 ```bash
 accelerate launch --num_processes 8 compute_ref_loss_shards.py \
-  --data_dir data/processed/fineweb_edu_10B \
-  --out_dir data/ref_loss/gpt2m_T1024_B4 \
+  --data_dir data/processed/fineweb_edu_100B \
+  --out_dir data/ref_loss/fineweb_edu_100B/gpt2m_T1024_B4 \
   --split train \
   --seq_len 1024 \
   --batch_size 4 \
@@ -236,7 +217,7 @@ Why you run this now: this is the modified training mode that keeps only selecte
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir data/processed/fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_100B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -245,7 +226,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
-  --rho_ref_loss_dir data/ref_loss/gpt2m_T1024_B4 \
+  --rho_ref_loss_dir data/ref_loss/fineweb_edu_100B/gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta \
@@ -261,7 +242,7 @@ Why you run this now: continue an interrupted run from an existing run folder or
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir data/processed/fineweb_edu_10B \
+  --data_dir data/processed/fineweb_edu_100B \
   --micro_batch_size 4 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -270,7 +251,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --n_head 16 \
   --n_layer 24 \
   --mixed_precision bf16 \
-  --rho_ref_loss_dir data/ref_loss/gpt2m_T1024_B4 \
+  --rho_ref_loss_dir data/ref_loss/fineweb_edu_100B/gpt2m_T1024_B4 \
   --rho_keep_frac 0.7 \
   --rho_warmup_steps 500 \
   --rho_mode delta \
@@ -355,4 +336,5 @@ Success criteria:
 - produce reproducible evidence from exposure + evaluation logs.
 
 ## Public Interface Notes
-- `train_gpt2_finewebedu_bin.py` now accepts `--skip_final_ewok` for smoke tests and other runs where you want to skip only the end-of-run EWoK pass.
+- This README adds documentation only.
+- No code API or CLI changes are required to use this workflow.

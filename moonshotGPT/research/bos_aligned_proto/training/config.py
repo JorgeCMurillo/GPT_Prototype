@@ -20,18 +20,20 @@ _REPO_ROOT = os.path.dirname(_RESEARCH_ROOT)
 DEFAULT_EXPERIMENTS_DIR = os.path.join(_REPO_ROOT, "runs", "research", "bos_aligned_proto")
 
 CLI_DESCRIPTION = (
-    "Train GPT-2 with BOS-row-packed memmapped uint16 .bin shards + "
-    "token-budget accumulation (step-based) + exposure + ewok per-item"
+    "Train GPT-2 from either raw token streams or exact BOS packed-index artifacts "
+    "with token-budget accumulation, exposure logging, and EWoK/CORE evaluation."
 )
 
 
 @dataclass
 class TrainConfig:
+    loader_kind: str = "bos_packed_index"
     seed: int = 42
     micro_batch_size: int = 10
     total_batch_tokens: int = 524288
     max_train_steps: int = 20000
     data_dir: str = ""
+    source_data_dir: str = ""
     experiments_dir: str = DEFAULT_EXPERIMENTS_DIR
     seq_len: int = 1024
     vocab_size: int = 50257
@@ -66,10 +68,20 @@ class TrainConfig:
     push_to_hub: bool = False
     skip_final_ewok: bool = False
     include_ewok_sum_plots: bool = False
+    init_from_ckpt: str = ""
+    resume_from_run: str = ""
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=CLI_DESCRIPTION)
+
+    parser.add_argument(
+        "--loader_kind",
+        type=str,
+        choices=("stream", "bos_packed_index"),
+        default="bos_packed_index",
+        help="Training data backend: raw contiguous token stream or exact BOS packed-index rows.",
+    )
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
@@ -127,7 +139,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--data_dir",
         type=str,
         required=True,
-        help="Directory containing BOS-row-packed train_*.bin, val_*.bin, meta.json",
+        help=(
+            "Directory containing the selected training artifact. "
+            "For --loader_kind=stream this is the raw token shard directory. "
+            "For --loader_kind=bos_packed_index this is the packed-index artifact directory."
+        ),
+    )
+    parser.add_argument(
+        "--source_data_dir",
+        type=str,
+        default="",
+        help=(
+            "Optional override for the raw token shard directory referenced by a BOS packed-index artifact. "
+            "Useful if the artifact was moved to a different machine or path."
+        ),
     )
     parser.add_argument("--num_workers", type=int, default=0)
 
@@ -262,6 +287,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--push_to_hub", action="store_true")
+    parser.add_argument(
+        "--init_from_ckpt",
+        type=str,
+        default="",
+        help="Optional checkpoint directory to use for weight initialization only.",
+    )
+    parser.add_argument(
+        "--resume_from_run",
+        type=str,
+        default="",
+        help=(
+            "Resume training from a prior BOS run directory or a specific checkpoint directory. "
+            "Requires resume-safe checkpoints with optimizer.pt and trainer_state.json."
+        ),
+    )
     parser.add_argument(
         "--skip_final_ewok",
         action="store_true",

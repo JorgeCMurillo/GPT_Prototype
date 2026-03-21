@@ -12,7 +12,9 @@ research/bos_aligned_proto/
   __init__.py
   pipeline/
     __init__.py
+    bos_packed_index.py
     bos_row_loader.py
+    build_bos_packed_index.py
     prepare_finewebedu_bos_rows.py
   evaluation/
     __init__.py
@@ -22,27 +24,45 @@ research/bos_aligned_proto/
     hellaswag.py
   training/
     __init__.py
+    checkpoints.py
     config.py
-    train_gpt2_finewebedu_bos_bin.py
+    eval_hooks.py
+    reporting.py
+    trainer.py
   docs/
     compare_ab_runs.md
   analysis/
     run_checkpoint_evals.py
     notebooks/
       mine_synthetic_minimal_pairs.ipynb
-      ewok_score_columns_material_dynamics.ipynb
+  experiments/   # legacy outputs kept in place
+  bos_train.log  # legacy log kept in place
 ```
 
 ## Package layout
 
 ### `pipeline/`
 
+- `pipeline/bos_packed_index.py`
+  - Canonical BOS data path for new work.
+  - Builds and reads compact exact packed-row indexes over the existing raw
+    token shards instead of duplicating BOS row tokens on disk.
+  - Preserves the same `bos_row_packed_bestfit` semantics as the older
+    materialized BOS-row preprocessor:
+    - pick the largest doc that fits remaining row space;
+    - if none fit, pick the shortest doc and crop to exact remaining space.
+  - Also provides the index-backed BOS dataloader used by the unified trainer.
+- `pipeline/build_bos_packed_index.py`
+  - Thin CLI entrypoint for building exact BOS packed-index artifacts from the
+    raw token-stream dataset.
 - `pipeline/prepare_finewebedu_bos_rows.py`
   - Offline preprocessor for FineWeb-Edu.
   - Builds row-packed `uint16` shards where each row has length `seq_len + 1` and starts with BOS.
   - Packing logic matches nanochat-style behavior:
     - pick the largest doc that fits remaining row space;
     - if none fit, pick the shortest doc and crop to exact remaining space.
+  - This is now the legacy materialized BOS-row path kept for reference and
+    parity checks, not the recommended path for new large runs.
 - `pipeline/bos_row_loader.py`
   - Runtime memmap loader for the row-packed format.
   - Produces `(x, y)` with shape `(B, T)` from row data.
@@ -54,13 +74,27 @@ research/bos_aligned_proto/
   - Central definition of training settings.
   - Owns the `TrainConfig` dataclass and the CLI parser.
   - If you add or rename a training flag, this is the first file to update.
-- `training/train_gpt2_finewebedu_bos_bin.py`
-  - Main training entrypoint.
+- `training/checkpoints.py`
+  - Resume-path resolution and checkpoint metadata validation helpers.
+  - Keeps trainer-state load/save code out of the main training loop.
+- `training/reporting.py`
+  - Shared JSON, JSONL, and metric-serialization helpers.
+  - Useful any time you need to add a new on-disk metric artifact.
+- `training/eval_hooks.py`
+  - Evaluation cleanup and EWOK plot-refresh helpers.
+  - Keeps plotting-heavy code separate from the main training loop.
+- `training/trainer.py`
+  - Canonical research training entrypoint and unified trainer implementation.
+  - Supports both:
+    - `--loader_kind stream`
+      for the plain contiguous token-stream baseline
+    - `--loader_kind bos_packed_index`
+      for exact nanochat-style BOS packed rows backed by a compact index
   - Reads a `TrainConfig`, builds the runtime objects, and runs training, validation,
     HellaSwag, CORE, EWoK, checkpointing, and metric logging.
   - EWoK logging now records both BabyLM completion-choice scoring and the original
     EWoK paper context-sensitivity scoring.
-  - Writes `run_config.json` at startup so resolved BOS run settings are saved next to metrics.
+  - Writes `run_config.json` at startup so resolved run settings are saved next to metrics.
 - `training/__init__.py`
   - Marks the training directory as a Python package.
 
@@ -95,6 +129,10 @@ research/bos_aligned_proto/
 - `analysis/notebooks/mine_synthetic_minimal_pairs.ipynb`
   - Notebook-based analysis for synthetic minimal pairs and run inspection.
 
+### `experiments/`
+
+- Legacy outputs and comparison plots kept in place for reference.
+
 ## Training files at a glance
 
 ### `training/config.py`
@@ -109,9 +147,10 @@ Use this file when you want to:
 
 One example is plotting policy: the config now includes `include_ewok_sum_plots`, which defaults to `False`, so auto-generated EWOK plots are mean-only unless you opt in to sum-reduction plots.
 
-### `training/train_gpt2_finewebedu_bos_bin.py`
+### `training/trainer.py`
 
-This is the executable training script. It takes the parsed config and does the actual work of:
+This is now the canonical executable research training script. It takes the
+parsed config and does the actual work of:
 
 - setting up the accelerator and runtime;
 - constructing tokenizer, model, optimizer, and dataloaders;
@@ -122,7 +161,25 @@ This is the executable training script. It takes the parsed config and does the 
 The intended split is simple:
 
 - `config.py` defines and parses training settings.
-- `train_gpt2_finewebedu_bos_bin.py` uses those settings to execute the run.
+- `trainer.py` uses those settings to execute the run.
+- `checkpoints.py`, `reporting.py`, and `eval_hooks.py` hold the cross-cutting helper logic.
+
+## Recommended Data Backends
+
+The research trainer now supports two data backends behind one CLI:
+
+- `stream`
+  - Reads the raw `train_*.bin` / `val_*.bin` token stream directly.
+  - This is the plain contiguous-token baseline and is closest to the older
+    non-BOS moonshot training path.
+- `bos_packed_index`
+  - Reads a compact exact BOS packed-row index plus the original raw token
+    shards.
+  - This preserves the exact `bos_row_packed_bestfit` row semantics used by
+    the older materialized BOS-row pipeline, but without duplicating all row
+    tokens on disk.
+
+For new BOS-aligned runs, `bos_packed_index` is the recommended path.
 
 ## Plotting defaults
 
@@ -189,7 +246,7 @@ analysis-layer runner:
 
 ```bash
 conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  runs/research/bos_aligned_proto/<run_name>
+  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name>
 ```
 
 This resolves the latest checkpoint under the run by default and writes outputs
@@ -201,13 +258,13 @@ Useful variants:
 
 ```bash
 conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  runs/research/bos_aligned_proto/<run_name> \
+  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
   --step 30000
 ```
 
 ```bash
 conda run -n babylm python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  runs/research/bos_aligned_proto/<run_name>/ckpt_final_step0030000
+  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name>/ckpt_final_step0030000
 ```
 
 ```bash
@@ -281,65 +338,82 @@ keys such as `eval_full_*`, `eval_margin_stats_*`, `eval_by_category_full_*`,
 BabyLM-prefixed keys when present, but still fall back to the older aliases so
 historical runs continue to plot correctly.
 
-## Data format
+## Data formats
+
+### `--loader_kind stream`
 
 Expected files in `--data_dir`:
 
 - `train_*.bin`
 - `val_*.bin`
+- optionally `meta.json`
+
+This is the plain contiguous token-stream dataset used by the baseline loader.
+
+### `--loader_kind bos_packed_index`
+
+Expected files in `--data_dir`:
+
 - `meta.json`
+- `train.row_ptr.bin`
+- `train.segments.bin`
+- `train.virtual_shards.jsonl`
+- `val.row_ptr.bin`
+- `val.segments.bin`
+- `val.virtual_shards.jsonl`
 
-`meta.json` includes baseline-compatible fields plus BOS-specific fields such as:
+The packed-index `meta.json` includes fields such as:
 
-- `format: "bos_row_packed_bestfit"`
+- `format: "bos_row_packed_bestfit_index_v1"`
+- `source_data_dir`
+- `source_shards_fingerprint`
 - `seq_len`
 - `row_tokens`
 - `packing_algo`
-- `batch_docs`
 - `buffer_docs`
+- `virtual_shard_rows`
 - `rows_written_total`
 - `tokens_cropped_total`
 - `crop_fraction`
 
-Important: this dataset is `seq_len`-specific. Loader validates `seq_len` against `meta.json`.
+Important: the packed-index artifact is still `seq_len`-specific. The loader
+validates `seq_len` against `meta.json`.
 
-Recommended BOS artifact layout:
+Recommended data layout:
 
 ```text
 data/
   processed/
+    fineweb_edu_100B/
     bos_aligned_proto/
-      fineweb_edu_10B_bosrow/
-      fineweb_edu_100B_bosrow/
+      fineweb_edu_100B_bospackedindex/
 ```
 
 ## End-to-end commands
 
-Run from `moonshotGPT`.
+Run from `tokenPred/moonshotGPT`.
 
-### 1) Build BOS row-packed dataset
+### 1) Build exact BOS packed index from raw token shards
 
 ```bash
-python -m research.bos_aligned_proto.pipeline.prepare_finewebedu_bos_rows \
-  --dataset HuggingFaceFW/fineweb-edu \
-  --config sample-10BT \
-  --split train \
-  --text_field text \
-  --tokenizer gpt2 \
-  --out_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
+python -m research.bos_aligned_proto.pipeline.build_bos_packed_index \
+  --data_dir data/processed/fineweb_edu_100B \
+  --out_dir data/processed/bos_aligned_proto/fineweb_edu_100B_bospackedindex \
   --seq_len 1024 \
-  --batch_docs 256 \
   --buffer_docs 1000 \
+  --shard_rows 97656 \
   --val_shards 1
 ```
 
-### 2) Train BOS prototype
+This preserves the old `bos_row_packed_bestfit` packing behavior exactly, but
+stores only a compact index plus synthetic virtual-shard metadata.
 
-3090-oriented example (`micro_batch_size=10`):
+### 2) Train with the baseline stream loader
 
 ```bash
-python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
-  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
+python -m research.bos_aligned_proto.training.trainer \
+  --loader_kind stream \
+  --data_dir data/processed/fineweb_edu_100B \
   --micro_batch_size 10 \
   --seq_len 1024 \
   --total_batch_tokens 491520 \
@@ -347,13 +421,29 @@ python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
   --num_workers 0
 ```
 
-### 3) Train BOS GPT-2 medium
+### 3) Train BOS prototype from the packed index
+
+3090-oriented example (`micro_batch_size=10`):
+
+```bash
+python -m research.bos_aligned_proto.training.trainer \
+  --loader_kind bos_packed_index \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_100B_bospackedindex \
+  --micro_batch_size 10 \
+  --seq_len 1024 \
+  --total_batch_tokens 491520 \
+  --max_train_steps 20000 \
+  --num_workers 0
+```
+
+### 4) Train BOS GPT-2 medium from the packed index
 
 Start with a smaller `micro_batch_size` and increase only if GPU memory allows:
 
 ```bash
-python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
-  --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
+python -m research.bos_aligned_proto.training.trainer \
+  --loader_kind bos_packed_index \
+  --data_dir data/processed/bos_aligned_proto/fineweb_edu_100B_bospackedindex \
   --n_embd 1024 \
   --n_head 16 \
   --n_layer 24 \
@@ -364,8 +454,20 @@ python -m research.bos_aligned_proto.training.train_gpt2_finewebedu_bos_bin \
   --num_workers 0
 ```
 
-Future runs go to `runs/research/bos_aligned_proto/babygpt_fineweb_bosrow_*` by default.
-This public branch does not include historical run outputs or checkpoints.
+The trainer now creates run names that reflect the backend, for example:
+
+- `babygpt_fineweb_stream_*`
+- `babygpt_fineweb_bospackedindex_*`
+
+Historical outputs already under `research/bos_aligned_proto/experiments/`
+remain as legacy artifacts.
+
+### Legacy materialized BOS rows
+
+If you need the older fully materialized BOS-row pipeline for comparison,
+`prepare_finewebedu_bos_rows.py` and the historical `*_bosrow` datasets are
+still valid references. They are just no longer the recommended large-run path
+now that the exact packed-index workflow exists.
 
 ## Notes and tradeoffs
 
