@@ -70,7 +70,7 @@ Two scoring views are supported:
 The paired query loss is:
 
 $$
-L(t) = \frac{1}{2}\left[\operatorname{softplus}\left(-\frac{m_1}{\tau}\right) + \operatorname{softplus}\left(-\frac{m_2}{\tau}\right)\right]
+L(t) = \frac{1}{2}\left[softplus\left(-\frac{m_1}{\tau}\right) + softplus\left(-\frac{m_2}{\tau}\right)\right]
 $$
 
 where `tau` is the configured temperature.
@@ -87,7 +87,7 @@ optionally projected candidate and query gradients, applies the mixed
 preconditioner, concatenates per-module features, and exports cosine similarity:
 
 $$
-\operatorname{score}(t, x) = \frac{\langle q(t), g(x) \rangle}{\|q(t)\|_2 \, \|g(x)\|_2}
+score(t, x) = \frac{\langle q(t), g(x) \rangle}{\|q(t)\|_2 \, \|g(x)\|_2}
 $$
 
 Important implementation notes:
