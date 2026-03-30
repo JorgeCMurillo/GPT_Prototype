@@ -3,47 +3,54 @@
 This directory contains the original TRAK backend used by the BOS attribution
 pipeline.
 
-## What It Does
+It keeps the repo’s shared attribution flow intact and swaps in TRAK only for
+the backend stage.
 
-The TRAK path keeps the repo’s outer BOS attribution flow intact and swaps in
-TRAK only for the backend stage.
+## Current Files
 
-For each checkpoint it:
-
-1. loads the checkpoint into the model
-2. builds a checkpoint-local candidate row dataset
-3. featurizes candidate rows with TRAK
-4. scores EWoK targets against those features
-5. returns a dense score matrix shaped
-   `[num_targets, num_candidates]`
-
-The exported artifacts are produced by the shared `common/` modules, not by the
-backend itself.
-
-## Files
+```text
+trak/
+  README.md
+  __init__.py
+  config.py
+  backend.py
+```
 
 - `config.py`
   CLI parsing and the `TRAKConfig` dataclass.
 - `backend.py`
-  Direct integration with the `traker` library plus the train-side BOS scalar.
+  Integration with the `traker` library plus the BOS candidate/query scoring
+  wrapper expected by the shared export code.
+
+## What It Does
+
+For each checkpoint, the backend:
+
+1. loads the checkpoint into the model;
+2. builds a checkpoint-local candidate row dataset;
+3. featurizes candidate rows with TRAK;
+4. scores EWoK query targets against those features;
+5. returns a dense score matrix shaped `[num_targets, num_candidate_rows]`.
+
+Export files such as `top_rows_step*.csv` and `row_summary_step*.csv` are still
+written by the shared `common/` layer, not by this backend directly.
 
 ## Runtime Expectations
 
-- The `traker` package must be installed.
+- `traker` must be installed.
 - This backend is single-process only.
-- `--distributed` must remain `none`.
-- `--device cuda` is the default and fails loudly if CUDA is unavailable.
+- `--distributed` should remain `none`.
+- `--device cuda` is the normal default and should fail loudly if CUDA is not
+  available.
 
-## Main Command
-
-From the repo root:
+## Example Command
 
 ```bash
-conda run -n babylm python -m research.bos_aligned_proto.analysis.attribution.run_trak \
-  --run_dir /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
-  --data_dir /home/jorge/tokenPred/moonshotGPT/data/<bos_data_dir> \
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trak \
+  --run_dir runs/research/bos_aligned_proto/<run_name> \
+  --data_dir data/processed/bos_aligned_proto/<data_view> \
   --exp_name trak_smoke \
-  --checkpoint_steps 30000 \
+  --checkpoint_steps 16000 \
   --max_candidate_rows 512 \
   --max_targets 32 \
   --device cuda
@@ -53,13 +60,9 @@ conda run -n babylm python -m research.bos_aligned_proto.analysis.attribution.ru
 
 Use TRAK when:
 
-- you want the original backend path
-- you want the simplest run surface
-- you are not trying to do multi-GPU attribution
-- you want parity with earlier TRAK-style experiments
+- you want the simplest backend surface;
+- you want parity with earlier attribution experiments in this repo;
+- you are happy with a strong single-process baseline.
 
-## Caveat
-
-TRAK is the simpler baseline path, but it does not currently provide the
-distributed checkpoint-local indexing behavior that the TrackStar/Bergson path
-does.
+If your main interest is the newer Bergson-backed retained-data analysis path,
+move next to `../trackstar/README.md`.

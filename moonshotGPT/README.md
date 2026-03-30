@@ -1,166 +1,94 @@
-# moonshotGPT: GPT-2 Medium on FineWeb-Edu with Optional Rho-1 Token Filtering
+# moonshotGPT
 
-This repository trains GPT-2 style models on tokenized FineWeb-Edu shards, evaluates on EWoK/HellaSwag, and logs data exposure metadata for later analysis. The main training entrypoint is `train_gpt2_finewebedu_bin.py`.
-Evaluation logic is organized under `evaluation/`.
+`moonshotGPT` is a GPT-2-style training and analysis workspace centered on one
+question:
 
-The modified plan in this repo is:
-- first, verify that rho-1 style training is implemented correctly and does not collapse performance,
-- then, use related methods to discard unnecessary data while preserving GPT-2 Medium EWoK performance,
-- then, run attribution analyses to identify which retained data improves EWoK.
+How do we identify which retained training data most improves EWoK?
 
-## What This Repo Is Trying To Do
-At a high level, you are training a student model (GPT-2 Medium architecture) on FineWeb-Edu, while optionally using a fixed reference model (default: OpenAI GPT-2 Medium) to guide which training tokens to keep. The near-term goal is a correctness and performance check for rho-1 behavior, not yet final dataset compression.
+The repo still contains the machinery for baseline training, optional rho-1
+token filtering, benchmark evaluation, and debug tooling. The current emphasis,
+though, is no longer "prove rho-1 works." That implementation has already been
+tested. The main goal now is to train or collect candidate retained-data views,
+measure benchmark behavior, and run attribution analyses that explain which
+examples appear to support EWoK performance.
 
-Long-term, this becomes a data selection pipeline: move from token-level filtering to sequence/dataset-level pruning so a smaller subset can still recover strong EWoK behavior, and then attribute what in that subset matters most.
+Rho-1 details now live in [`training_utils/README.md`](training_utils/README.md)
+so the root README can stay focused on the broader workflow.
 
-## 60-Second TL;DR
-- `fineweb.py` builds `train_*.bin`/`val_*.bin` uint16 shards from FineWeb-Edu.
-- `train_gpt2_finewebedu_bin.py` can train baseline GPT-2 Medium on those shards.
-- `compute_ref_loss_shards.py` precomputes per-token reference losses from `openai-community/gpt2-medium`.
-- Enabling rho in training (`--rho_ref_loss_dir ...`) filters which tokens contribute to loss.
-- A nonzero `--rho_ref_loss_cap` is the key knob for explicitly excluding tokens the reference model finds too hard.
-- Resume is supported via `--resume_from_run`, including log trimming + data-stream fast-forward alignment.
+## Current Goal
 
-## Glossary
-- **Student model**: the model being optimized in this repo (for example GPT-2 Medium config: `n_embd=1024, n_head=16, n_layer=24`).
-- **Reference model**: a fixed model used only to provide per-token reference losses (default docs target: `openai-community/gpt2-medium`).
-- **Token loss**: negative log-likelihood for a single target token.
-- **rho**: token-selection mechanism that keeps only a fraction of candidate tokens for optimization.
-- **keep fraction (`rho_keep_frac`)**: fraction of candidate tokens retained each batch.
-- **warmup (`rho_warmup_steps`)**: early steps where rho masking is disabled and all tokens are used.
-- **cap (`rho_ref_loss_cap`)**: optional ceiling on reference loss; tokens above it are excluded from rho candidates.
-- **exposure logs**: per-rank JSONL logs showing which shard/block spans were fed to the model.
-- **checkpoint resume**: load model/optimizer/trainer state, trim logs to checkpoint step, then fast-forward dataloader stream.
+The practical research loop in this repo is:
 
-## How Rho-1 Works In This Script
-In one sentence: rho mode computes token scores from student/reference losses, keeps top-scoring tokens among valid candidates, and averages loss over only those kept tokens.
+1. tokenize or load FineWeb-Edu training data;
+2. train a baseline model or a retained-data variant;
+3. evaluate EWoK and companion benchmarks;
+4. run attribution to rank which exposed training rows look most helpful or
+   harmful for EWoK;
+5. inspect those rows and use the results to guide the next retained-data
+   iteration.
 
-In this repo, the intent for your rho-1 experiment is: remove tokens that are likely unhelpful for this phase, especially when both student/reference indicate high difficulty (via a nonzero reference-loss cap), then check whether quality remains close to baseline.
+If you are new to the repo and want the maintained attribution path, start with
+`research/bos_aligned_proto/analysis/attribution/`.
 
-### Rho Math
-1) Per-token student loss:
+## Repo Map
 
-\[
-\ell_s(t) = -\log p_{\theta}(x_t \mid x_{<t})
-\]
+### Top-level training and analysis scripts
 
-What this means: the student pays high loss when token \(x_t\) is hard to predict given prior context.
+- `fineweb.py`
+  Builds `train_*.bin` and `val_*.bin` token shards from FineWeb-Edu.
+- `train_gpt2_finewebedu_bin.py`
+  Main GPT-2-style trainer for contiguous token-stream runs.
+- `compute_ref_loss_shards.py`
+  Precomputes per-token reference losses for optional rho-1 filtering.
+- `plot_step_metrics.py`
+  Plots training-time benchmark and optimization logs from `step_metrics.json`.
+- `analyze_ref_loss.py`
+  Small utilities for inspecting precomputed reference-loss shards.
+- `analyze_rank_overlap.py`
+  Utilities for comparing rank-level exposure overlap.
+- `compare_dataloaders.py`
+  Debug helper for checking dataloader behavior across implementations.
+- `run_training_parity_debug.py`
+  Short parity and tiny-overfit debug entrypoint built on
+  `training_utils/debug_parity.py`.
 
-2) Per-token reference loss (precomputed):
+### Key folders
 
-\[
-\ell_r(t) = -\log p_{\phi}(x_t \mid x_{<t})
-\]
+- `evaluation/`
+  Shared benchmark evaluators and the reusable evaluation runner.
+- `training_utils/`
+  Shared helpers for rho-1, resume-safe log trimming, and parity debugging.
+- `research/`
+  Research packages layered on top of the main training stack. The most relevant
+  subfolders are `research/bos_aligned_proto/` for BOS-packed training plus
+  attribution, and `research/w2v_lexical_probe/` for Word2Vec lexical
+  baselines.
+- `data/`
+  Preferred location for processed token shards and reference-loss shards.
+- `runs/`
+  Modern run outputs for debug runs and research packages.
+- `experiments/`
+  Legacy top-level run outputs kept for reference.
+- `tests/`
+  Regression coverage for training, BOS packing, rho-1, evaluators, and
+  attribution helpers.
+- `data_augmentation/`
+  Synthetic EWoK-style item generation artifacts used by exploratory notebook
+  workflows.
+- `eval_bundle/`, `blimp_fast/`, `ewok_full_jsonl/`
+  Local benchmark data and evaluation bundles.
 
-What this means: this is the same quantity, but measured under the fixed reference model.
+## Recommended Workflow
 
-3) Scoring modes:
+### 1. Build or point at tokenized data
 
-- `delta` mode:
-\[
-s(t) = \ell_s(t) - \ell_r(t)
-\]
-- `ref_only` mode:
-\[
-s(t) = -\ell_r(t)
-\]
-- `student_only` mode:
-\[
-s(t) = \ell_s(t)
-\]
-
-What this means: `delta` prioritizes tokens where the student underperforms the reference; `ref_only` prioritizes tokens the reference finds easier; `student_only` prioritizes tokens the current student finds hardest in absolute terms.
-
-4) Candidate set with optional cap:
-
-\[
-C = \{t : \text{ref\_valid}(t)=1 \land (\ell_r(t) \le c \text{ if } c>0 \text{ else True})\}
-\]
-
-where \(c\) is `--rho_ref_loss_cap`.
-
-What this means: cap-enabling is the explicit mechanism for dropping very hard-for-reference tokens before top-k selection.
-
-5) Top-k keep rule:
-
-\[
-k = \lceil \rho \cdot |C| \rceil
-\]
-
-where \(\rho\) is `--rho_keep_frac`, and
-
-\[
-m(t)=1 \text{ if } t \in \text{TopK}_{C}(s, k), \text{ else } 0
-\]
-
-What this means: only the highest-scored candidate tokens are kept for gradient signal.
-
-6) Optimized loss:
-
-\[
-L = \frac{\sum_t m(t)\,\ell_s(t)}{\max(1,\sum_t m(t))}
-\]
-
-What this means: the update ignores dropped tokens by masking them out of the mean.
-
-7) Warmup behavior:
-
-If `step < --rho_warmup_steps`, then effectively:
-
-\[
-m(t)=1 \quad \forall t
-\]
-
-What this means: rho filtering starts only after warmup.
-
-8) Interpretation for your "both hard" objective:
-
-Setting a nonzero `--rho_ref_loss_cap` is what explicitly excludes high-reference-loss tokens from candidate selection; without cap, rho still ranks candidates but does not pre-drop those high-reference-loss tokens.
-
-## Setup
-Run commands from this directory:
+Run commands from the repo root's `moonshotGPT/` directory:
 
 ```bash
-cd tokenPred/moonshotGPT
+cd moonshotGPT
 ```
 
-Minimal dependencies used by these scripts include:
-- `torch`
-- `accelerate`
-- `transformers`
-- `datasets`
-- `jinja2`
-- `numpy`
-- `tqdm`
-- `matplotlib`
-- `pandas`
-- `PyYAML`
-
-If needed, initialize Accelerate once:
-
-```bash
-accelerate config
-```
-
-Recommended derived-data layout:
-
-```text
-data/
-  processed/
-    fineweb_edu_100B/
-  ref_loss/
-    fineweb_edu_100B/
-      gpt2m_T1024_B4/
-```
-
-Legacy top-level paths such as `fineweb_edu_10B/` and `ref_loss_gpt2m_T1024_B4/`
-are kept as compatibility symlinks, but new commands below assume the 100B
-dataset under the `data/` tree.
-
-## End-to-End Commands
-
-### 1) Tokenize FineWeb-Edu
-Why you run this now: training expects memmapped `train_*.bin` and `val_*.bin` shards plus `meta.json`.
+Typical tokenization command:
 
 ```bash
 python fineweb.py \
@@ -174,8 +102,9 @@ python fineweb.py \
   --val_shards 1
 ```
 
-### 2) Baseline GPT-2 Medium Training (No Rho)
-Why you run this now: establish a reference run before token filtering.
+### 2. Train a baseline or retained-data run
+
+Baseline GPT-2 Medium example:
 
 ```bash
 accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
@@ -192,8 +121,7 @@ accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
   --shuffle_blocks
 ```
 
-### 3) Precompute Reference Loss Shards (OpenAI GPT-2 Medium)
-Why you run this now: rho mode needs precomputed per-token reference losses aligned to your train shards.
+Optional rho-1 supporting step:
 
 ```bash
 accelerate launch --num_processes 8 compute_ref_loss_shards.py \
@@ -208,133 +136,107 @@ accelerate launch --num_processes 8 compute_ref_loss_shards.py \
   --mixed_precision bf16
 ```
 
-Important:
-- Keep `--batch_size` in this step equal to training `--micro_batch_size`.
-- Keep `--seq_len` equal between precompute and training.
+If you want the rho-1 path, keep the details in
+[`training_utils/README.md`](training_utils/README.md) nearby. That document now
+holds the original motivation, the masking math, and the findings from the
+completed rho-1 tests.
 
-### 4) Rho-1 Experiment Run (Cap-Enabled)
-Why you run this now: this is the modified training mode that keeps only selected tokens for optimization and explicitly excludes high-reference-loss tokens.
+### 3. Evaluate benchmark behavior
 
-```bash
-accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir data/processed/fineweb_edu_100B \
-  --micro_batch_size 4 \
-  --seq_len 1024 \
-  --total_batch_tokens 491520 \
-  --max_train_steps 20000 \
-  --n_embd 1024 \
-  --n_head 16 \
-  --n_layer 24 \
-  --mixed_precision bf16 \
-  --rho_ref_loss_dir data/ref_loss/fineweb_edu_100B/gpt2m_T1024_B4 \
-  --rho_keep_frac 0.7 \
-  --rho_warmup_steps 500 \
-  --rho_mode delta \
-  --rho_ref_loss_cap 3.0
-```
+There are two main evaluation surfaces:
 
-Notes:
-- `rho_ref_loss_cap=3.0` is an example threshold; tune empirically.
-- Start by checking whether performance remains close to baseline while filtering works as expected.
+- training-time evaluation from `train_gpt2_finewebedu_bin.py`;
+- post-hoc evaluation from
+  `research/bos_aligned_proto/analysis/run_checkpoint_evals.py`.
 
-### 5) Resume Training
-Why you run this now: continue an interrupted run from an existing run folder or a specific checkpoint folder.
+The BOS post-hoc runner is the maintained path when you want standalone
+checkpoint artifacts for later comparison or attribution:
 
 ```bash
-accelerate launch --num_processes 8 train_gpt2_finewebedu_bin.py \
-  --data_dir data/processed/fineweb_edu_100B \
-  --micro_batch_size 4 \
-  --seq_len 1024 \
-  --total_batch_tokens 491520 \
-  --max_train_steps 20000 \
-  --n_embd 1024 \
-  --n_head 16 \
-  --n_layer 24 \
-  --mixed_precision bf16 \
-  --rho_ref_loss_dir data/ref_loss/fineweb_edu_100B/gpt2m_T1024_B4 \
-  --rho_keep_frac 0.7 \
-  --rho_warmup_steps 500 \
-  --rho_mode delta \
-  --rho_ref_loss_cap 3.0 \
-  --resume_from_run experiments/<your_run_or_ckpt_dir>
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
+  runs/research/bos_aligned_proto/<run_name> \
+  --step 16000
 ```
 
-Resume behavior in this script:
-- loads model + optimizer + trainer state,
-- trims logs above checkpoint step (with backups),
-- fast-forwards dataloader stream in data-only mode to align replay state.
+### 4. Run attribution for EWoK
 
-### 6) Plot Metrics
-Why you run this now: summarize EWoK/HellaSwag and training traces from `step_metrics.json`.
+The most developed attribution stack currently lives under
+`research/bos_aligned_proto/analysis/attribution/`.
+
+TrackStar example:
 
 ```bash
-python plot_step_metrics.py \
-  --metrics experiments/<your_run>/step_metrics.json
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+  --run_dir runs/research/bos_aligned_proto/<run_name> \
+  --data_dir data/processed/bos_aligned_proto/<data_view> \
+  --exp_name trackstar_smoke \
+  --checkpoint_steps 16000 \
+  --max_candidate_rows 512 \
+  --max_targets 32 \
+  --device cuda
 ```
 
-## Outputs And Where To Look
-Derived data artifacts now live under:
-- `data/processed/` for token shard datasets
-- `data/ref_loss/` for precomputed reference-loss shards
+TRAK example:
 
-Each run creates an `experiments/<run_name>/` directory with:
-- `step_metrics.json` (main structured metrics history)
-- `scalars.jsonl` (step-level scalar logs)
-- `ewok_items.jsonl` (per-item EWoK logs; now includes both BabyLM completion-choice and EWoK paper context-sensitivity fields)
-- `hellaswag_metrics.jsonl` (HellaSwag summaries)
-- `exposures/exposures_rank*.jsonl` (data exposure traces by rank)
-- `ckpt_*_stepXXXXXXX/` (model/tokenizer/optimizer/trainer state checkpoints)
-- `plots_from_step_metrics/` (generated analysis plots)
+```bash
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trak \
+  --run_dir runs/research/bos_aligned_proto/<run_name> \
+  --data_dir data/processed/bos_aligned_proto/<data_view> \
+  --exp_name trak_smoke \
+  --checkpoint_steps 16000 \
+  --max_candidate_rows 512 \
+  --max_targets 32 \
+  --device cuda
+```
 
-For newer EWoK logs, prefer the explicit key names in `step_metrics.json`:
-- BabyLM completion-choice: `eval_babylm_completion_choice_*`
-- EWoK paper context sensitivity: `eval_ewok_paper_context_sensitivity_*`
+### 5. Inspect outputs and iterate
 
-Older BabyLM-oriented aliases such as `eval_full_*` and `eval_margin_stats_*` are still written for backward compatibility.
+Useful destinations after an attribution run:
 
-## Troubleshooting
-### 1) Ref-loss alignment / batch-size mismatch
-- Symptom: rho preflight or runtime alignment errors.
-- Fix: make sure these match exactly:
-  - training `--micro_batch_size` == precompute `--batch_size`
-  - training `--seq_len` == precompute `--seq_len`
-  - training data shard set == precompute shard set
+- `research/bos_aligned_proto/analysis/notebooks/analyze_attribution_outputs.ipynb`
+  for guided output inspection;
+- `research/bos_aligned_proto/analysis/attribution/common/notebook_analysis.py`
+  for reusable loading and ranking helpers;
+- `plot_step_metrics.py`
+  for training curves and EWoK trend plots.
 
-### 2) Missing EWoK source
-- Symptom: EWoK loader errors in `evaluation/ewok.py`.
-- Fix: ensure one of these exists:
-  - `ewok_fast_jsonl.zip` in repo root,
-  - directory pointed to by `EWOK_SRC`,
-  - fallback legacy source path if applicable.
+## Data Layout
 
-### 3) Resume compatibility failures
-- Symptom: resume preflight mismatch errors.
-- Fix: keep replay-critical settings consistent when resuming:
-  - seed, micro-batch size, seq_len, grad accumulation, world size, worker count, data dir, shuffle setting.
+Preferred derived-data layout:
 
-### 4) Mixed precision / hardware caveats
-- Symptom: bf16 not supported warnings or launch instability.
-- Fix:
-  - use `--mixed_precision bf16` when supported,
-  - otherwise fallback to `fp16` or `no`.
+```text
+data/
+  processed/
+    fineweb_edu_100B/
+    bos_aligned_proto/
+  ref_loss/
+    fineweb_edu_100B/
+      gpt2m_T1024_B4/
+```
 
-## Research Roadmap
-### Stage 1: Validate rho-1 implementation
-Success criteria:
-- logs show rho is active with intended keep fraction behavior,
-- no alignment/resume inconsistencies,
-- performance stays reasonably close to baseline.
+Legacy top-level paths such as `ref_loss_gpt2m_T1024_B4/` are still present for
+older runs, but new work should prefer the `data/` tree.
 
-### Stage 2: Move to sequence-level data pruning
-Success criteria:
-- produce smaller retained dataset variants,
-- recover strong GPT-2 Medium EWoK behavior on reduced data.
+## Notes on Rho-1
 
-### Stage 3: Attribution of EWoK improvements
-Success criteria:
-- identify which retained data characteristics or subsets are linked to EWoK gains,
-- produce reproducible evidence from exposure + evaluation logs.
+Rho-1 remains available, tested, and documented, but it is now an auxiliary
+piece of the repo rather than the headline.
 
-## Public Interface Notes
-- This README adds documentation only.
-- No code API or CLI changes are required to use this workflow.
+The current framing is:
+
+- rho-1 was useful for testing whether loss-guided token retention could be
+  implemented cleanly;
+- those experiments informed later retained-data questions;
+- the present research priority is attribution: explain which retained rows seem
+  to help EWoK, not simply whether a token filter can be turned on.
+
+## Where To Start
+
+- If you want the main training entrypoint, open `train_gpt2_finewebedu_bin.py`.
+- If you want rho-1 details and findings, open `training_utils/README.md`.
+- If you want BOS-packed training plus maintained attribution tooling, open
+  `research/bos_aligned_proto/README.md`.
+- If you want the attribution package directly, open
+  `research/bos_aligned_proto/analysis/attribution/README.md`.
+- If you want the lexical baseline side project, open
+  `research/w2v_lexical_probe/README.md`.

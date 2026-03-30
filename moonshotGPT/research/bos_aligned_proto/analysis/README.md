@@ -1,144 +1,101 @@
-# BOS Analysis Layout
+# BOS Analysis
 
-This directory holds analysis code for the BOS-aligned prototype after training
-artifacts already exist. The goal is to keep post-training inspection,
-attribution, and exploratory work separate from the training and evaluation
-entrypoints elsewhere in the repo.
+This directory is the post-training analysis layer for the BOS-aligned
+prototype. It does not own training or data packing. Its job is to read finished
+artifacts and answer questions like:
 
-For readers arriving from outside this repo: `analysis/` is the post-hoc layer.
-It does not train models. It reads finished checkpoints, evaluation outputs,
-and exposure logs, then tries to answer what the model learned and which
-training examples seem most related to that behavior.
+- how did a checkpoint perform?;
+- how does one checkpoint compare with another?;
+- which training rows seem most aligned with better EWoK behavior?;
+- which investigations are still exploratory enough to belong in notebooks?
 
-In practice, `analysis/` is where we put code that answers questions like:
-
-- What patterns show up in finished runs?
-- Which training rows appear to matter for downstream behavior?
-- Which ideas are still exploratory enough to live in notebooks?
+If you are here to study retained data and EWoK, this is the right level of the
+repo to start from.
 
 ## Current Layout
 
+```text
+analysis/
+  README.md
+  __init__.py
+  run_checkpoint_evals.py
+  plot_ewok_baseline_full_mean.py
+  plot_ewok_checkpoint_baseline_compare.py
+  attribution/
+  notebooks/
+```
+
+## File Guide
+
 ### `run_checkpoint_evals.py`
 
-Post-hoc benchmark runner for BOS checkpoints. This is the maintained way to
-take a finished run, a specific `ckpt_*_stepXXXXXXX/` folder, or a Hugging Face
-model id and compute standalone evaluation artifacts after training.
+Maintained post-hoc benchmark runner for a resolved BOS checkpoint or a Hugging
+Face model id.
 
-The script resolves one checkpoint, loads the model, and runs evaluations in a
-fixed priority order:
+What it does:
 
-- CORE first
-- HellaSwag second
-- EWoK third
-- BLiMP fourth
+- resolves one checkpoint;
+- runs CORE, HellaSwag, EWoK, and BLiMP in a fixed order;
+- writes standalone outputs that can be inspected later without rerunning
+  training.
 
-For EWoK, the post-hoc runner records only the mean-reduction `domain_scores_full`
-outputs for:
-
-- BabyLM completion choice
-- EWoK paper context sensitivity
-
-By default it writes outputs under:
-
-- `runs/research/bos_aligned_proto/<run_name>/posthoc_eval/<checkpoint_name>/`
-- `runs/research/bos_aligned_proto/posthoc_hf_eval/<model_slug>/` for `--hf-model`
-
-and skips tasks whose output files already exist, so reruns can continue after
-an interruption.
-
-The evaluator defaults to `--device cuda` so it does not silently fall back to
-CPU. On shared machines, a good default launch pattern is:
-
-```bash
-conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals ...
-```
-
-Here, `<your_env_name>` is just a placeholder. Older local notes may show
-`babylm`, but that was only one developer's conda environment name on this
-machine.
-
-Examples:
+Typical command:
 
 ```bash
 conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
-  --step 30000
+  runs/research/bos_aligned_proto/<run_name> \
+  --step 16000
 ```
 
-```bash
-conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  --hf-model gpt2-medium
-```
+### `plot_ewok_baseline_full_mean.py`
 
-In `--hf-model` mode, the runner prints cache/download status before loading and
-enables Hugging Face download progress bars by default, so long waits are easier
-to distinguish from a stalled process. Disable that with:
+Plots a standalone checkpoint `ewok_metrics.json` file. This is useful when you
+want a checkpoint baseline view without looking at a whole training curve.
 
-```bash
---no-show-hf-download-status
-```
+### `plot_ewok_checkpoint_baseline_compare.py`
 
-### `notebooks/`
-
-Notebook-based exploratory work. This is the right place for quick
-investigations, visualization drafts, and one-off analyses that are still being
-shaped. Notebooks should consume existing outputs rather than becoming the
-source of truth for reusable analysis logic.
+Overlays a checkpoint EWoK baseline on a run’s `step_metrics.json` trajectory.
+This is useful when you want to compare a post-hoc checkpoint evaluation against
+the training-time curve.
 
 ### `attribution/`
 
-The structured attribution package for BOS-row analysis. This folder is where
-the reusable implementation lives for:
+The maintained attribution package.
 
-- resolving checkpoints from a finished run
-- mapping exposure logs back to BOS-packed training rows
-- constructing EWoK targets
-- computing checkpoint-local attribution scores
-- exporting summaries and checkpoint-to-checkpoint comparisons
+This is where the reusable implementation lives for:
 
-If you want the maintained analysis pipeline rather than an exploratory notebook,
-start here.
+- checkpoint resolution;
+- BOS row reconstruction;
+- exposure-log parsing;
+- candidate row selection;
+- EWoK target construction;
+- backend scoring with TRAK or TrackStar;
+- export of summaries and checkpoint-to-checkpoint comparisons.
 
-This is also where the repo's two attribution backends live:
+If you want the main answer to "which rows seem to improve EWoK?", start here.
 
-- `TRAK`
-  the TRAK-based baseline backend
-- `TrackStar`
-  the Bergson-backed, TrackStar-inspired backend used to ask which BOS-packed
-  training rows look most helpful or harmful for improving EWoK behavior at a
-  given checkpoint
+### `notebooks/`
 
-The higher-level analysis question is:
+Exploratory workflows that sit on top of finished outputs. These notebooks are
+useful for inspection and idea generation, but they are not the source of truth
+for the maintained attribution pipeline.
 
-which training rows appear most aligned with better world-knowledge behavior on
-the EWoK targets we care about?
+## How This Fits the Workflow
 
-### `__init__.py`
+The broader BOS prototype has three layers:
 
-Package marker for the `analysis` namespace. It exists so the analysis code can
-be imported from elsewhere in the research package.
+1. `pipeline/` and `training/` create data views, checkpoints, and exposure logs.
+2. `evaluation/` measures benchmark behavior.
+3. `analysis/` reads those artifacts afterward and explains or compares them.
 
-## How This Fits the Bigger Workflow
-
-The broader BOS-aligned prototype has three different layers:
-
-- training code creates checkpoints, exposure logs, and other run artifacts
-- evaluation code measures model behavior on tasks such as EWoK
-- analysis code reads those artifacts afterward and tries to explain or compare
-  what happened
-
-This directory is intentionally in that third layer. It should not own training
-logic, data packing, or benchmark definitions unless analysis genuinely needs a
-read-only view of those components.
+This directory is intentionally that third layer.
 
 ## Where To Start
 
-- If you want post-training benchmark numbers for a checkpoint, start with
+- If you want standalone benchmark outputs for a checkpoint, start with
   `run_checkpoint_evals.py`.
-- If you want quick orientation to the attribution area, read
+- If you want the structured attribution pipeline, read
   `attribution/README.md`.
-- If you want the implementation entrypoint for attribution, read
-  `attribution/run_trak.py` or `attribution/run_trackstar.py`.
-- If you specifically want the Bergson/TrackStar backend, read
+- If you want the Bergson-backed backend specifically, read
   `attribution/trackstar/README.md`.
-- If you want a looser exploratory workflow, look in `notebooks/`.
+- If you want a looser exploratory workflow, open `notebooks/README.md`.
