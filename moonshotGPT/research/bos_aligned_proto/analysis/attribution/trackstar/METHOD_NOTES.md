@@ -1,0 +1,418 @@
+# TrackStar Method Notes
+
+This document keeps the more technical notes for the Bergson-backed TrackStar
+backend. The main [README.md](README.md) is the entrypoint. This file is the
+deeper reference for how the current implementation should be interpreted,
+where it intentionally differs from the papers, and which practical constraints
+shape the code.
+
+## Scope
+
+This repo's TrackStar path should be read as:
+
+- a TrackStar-inspired, checkpoint-local attribution backend;
+- adapted to EWoK rather than generic factual prompt-completion tracing;
+- adapted to BOS-packed rows and stream windows rather than open-set C4
+  retrieval;
+- implemented on top of Bergson's indexing and scoring machinery where useful,
+  while keeping the repo's own run structure, candidate selection, and exports.
+
+So this file is not claiming exact paper reproduction. It is documenting the
+current research implementation used in this repo.
+
+## High-Level View
+
+The outer attribution pipeline is:
+
+`config -> checkpoints -> row manifest -> exposures -> candidates -> EWoK targets -> backend -> export -> compare`
+
+TrackStar only changes the `backend` stage. The shared pipeline still decides:
+
+- which checkpoints are scored;
+- which exposed rows are eligible as candidates;
+- which EWoK targets are used as queries;
+- which exports get written after scoring.
+
+The backend's job is to score candidate rows against EWoK query targets in a
+geometry that is closer to local training influence than raw text similarity.
+
+## What The Backend Is Trying To Rank
+
+For a checkpoint with parameters `theta`, a query target `t`, and a candidate
+training example `x`, the practical question is:
+
+Which exposed training rows point most in the direction that would reduce the
+chosen EWoK loss at this checkpoint?
+
+This is not the same as:
+
+- nearest-neighbor retrieval in embedding space;
+- lexical overlap with the EWoK prompt;
+- raw training loss on the candidate row alone.
+
+The intended interpretation is directional helpfulness:
+
+- large positive scores suggest the row points toward lower EWoK loss;
+- large negative scores suggest the row points against that objective;
+- scores near zero suggest little checkpoint-local alignment.
+
+## Paper-Style Feature View
+
+A useful paper-style summary is:
+
+$$
+\phi_\theta(z) \approx normalize\left(H^{-1/2} P M^{-1/2} \nabla_\theta \ell(z; \theta)\right)
+$$
+
+and then
+
+$$
+score(t, x) \approx \langle \phi_\theta(t), \phi_\theta(x) \rangle
+$$
+
+where:
+
+- `M` is an optimizer second-moment correction;
+- `P` is random projection into a smaller feature space;
+- `H` is a projected gradient autocorrelation / Hessian-style correction.
+
+That compact view is helpful because it explains the backend as a sequence of
+corrections rather than as "just cosine similarity."
+
+## Why EWoK Is The Query
+
+The repo does not use a generic LM prompt-completion loss as the main query.
+The point of the attribution pipeline is to ask which data supports controlled
+world-knowledge behavior on EWoK.
+
+Each EWoK item supplies two contexts and two targets:
+
+- `C1`, `T1`
+- `C2`, `T2`
+
+The intended structure is:
+
+- `T1` should fit `C1`;
+- `T2` should fit `C2`;
+- `T2` should not fit `C1`;
+- `T1` should not fit `C2`.
+
+The backend therefore evaluates four conditional scores:
+
+- `s11 = log P(T1 | C1)`
+- `s12 = log P(T2 | C1)`
+- `s22 = log P(T2 | C2)`
+- `s21 = log P(T1 | C2)`
+
+Two views are supported:
+
+- `babylm_completion_choice`
+  Uses `m1 = s11 - s12` and `m2 = s22 - s21`.
+- `ewok_paper_context_sensitivity`
+  Uses `m1 = s11 - s21` and `m2 = s22 - s12`.
+
+The paired query loss is:
+
+$$
+L_{EWoK}(t) = \frac{1}{2}\left[softplus\left(-\frac{m_1}{\tau}\right) + softplus\left(-\frac{m_2}{\tau}\right)\right]
+$$
+
+where `tau` is the configured temperature.
+
+This gives the backend a smooth, differentiable objective that still matches
+the benchmark question: which data seems most aligned with making the model
+prefer the plausible concept-context pairing over the implausible one?
+
+## Current Implemented Score
+
+For a checkpoint `theta`, target item `t`, candidate row `x`, and module `m`,
+the current backend can be summarized as:
+
+$$
+g_m(x) = H_{mix,m}^{-1/2} \; proj(corr_m(x))
+$$
+
+$$
+q_m(t) = H_{mix,m}^{-1/2} \; proj(corr^q_m(t))
+$$
+
+Candidate-side and query-side features are then concatenated across modules:
+
+$$
+g(x) = [g_1(x); \ldots; g_M(x)]
+$$
+
+$$
+q(t) = [q_1(t); \ldots; q_M(t)]
+$$
+
+and the exported score is:
+
+$$
+score(t, x) = \frac{\langle q(t), g(x) \rangle}{\|q(t)\|_2 \, \|g(x)\|_2}
+$$
+
+So the current backend is best read as:
+
+- query = gradient of the custom EWoK paired loss;
+- candidate = gradient of training cross-entropy on the candidate row;
+- optional optimizer correction = Adam second-moment correction from
+  `optimizer.pt` when available;
+- curvature correction = mixed Hessian-style whitening in projected feature
+  space;
+- final score = cosine-style alignment in that corrected feature space.
+
+## Optimizer-State Correction
+
+When `optimizer.pt` is available next to the checkpoint, the backend can use
+checkpoint-local Adam second moments on both sides.
+
+Candidate-side correction:
+
+$$
+corr_m(x) = D_m^{-1/2} \nabla_{\theta_m} CE(x)
+$$
+
+Query-side correction:
+
+$$
+corr^q_m(t) = D_m^{-1/2} \nabla_{\theta_m} L_{EWoK}(t)
+$$
+
+If optimizer state is missing, the backend falls back to raw gradients:
+
+$$
+corr_m(x) = \nabla_{\theta_m} CE(x)
+$$
+
+$$
+corr^q_m(t) = \nabla_{\theta_m} L_{EWoK}(t)
+$$
+
+This correction matters because raw gradients can be dominated by consistently
+large or noisy coordinates. Using checkpoint-local second moments moves the
+comparison geometry closer to the update geometry actually used during AdamW
+training.
+
+## Mixed Hessian-Style Correction
+
+The backend does not form the exact full Hessian. Instead it builds a
+projected, mixed curvature approximation. For each module:
+
+$$
+H_{mix,m} = (1 - \lambda) H_{ce,m} + \lambda H_{ewok,m}
+$$
+
+where:
+
+- `H_ce,m` is the projected gradient autocorrelation from candidate-side CE
+  gradients;
+- `H_ewok,m` is the projected gradient autocorrelation from EWoK query
+  gradients;
+- `lambda` mixes train-side and query-side curvature information.
+
+By default, the backend follows Bergson's `compute_lambda` rule rather than a
+fixed hard-coded mixture. A fixed override is still possible with
+`--hessian_lambda`.
+
+The purpose of this step is to downweight high-variance or overly common
+directions before scoring. Intuitively, it tries to move the ranking closer to:
+
+$$
+influence(q, x) \approx - \nabla L(q)^T H^{-1} \nabla L(x)
+$$
+
+instead of a plain raw dot product.
+
+## First-Order Intuition
+
+Under a small SGD-style update on row `x`,
+
+$$
+\theta' = \theta - \eta \nabla CE(x)
+$$
+
+the query loss changes approximately like:
+
+$$
+\Delta L_{EWoK}(t) \approx -\eta \langle \nabla L_{EWoK}(t), \nabla CE(x) \rangle
+$$
+
+The implemented TrackStar score is a more corrected version of that same
+intuition:
+
+- replace raw gradients with optimizer-corrected gradients when possible;
+- score in a projected feature space;
+- whiten common directions with a mixed Hessian-style correction;
+- normalize so the score behaves like directional alignment rather than raw
+  norm comparison.
+
+That is why a positive score is best read as "this row points toward reducing
+the EWoK mistake signal" rather than "this row is globally important in all
+senses."
+
+## How This Differs From The Paper Setup
+
+The current backend captures several important TrackStar-style ingredients:
+
+- custom query gradients rather than generic lexical similarity;
+- optimizer-state correction on both candidate and query sides when available;
+- mixed Hessian-style preconditioning;
+- cosine-normalized scoring;
+- reusable checkpoint-local indexing.
+
+But it still differs from the paper's Section 6 setup in a few important ways:
+
+- it uses checkpoint-local candidate retrieval rather than open-set retrieval
+  over C4;
+- it uses the repo's EWoK paired loss as the query objective;
+- its projection details and layer/module handling follow the current Bergson
+  integration rather than the exact experimental setup in the paper;
+- the runs here are based on AdamW-trained checkpoints, not Adafactor-trained
+  checkpoints.
+
+So the backend is closer to "TrackStar-style influence adapted to EWoK" than to
+"paper-faithful reproduction."
+
+## Bergson Integration Boundaries
+
+The wrapper intentionally uses Bergson for only part of the pipeline.
+
+This repo still owns:
+
+- checkpoint discovery;
+- candidate-row selection from exposures;
+- EWoK target construction;
+- final export format and checkpoint comparisons.
+
+Bergson mainly owns:
+
+- candidate gradient collection;
+- candidate index persistence and loading;
+- lower-level scoring machinery in the corrected feature space.
+
+The intended mental model is:
+
+- Bergson owns candidate-side indexing mechanics;
+- this repo owns the meaning of the query.
+
+## Important Bergson Contracts
+
+Several implementation details are easy to miss unless you have already read
+the code carefully.
+
+### Dataset Access Contract
+
+Bergson does not only call `dataset[i]`. It may also call:
+
+- `dataset[[i, j, ...]]`
+- `dataset[slice(...)]`
+
+and it expects batched `input_ids` and `labels` payloads as Python
+`list[list[int]]`, not pre-padded tensors. That is why
+`bergson_datasets.py` implements custom batched indexing behavior.
+
+### Dataset Teardown Contract
+
+After collection, Bergson expects a Dataset-like object and may call methods
+such as:
+
+- `remove_columns(...)`
+- `add_column(...)`
+- `save_to_disk(...)`
+
+That is why the candidate adapter exposes a narrow teardown bridge rather than
+behaving like a plain Python list.
+
+### Partial Run Layout
+
+Bergson writes build artifacts to `run_path.part/` before promoting them to the
+stable cache path. The wrapper treats `.part` as a real intermediate artifact
+location and only promotes it after a successful build.
+
+### Gradient Loading Contract
+
+The installed Bergson path here returns structured `numpy.memmap` gradient
+artifacts rather than a friendly `dict`. The wrapper normalizes those memmaps
+into a module-name keyed mapping so query-side and candidate-side features can
+be aligned.
+
+### Module Naming Contract
+
+Bergson's stored GPT-2 module names are base-model relative, for example:
+
+- `h.0.attn.c_attn`
+
+while Hugging Face module names look like:
+
+- `transformer.h.0.attn.c_attn`
+
+So the wrapper has to normalize the two namespaces onto one shared module set.
+
+## Why Projection Is Mandatory In Practice
+
+For GPT-2 Medium scale models, raw per-example module gradients are enormous.
+For a weight matrix shaped `1024 x 4096`, one example already yields more than
+four million coordinates.
+
+A full covariance-style preconditioner over that space is therefore far too
+large to build directly. This is why naive raw-preconditioner attempts can show
+impossible memory requests.
+
+The default TrackStar path therefore works in a projected feature space rather
+than forming full raw-gradient preconditioners.
+
+## Why `proj_dim=16`
+
+The default TrackStar settings are:
+
+- `use_fast_jl = True`
+- `proj_dim = 16`
+
+This number is deliberately conservative.
+
+In Bergson, projection is applied on both the left and right sides of a module
+gradient, so the effective feature count scales roughly like:
+
+- `proj_dim = 16` -> about `256` features per module;
+- `proj_dim = 32` -> about `1024` features per module;
+- `proj_dim = 64` -> about `4096` features per module.
+
+That scaling is why a TRAK-style value such as `2048` would be completely
+inappropriate here. In Bergson semantics, that would imply a per-module feature
+space on the order of millions of coordinates.
+
+`16` is therefore the practical default because it:
+
+- keeps indexing feasible on modest GPU budgets;
+- keeps candidate and query features in a shared tractable space;
+- still leaves room to scale to `32` for higher-fidelity experiments.
+
+If you need a smaller memory footprint, try `--proj_dim 8`. If you want a
+larger approximation budget and have the hardware for it, try `--proj_dim 32`.
+
+## Cache Behavior
+
+TrackStar caches checkpoint-local backend artifacts under:
+
+`<output_dir>/cache/stepXXXXXXXX/trackstar/`
+
+That cache is designed for reuse when:
+
+- the checkpoint is unchanged;
+- the ordered candidate row set is unchanged;
+- index-affecting settings such as projection remain unchanged.
+
+This is what makes it practical to rerun query scoring and export logic without
+rebuilding the candidate side every time.
+
+## Practical Reading Guide
+
+If you want to understand the code path behind these notes:
+
+1. read `backend.py` for the end-to-end scoring flow;
+2. read `bergson_queries.py` for the EWoK paired loss and query-gradient side;
+3. read `bergson_datasets.py` for the candidate adapter and Bergson-facing
+   dataset contracts;
+4. read `../common/export.py` to see how checkpoint-local scores become the
+   exported CSV and JSONL artifacts.

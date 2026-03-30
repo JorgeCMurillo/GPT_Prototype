@@ -17,6 +17,7 @@ reproduction.
 ```text
 trackstar/
   README.md
+  METHOD_NOTES.md
   __init__.py
   config.py
   backend.py
@@ -32,6 +33,12 @@ trackstar/
   Candidate-row dataset adapter used when building or reading Bergson indices.
 - `bergson_queries.py`
   EWoK query construction and loss logic for the custom paired objective.
+- `METHOD_NOTES.md`
+  Deeper method notes on the scoring geometry, Bergson integration contracts,
+  projection defaults, and current differences from the paper setup.
+
+If you want the technical version of this document, read
+[`METHOD_NOTES.md`](METHOD_NOTES.md).
 
 ## What This Backend Ranks
 
