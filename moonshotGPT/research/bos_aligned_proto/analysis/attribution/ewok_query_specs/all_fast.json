@@ -1,0 +1,5 @@
+{
+  "name": "all_fast",
+  "description": "Use the full fast EWoK split without additional filtering.",
+  "variant": "fast"
+}

@@ -12,17 +12,13 @@ import torch.nn.functional as F
 from evaluation.ewok import BABYLM_COMPLETION_CHOICE, EWOK_PAPER_CONTEXT_SENSITIVITY
 from evaluation.ewok_data import load_ewok_df
 import numpy as np
-
-
-def _normalize_context_diff(value) -> str:
-    raw = str(value).strip()
-    if raw == "variable_swap":
-        return "variable swap"
-    return raw
-
-
-def _normalize_string(value) -> str:
-    return str(value).strip()
+from .ewok_filters import (
+    apply_ewok_target_filter,
+    load_ewok_target_filter_spec,
+    normalize_ewok_context_diff,
+    normalize_ewok_string,
+    normalize_ewok_variant,
+)
 
 
 @dataclass(frozen=True)
@@ -98,10 +94,16 @@ class TargetDiagnostics:
 class CheckpointScores:
     checkpoint_step: int
     checkpoint_path: str
-    candidate_row_ids: tuple[int, ...]
+    candidate_ids: tuple[int, ...]
     target_ids: tuple[str, ...]
     score_matrix: np.ndarray
     target_diagnostics: tuple[TargetDiagnostics, ...]
+
+    @property
+    def candidate_row_ids(self) -> tuple[int, ...]:
+        """Backward-compatible alias for older row-centric exports/notebooks."""
+
+        return self.candidate_ids
 
 
 def build_ewok_targets(
@@ -109,6 +111,8 @@ def build_ewok_targets(
     score_view: str,
     target_scope: str,
     score_reduction: str,
+    variant: str = "fast",
+    filter_spec_path: str | Path | None = None,
     max_targets: int = 0,
 ) -> EWOKTargetBundle:
     if score_view not in {BABYLM_COMPLETION_CHOICE, EWOK_PAPER_CONTEXT_SENSITIVITY}:
@@ -116,15 +120,25 @@ def build_ewok_targets(
     if target_scope not in {"overall", "per_domain", "both"}:
         raise ValueError(f"Unsupported target_scope: {target_scope!r}")
 
-    df, src = load_ewok_df("fast")
+    filter_spec = None if filter_spec_path is None else load_ewok_target_filter_spec(filter_spec_path)
+    resolved_variant = normalize_ewok_variant(
+        variant if filter_spec is None or filter_spec.variant is None else filter_spec.variant
+    )
+
+    df, src = load_ewok_df(resolved_variant)
     df = df.convert_dtypes()
     df = df.reset_index()
+    if filter_spec is not None:
+        df = apply_ewok_target_filter(df, filter_spec)
+        if df.empty:
+            spec_label = filter_spec.name or str(Path(filter_spec_path).expanduser())
+            raise ValueError(f"EWoK filter spec {spec_label!r} matched zero targets in variant={resolved_variant!r}")
 
     items: list[EWOKTargetItem] = []
     for row in df.itertuples(index=False):
-        domain = _normalize_string(row.Domain)
+        domain = normalize_ewok_string(row.Domain)
         item = EWOKTargetItem(
-            target_id=f"ewok-fast:{score_view}:{score_reduction}:{domain}:{int(row.index)}",
+            target_id=f"ewok-{resolved_variant}:{score_view}:{score_reduction}:{domain}:{int(row.index)}",
             domain=domain,
             row_index=int(row.index),
             score_view=score_view,
@@ -135,11 +149,11 @@ def build_ewok_targets(
             target1=str(row.Target1),
             target2=str(row.Target2),
             context_type_raw=str(row.ContextType),
-            context_type=_normalize_string(row.ContextType),
+            context_type=normalize_ewok_string(row.ContextType),
             context_diff_raw=str(row.ContextDiff),
-            context_diff=_normalize_context_diff(row.ContextDiff),
+            context_diff=normalize_ewok_context_diff(row.ContextDiff),
             target_diff_raw=str(row.TargetDiff),
-            target_diff=_normalize_string(row.TargetDiff),
+            target_diff=normalize_ewok_string(row.TargetDiff),
         )
         items.append(item)
 

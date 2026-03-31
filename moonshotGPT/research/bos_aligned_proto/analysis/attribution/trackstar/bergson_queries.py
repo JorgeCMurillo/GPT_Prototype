@@ -27,6 +27,16 @@ from ..common.ewok_targets import (
 QUERY_GRADIENT_REDUCTIONS = ("item", "per_domain", "overall")
 
 
+def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool = False):
+    if not enabled:
+        return None
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return None
+    return tqdm(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=leave)
+
+
 def _resolve_bos_token_id(tokenizer) -> int:
     for attr in ("bos_token_id", "eos_token_id", "pad_token_id"):
         value = getattr(tokenizer, attr, None)
@@ -80,16 +90,60 @@ def score_bundle_diagnostics(
     *,
     batch_size: int,
     temperature: float,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> tuple[TargetDiagnostics, ...]:
     if not bundle.items:
         return ()
-    return score_target_bundle(
-        model,
-        tokenizer,
-        bundle,
-        batch_size=batch_size,
-        temperature=temperature,
+    bos_token_id = _resolve_bos_token_id(tokenizer)
+    diagnostics: list[TargetDiagnostics] = []
+    progress = _build_tqdm(
+        enabled=show_progress,
+        total=len(bundle.items),
+        desc=progress_desc or "TrackStar EWoK diagnostics",
+        unit="target",
+        leave=False,
     )
+    model.eval()
+    try:
+        with torch.no_grad():
+            for prepared in iter_target_batches(bundle, tokenizer, batch_size):
+                scores = score_target_batch(
+                    model,
+                    prepared.batch,
+                    score_view=bundle.score_view,
+                    score_reduction=bundle.score_reduction,
+                    temperature=temperature,
+                    bos_token_id=bos_token_id,
+                )
+                for idx, item in enumerate(prepared.items):
+                    diagnostics.append(
+                        TargetDiagnostics(
+                            target_id=item.target_id,
+                            domain=item.domain,
+                            score_view=bundle.score_view,
+                            score_reduction=bundle.score_reduction,
+                            s11_mean=float(scores["s11_mean"][idx].item()),
+                            s12_mean=float(scores["s12_mean"][idx].item()),
+                            s22_mean=float(scores["s22_mean"][idx].item()),
+                            s21_mean=float(scores["s21_mean"][idx].item()),
+                            s11_sum=float(scores["s11_sum"][idx].item()),
+                            s12_sum=float(scores["s12_sum"][idx].item()),
+                            s22_sum=float(scores["s22_sum"][idx].item()),
+                            s21_sum=float(scores["s21_sum"][idx].item()),
+                            margin_1=float(scores["margin_1"][idx].item()),
+                            margin_2=float(scores["margin_2"][idx].item()),
+                            combined_margin=float(scores["combined_margin"][idx].item()),
+                            softplus_loss=float(scores["softplus_loss"][idx].item()),
+                            score=float(scores["score"][idx].item()),
+                        )
+                    )
+                if progress is not None:
+                    progress.update(len(prepared.items))
+    finally:
+        if progress is not None:
+            progress.close()
+    return tuple(diagnostics)
 
 
 def _select_gradient_modules(
@@ -256,6 +310,8 @@ def collect_query_module_grads(
     projection_dim: int | None = None,
     projection_type: str = "rademacher",
     weight_normalizers: Mapping[str, Any] | None = None,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> tuple[tuple[str, ...], dict[str, torch.Tensor]]:
     if not bundle.items:
         return (), {}
@@ -265,36 +321,49 @@ def collect_query_module_grads(
     bos_token_id = _resolve_bos_token_id(tokenizer)
 
     per_item_grads: dict[str, list[torch.Tensor]] = {name: [] for name in modules}
+    progress = _build_tqdm(
+        enabled=show_progress,
+        total=len(bundle.items),
+        desc=progress_desc or "TrackStar query gradients",
+        unit="target",
+        leave=False,
+    )
     model.eval()
-    for prepared in iter_target_batches(bundle, tokenizer, 1):
-        model.zero_grad(set_to_none=True)
-        scores = score_target_batch(
-            model,
-            prepared.batch,
-            score_view=bundle.score_view,
-            score_reduction=bundle.score_reduction,
-            temperature=temperature,
-            bos_token_id=bos_token_id,
-        )
-        loss = scores["softplus_loss"].sum()
-        loss.backward()
-        for name, module in modules.items():
-            grad = getattr(module, "weight").grad
-            if grad is None:
-                raise RuntimeError(f"Missing gradient for query module {name!r}")
-            normalized = _normalize_module_weight_grad(module, grad.detach())
-            normalized = _apply_weight_normalizer(
-                name,
-                normalized,
-                weight_normalizers=weight_normalizers,
+    try:
+        for prepared in iter_target_batches(bundle, tokenizer, 1):
+            model.zero_grad(set_to_none=True)
+            scores = score_target_batch(
+                model,
+                prepared.batch,
+                score_view=bundle.score_view,
+                score_reduction=bundle.score_reduction,
+                temperature=temperature,
+                bos_token_id=bos_token_id,
             )
-            projected = _project_query_grad(
-                name,
-                normalized,
-                projection_dim=projection_dim,
-                projection_type=projection_type,
-            )
-            per_item_grads[name].append(projected.cpu().to(dtype=torch.float32))
+            loss = scores["softplus_loss"].sum()
+            loss.backward()
+            for name, module in modules.items():
+                grad = getattr(module, "weight").grad
+                if grad is None:
+                    raise RuntimeError(f"Missing gradient for query module {name!r}")
+                normalized = _normalize_module_weight_grad(module, grad.detach())
+                normalized = _apply_weight_normalizer(
+                    name,
+                    normalized,
+                    weight_normalizers=weight_normalizers,
+                )
+                projected = _project_query_grad(
+                    name,
+                    normalized,
+                    projection_dim=projection_dim,
+                    projection_type=projection_type,
+                )
+                per_item_grads[name].append(projected.cpu().to(dtype=torch.float32))
+            if progress is not None:
+                progress.update(len(prepared.items))
+    finally:
+        if progress is not None:
+            progress.close()
 
     grouped_grads: dict[str, torch.Tensor] = {}
     for name, grads in per_item_grads.items():

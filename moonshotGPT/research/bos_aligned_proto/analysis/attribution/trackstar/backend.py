@@ -1,13 +1,14 @@
-"""TrackStar/Bergson integration for BOS-row EWoK attribution.
+"""TrackStar/Bergson integration for faithful training-example EWoK attribution.
 
 This module isolates the optional Bergson dependency behind the same
 checkpoint-local `CheckpointScores` contract that the existing TRAK backend
-uses. The surrounding BOS pipeline remains responsible for checkpoint
+uses. The surrounding attribution pipeline remains responsible for checkpoint
 selection, candidate selection, EWoK target creation, export, and comparison.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 from dataclasses import dataclass
 import hashlib
@@ -15,7 +16,10 @@ import importlib
 import json
 from pathlib import Path
 import shutil
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from types import SimpleNamespace
+import threading
+import time
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -31,7 +35,7 @@ from .bergson_queries import collect_query_module_grads, score_bundle_diagnostic
 from ..common.candidates import CandidateSelection
 from ..common.checkpoints import CheckpointRef, load_checkpoint_state_dict
 from ..common.ewok_targets import CheckpointScores, EWOKTargetBundle, TargetDiagnostics
-from ..common.row_dataset import RowManifest
+from ..common.training_examples import ExampleManifest
 from .config import TrackstarConfig
 
 if TYPE_CHECKING:
@@ -71,7 +75,7 @@ def _missing_bergson_message(detail: str | None = None) -> str:
 
     suffix = "" if not detail else f" Original import error: {detail}"
     return (
-        "The `bergson` package is required to run BOS-row attribution with the TrackStar backend. "
+        "The `bergson` package is required to run attribution with the TrackStar backend. "
         "Install EleutherAI Bergson from https://github.com/EleutherAI/bergson/ and rerun."
         + suffix
     )
@@ -191,6 +195,138 @@ def _target_indices_for_rank(num_targets: int, rank: int, world_size: int) -> tu
     return tuple(range(start, end))
 
 
+def _resolve_max_positions(model: torch.nn.Module) -> int | None:
+    """Best-effort lookup for the model's supported sequence length."""
+
+    config = getattr(model, "config", None)
+    if config is None:
+        return None
+    for attr in ("n_positions", "max_position_embeddings", "n_ctx"):
+        value = getattr(config, attr, None)
+        if value is None:
+            continue
+        resolved = int(value)
+        if resolved > 0:
+            return resolved
+    return None
+
+
+@contextmanager
+def _periodic_heartbeat(
+    *,
+    enabled: bool,
+    interval_seconds: float,
+    emit: Callable[[float], None],
+):
+    """Emit periodic elapsed-time messages while an opaque step is running."""
+
+    if not enabled:
+        yield
+        return
+
+    stop_event = threading.Event()
+    start_time = time.monotonic()
+
+    def _worker() -> None:
+        while not stop_event.wait(interval_seconds):
+            emit(time.monotonic() - start_time)
+
+    thread = threading.Thread(target=_worker, name="trackstar-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=max(0.1, interval_seconds))
+
+
+@contextmanager
+def _patched_candidate_forward_for_external_shift(model: torch.nn.Module):
+    """Temporarily let Bergson score external-shift examples at max context.
+
+    The main trainer feeds GPT-2-style checkpoints externally shifted training
+    pairs of length `seq_len`, which means candidate windows represent
+    `seq_len + 1` raw tokens. Bergson's CE collector instead expects unshifted
+    labels and applies the causal shift internally, so the candidate adapter
+    intentionally hands Bergson the full `seq_len + 1` chunk.
+
+    A plain Hugging Face GPT-2 forward pass cannot accept that 1-token-longer
+    chunk when `n_positions == seq_len`; it would try to index the positional
+    embedding table one step past the end and trigger a CUDA device-side
+    assert. During candidate indexing only, this shim trims the final token
+    before the actual model forward, then appends one dummy logits row so
+    Bergson's own `logits[:, :-1]` shift still exposes the intended `seq_len`
+    next-token predictions.
+    """
+
+    max_positions = _resolve_max_positions(model)
+    if max_positions is None:
+        yield
+        return
+
+    original_forward = model.forward
+
+    def _truncate_kwargs(kwargs: dict[str, Any], expected_len: int) -> dict[str, Any]:
+        truncated = dict(kwargs)
+        for name in ("attention_mask", "position_ids", "token_type_ids"):
+            value = truncated.get(name)
+            if isinstance(value, torch.Tensor) and value.ndim >= 2 and int(value.shape[1]) == expected_len:
+                truncated[name] = value[:, :-1]
+        return truncated
+
+    def patched_forward(*args, **kwargs):
+        input_ids = kwargs.get("input_ids")
+        arg_style = "kwargs"
+        if input_ids is None and args:
+            first = args[0]
+            if isinstance(first, torch.Tensor):
+                input_ids = first
+                arg_style = "args"
+
+        if not isinstance(input_ids, torch.Tensor) or input_ids.ndim < 2:
+            return original_forward(*args, **kwargs)
+
+        seq_len = int(input_ids.shape[1])
+        if seq_len <= max_positions:
+            return original_forward(*args, **kwargs)
+        if seq_len != max_positions + 1:
+            raise ValueError(
+                "TrackStar candidate indexing only supports sequences up to one token longer than the "
+                f"checkpoint context window. Got sequence length {seq_len} for max_positions={max_positions}."
+            )
+
+        truncated_ids = input_ids[:, :-1]
+        if arg_style == "kwargs":
+            call_args = args
+            call_kwargs = dict(kwargs)
+            call_kwargs["input_ids"] = truncated_ids
+            call_kwargs = _truncate_kwargs(call_kwargs, seq_len)
+        else:
+            call_args = (truncated_ids, *args[1:])
+            call_kwargs = _truncate_kwargs(kwargs, seq_len)
+
+        outputs = original_forward(*call_args, **call_kwargs)
+        logits = getattr(outputs, "logits", None)
+        if not isinstance(logits, torch.Tensor) or logits.ndim != 3:
+            raise TypeError(
+                "Patched TrackStar candidate forward expected model(...).logits to be a rank-3 tensor, "
+                f"got {type(logits)!r} with shape {getattr(logits, 'shape', None)}"
+            )
+
+        dummy_row = torch.zeros_like(logits[:, :1, :])
+        padded_logits = torch.cat([logits, dummy_row], dim=1)
+        if hasattr(outputs, "logits"):
+            outputs.logits = padded_logits
+            return outputs
+        return SimpleNamespace(logits=padded_logits)
+
+    model.forward = patched_forward
+    try:
+        yield
+    finally:
+        model.forward = original_forward
+
+
 def _damped_psd_power(
     H: torch.Tensor,
     power: float,
@@ -291,7 +427,7 @@ def assemble_sharded_scores(
 
 
 class BergsonAttributionBackend:
-    """Checkpoint-local Bergson scorer for BOS rows against EWoK targets."""
+    """Checkpoint-local Bergson scorer for training examples against EWoK targets."""
 
     _SUPPORTED_BERGSON_MODULES = (
         torch.nn.Linear,
@@ -676,14 +812,14 @@ class BergsonAttributionBackend:
         self,
         *,
         checkpoint: CheckpointRef,
-        candidate_row_ids: Sequence[int],
+        candidate_ids: Sequence[int],
     ) -> CandidateIndexMetadata:
         """Describe the exact candidate index we expect for this checkpoint."""
 
         projection_dim = int(self.config.proj_dim) if self.config.use_fast_jl else 0
         return build_candidate_index_metadata(
             checkpoint=checkpoint,
-            candidate_row_ids=candidate_row_ids,
+            candidate_ids=candidate_ids,
             projection_dim=projection_dim,
             use_fast_jl=self.config.use_fast_jl,
             adam_second_moment_correction=self._candidate_uses_adam_second_moment_correction(checkpoint),
@@ -780,11 +916,11 @@ class BergsonAttributionBackend:
         *,
         checkpoint: CheckpointRef,
         candidate_dataset: BergsonCandidateDataset,
-        candidate_row_ids: Sequence[int],
+        candidate_ids: Sequence[int],
     ) -> tuple[Path, CandidateIndexMetadata]:
         """Build or reuse Bergson's candidate gradient index for one checkpoint.
 
-        Bergson owns the gradient collection/indexing step, but the outer BOS
+        Bergson owns the gradient collection/indexing step, but the outer
         pipeline still owns candidate selection. That means we hand Bergson a
         checkpoint-local candidate dataset in the exact order chosen by our
         exposure/candidate logic, then cache the resulting index under a hash of
@@ -793,7 +929,7 @@ class BergsonAttributionBackend:
 
         expected = self._expected_index_metadata(
             checkpoint=checkpoint,
-            candidate_row_ids=candidate_row_ids,
+            candidate_ids=candidate_ids,
         )
         step_cache = self._step_cache_dir(checkpoint)
         index_dir = step_cache / f"index_{expected.fingerprint}"
@@ -808,7 +944,7 @@ class BergsonAttributionBackend:
             return index_dir, expected
 
         self._status(
-            f"building candidate index for step={checkpoint.step} with {len(candidate_row_ids)} candidate row(s)",
+            f"building candidate index for step={checkpoint.step} with {len(candidate_ids)} candidate example(s)",
             root_only=not self.execution_context.is_distributed,
         )
         use_adam_correction, correction_status = self._candidate_correction_status(checkpoint)
@@ -903,13 +1039,23 @@ class BergsonAttributionBackend:
         if preprocess_cfg is not None:
             collect_kwargs["preprocess_cfg"] = preprocess_cfg
 
-        self.runtime.collect_gradients(
-            self.model,
-            candidate_dataset,
-            processor,
-            index_cfg,
-            **collect_kwargs,
-        )
+        with _patched_candidate_forward_for_external_shift(self.model):
+            with _periodic_heartbeat(
+                enabled=self.config.show_progress and self.execution_context.is_root,
+                interval_seconds=30.0,
+                emit=lambda elapsed: self._status(
+                    "candidate index build still running "
+                    f"for step={checkpoint.step} ({elapsed / 60.0:.1f} min elapsed)",
+                    root_only=True,
+                ),
+            ):
+                self.runtime.collect_gradients(
+                    self.model,
+                    candidate_dataset,
+                    processor,
+                    index_cfg,
+                    **collect_kwargs,
+                )
         self._status(
             f"finished candidate index build for step={checkpoint.step} at {index_dir}",
             root_only=not self.execution_context.is_distributed,
@@ -981,7 +1127,7 @@ class BergsonAttributionBackend:
 
         Some scorer paths naturally produce `query x index`, while others expose
         `index x query`. Export and comparison code in this repo expects rows to
-        be targets and columns to be candidate rows, so we normalize here.
+        be targets and columns to be candidate examples, so we normalize here.
         """
 
         matrix = np.asarray(scores, dtype=np.float64)
@@ -1189,16 +1335,16 @@ class BergsonAttributionBackend:
         self,
         *,
         checkpoint: CheckpointRef,
-        manifest: RowManifest,
+        manifest: ExampleManifest,
         candidate_selection: CandidateSelection,
         target_bundle: EWOKTargetBundle,
     ) -> CheckpointScores | None:
         """Run the full TrackStar attribution workflow for one checkpoint.
 
-        The outer BOS pipeline has already decided:
+        The outer attribution pipeline has already decided:
 
         - which checkpoint is being scored
-        - which BOS training rows are candidate influences
+        - which training examples are candidate influences
         - which EWoK targets define the query set
 
         This method's job is to turn those decisions into a dense attribution
@@ -1207,7 +1353,7 @@ class BergsonAttributionBackend:
         1. reload the checkpoint into the shared model
         2. build or reuse the candidate gradient index
         3. compute item-level query gradients under the custom EWoK loss
-        4. score every target against every candidate row
+        4. score every target against every candidate example
         5. return the unchanged `CheckpointScores` shape used by export/compare
 
         Query gradients stay item-level in the main path even though the query
@@ -1217,18 +1363,18 @@ class BergsonAttributionBackend:
 
         self._load_checkpoint_into_model(checkpoint)
 
-        candidate_row_ids = tuple(int(row_id) for row_id in candidate_selection.row_ids)
+        candidate_ids = tuple(int(candidate_id) for candidate_id in candidate_selection.candidate_ids)
         self._status(
             "scoring checkpoint "
-            f"step={checkpoint.step} against {len(candidate_row_ids)} candidate row(s) "
+            f"step={checkpoint.step} against {len(candidate_ids)} candidate example(s) "
             f"and {len(target_bundle.items)} total target(s)",
             root_only=True,
         )
-        candidate_dataset = BergsonCandidateDataset(manifest, candidate_row_ids)
+        candidate_dataset = BergsonCandidateDataset(manifest, candidate_ids)
         index_dir, _ = self._build_or_reuse_candidate_index(
             checkpoint=checkpoint,
             candidate_dataset=candidate_dataset,
-            candidate_row_ids=candidate_row_ids,
+            candidate_ids=candidate_ids,
         )
 
         local_target_indices = _target_indices_for_rank(
@@ -1247,6 +1393,8 @@ class BergsonAttributionBackend:
             local_bundle,
             batch_size=self.config.batch_size,
             temperature=self.config.temperature,
+            show_progress=self.config.show_progress and self.execution_context.is_root,
+            progress_desc=f"step {checkpoint.step} EWoK diagnostics",
         )
 
         if local_bundle.items:
@@ -1277,11 +1425,13 @@ class BergsonAttributionBackend:
                 projection_dim=int(self.config.proj_dim) if self.config.use_fast_jl else None,
                 projection_type="rademacher",
                 weight_normalizers=query_weight_normalizers,
+                show_progress=self.config.show_progress and self.execution_context.is_root,
+                progress_desc=f"step {checkpoint.step} query gradients",
             )
             if tuple(query_target_ids) != local_bundle.target_ids:
                 raise ValueError("Item-level query gradient ordering drifted away from target bundle ordering")
             self._status(
-                f"scoring {len(local_bundle.items)} target gradient(s) against {len(candidate_row_ids)} candidate row(s)",
+                f"scoring {len(local_bundle.items)} target gradient(s) against {len(candidate_ids)} candidate example(s)",
                 root_only=not self.execution_context.is_distributed,
             )
             split_preconditioners = self._build_mixed_hessian_preconditioners(
@@ -1293,10 +1443,10 @@ class BergsonAttributionBackend:
                 query_grads=query_grads,
                 split_preconditioners=split_preconditioners,
                 num_targets=len(local_bundle.items),
-                num_candidates=len(candidate_row_ids),
+                num_candidates=len(candidate_ids),
             )
         else:
-            local_score_matrix = np.zeros((0, len(candidate_row_ids)), dtype=np.float64)
+            local_score_matrix = np.zeros((0, len(candidate_ids)), dtype=np.float64)
             self._status("no local targets assigned; creating an empty local score shard")
 
         if self.execution_context.world_size == 1:
@@ -1307,7 +1457,7 @@ class BergsonAttributionBackend:
             return CheckpointScores(
                 checkpoint_step=checkpoint.step,
                 checkpoint_path=str(checkpoint.path),
-                candidate_row_ids=candidate_row_ids,
+                candidate_ids=candidate_ids,
                 target_ids=target_bundle.target_ids,
                 score_matrix=local_score_matrix,
                 target_diagnostics=local_diagnostics,
@@ -1324,7 +1474,7 @@ class BergsonAttributionBackend:
             ),
         )
         self._status(
-            f"wrote local shard for checkpoint step={checkpoint.step} with {len(local_target_indices)} target row(s)"
+            f"wrote local shard for checkpoint step={checkpoint.step} with {len(local_target_indices)} target item(s)"
         )
         if dist.is_initialized():
             dist.barrier()
@@ -1335,7 +1485,7 @@ class BergsonAttributionBackend:
         score_matrix, diagnostics = self._assemble_shards(
             checkpoint=checkpoint,
             bundle=target_bundle,
-            num_candidates=len(candidate_row_ids),
+            num_candidates=len(candidate_ids),
         )
         self._status(
             f"finished checkpoint step={checkpoint.step}; assembled score matrix shape={score_matrix.shape}",
@@ -1344,7 +1494,7 @@ class BergsonAttributionBackend:
         return CheckpointScores(
             checkpoint_step=checkpoint.step,
             checkpoint_path=str(checkpoint.path),
-            candidate_row_ids=candidate_row_ids,
+            candidate_ids=candidate_ids,
             target_ids=target_bundle.target_ids,
             score_matrix=score_matrix,
             target_diagnostics=diagnostics,

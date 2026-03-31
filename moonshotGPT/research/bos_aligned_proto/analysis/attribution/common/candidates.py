@@ -1,6 +1,6 @@
-"""Candidate row selection for checkpoint-local TRAK runs.
+"""Candidate training-example selection for checkpoint-local attribution runs.
 
-This module translates row-level exposure history into the actual training-row
+This module translates exposure history into the actual training-example
 pool that a checkpoint will featurize. It owns the supported selection
 strategies, the metadata that records what was chosen, and the deterministic
 subsampling step used when the raw exposed set is too large to score directly.
@@ -21,21 +21,27 @@ class CandidateSelection:
     previous_step: int | None
     source_count: int
     selected_count: int
-    row_ids: tuple[int, ...]
+    candidate_ids: tuple[int, ...]
+
+    @property
+    def row_ids(self) -> tuple[int, ...]:
+        """Backward-compatible alias for older row-centric call sites."""
+
+        return self.candidate_ids
 
 
 def _deterministic_subsample(
-    row_ids: tuple[int, ...],
+    candidate_ids: tuple[int, ...],
     *,
     max_candidate_rows: int,
     seed: int,
     checkpoint_step: int,
 ) -> tuple[int, ...]:
-    if len(row_ids) <= max_candidate_rows:
-        return row_ids
+    if len(candidate_ids) <= max_candidate_rows:
+        return candidate_ids
     rng = random.Random(seed + checkpoint_step)
-    sampled = rng.sample(list(row_ids), max_candidate_rows)
-    return tuple(sorted(int(row_id) for row_id in sampled))
+    sampled = rng.sample(list(candidate_ids), max_candidate_rows)
+    return tuple(sorted(int(candidate_id) for candidate_id in sampled))
 
 
 def _rows_for_strategy(
@@ -47,14 +53,14 @@ def _rows_for_strategy(
     recent_window_steps: int,
 ) -> tuple[int, ...]:
     if strategy == "between_checkpoints":
-        return exposure_index.rows_exposed_between_steps(previous_step, checkpoint_step)
+        return exposure_index.ids_exposed_between_steps(previous_step, checkpoint_step)
     if strategy == "up_to_step":
-        return exposure_index.rows_exposed_up_to_step(checkpoint_step)
+        return exposure_index.ids_exposed_up_to_step(checkpoint_step)
     if strategy == "recent_window":
         lower = max(0, int(checkpoint_step) - int(recent_window_steps))
-        return exposure_index.rows_exposed_between_steps(lower, checkpoint_step)
+        return exposure_index.ids_exposed_between_steps(lower, checkpoint_step)
     if strategy == "new_since_prev":
-        return exposure_index.rows_first_seen_between_steps(previous_step, checkpoint_step)
+        return exposure_index.ids_first_seen_between_steps(previous_step, checkpoint_step)
     raise ValueError(f"Unknown candidate strategy: {strategy}")
 
 
@@ -68,15 +74,15 @@ def select_candidate_rows(
     seed: int,
     recent_window_steps: int,
 ) -> CandidateSelection:
-    source_row_ids = _rows_for_strategy(
+    source_candidate_ids = _rows_for_strategy(
         exposure_index,
         strategy=strategy,
         checkpoint_step=checkpoint_step,
         previous_step=previous_step,
         recent_window_steps=recent_window_steps,
     )
-    selected_row_ids = _deterministic_subsample(
-        source_row_ids,
+    selected_candidate_ids = _deterministic_subsample(
+        source_candidate_ids,
         max_candidate_rows=max_candidate_rows,
         seed=seed,
         checkpoint_step=checkpoint_step,
@@ -85,9 +91,9 @@ def select_candidate_rows(
         strategy=strategy,
         checkpoint_step=int(checkpoint_step),
         previous_step=None if previous_step is None else int(previous_step),
-        source_count=len(source_row_ids),
-        selected_count=len(selected_row_ids),
-        row_ids=selected_row_ids,
+        source_count=len(source_candidate_ids),
+        selected_count=len(selected_candidate_ids),
+        candidate_ids=selected_candidate_ids,
     )
 
 

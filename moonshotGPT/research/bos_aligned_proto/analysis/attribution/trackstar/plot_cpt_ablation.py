@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""Plot paired treated/control TrackStar continued-pretraining ablations."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+import pandas as pd
+
+try:
+    import matplotlib.pyplot as plt
+except Exception:
+    plt = None
+
+from ..common.export import write_json
+from .cpt_ablation import (
+    DEFAULT_GROUP_BY,
+    DEFAULT_METRIC_NAME,
+    DEFAULT_REDUCTION,
+    SUPPORTED_GROUP_BYS,
+    SUPPORTED_REDUCTIONS,
+    _group_label_order,
+)
+
+
+ARM_COLORS = {
+    "treated": "#1d3557",
+    "control": "#e76f51",
+}
+EFFECT_COLOR = "#2a9d8f"
+BASELINE_COLOR = "#6c757d"
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Plot treated/control TrackStar CPT ablation curves from ablation_curves.jsonl"
+    )
+    parser.add_argument("--ablation_dir", required=True, help="Ablation output root containing ablation_curves.jsonl")
+    parser.add_argument(
+        "--output_dir",
+        default=None,
+        help="Where to write plots. Defaults to <ablation_dir>/plots/<group_by>_<reduction>",
+    )
+    parser.add_argument("--group_by", choices=SUPPORTED_GROUP_BYS, default=DEFAULT_GROUP_BY)
+    parser.add_argument("--reduction", choices=SUPPORTED_REDUCTIONS, default=DEFAULT_REDUCTION)
+    parser.add_argument("--metric_name", type=str, default=DEFAULT_METRIC_NAME)
+    parser.add_argument("--x_axis", choices=("epoch", "step"), default="epoch")
+    parser.add_argument("--dpi", type=int, default=140)
+    return parser
+
+
+def _load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            rows.append(json.loads(text))
+    return rows
+
+
+def _load_curves_frame(ablation_dir: str | Path) -> pd.DataFrame:
+    path = Path(ablation_dir).expanduser().resolve() / "ablation_curves.jsonl"
+    rows = _load_jsonl(path)
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame.from_records(rows)
+
+
+def _safe_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value))
+    return cleaned.strip("_") or "unknown"
+
+
+def _curve_figure_size(num_panels: int) -> tuple[float, float]:
+    cols = min(2, max(1, int(num_panels)))
+    rows = int(math.ceil(float(num_panels) / float(cols)))
+    return (7.2 * cols, 4.6 * rows)
+
+
+def _plot_seed_lines(ax, frame: pd.DataFrame, *, x_axis: str, y_column: str, color: str) -> None:
+    for _, seed_frame in frame.groupby("seed", as_index=False):
+        ordered = seed_frame.sort_values(x_axis)
+        ax.plot(
+            ordered[x_axis],
+            ordered[y_column],
+            color=color,
+            linewidth=1.0,
+            alpha=0.18,
+        )
+
+
+def _plot_mean_and_band(ax, frame: pd.DataFrame, *, x_axis: str, y_column: str, color: str, label: str) -> None:
+    grouped = frame.groupby(x_axis)[y_column].agg(y_mean="mean", y_std="std").reset_index()
+    ax.plot(grouped[x_axis], grouped["y_mean"], color=color, linewidth=2.3, label=label)
+    if len(frame["seed"].drop_duplicates()) > 1:
+        y_std = grouped["y_std"].fillna(0.0)
+        ax.fill_between(
+            grouped[x_axis],
+            grouped["y_mean"] - y_std,
+            grouped["y_mean"] + y_std,
+            color=color,
+            alpha=0.14,
+            linewidth=0.0,
+        )
+
+
+def _plot_arm_panel(
+    ax,
+    frame: pd.DataFrame,
+    *,
+    x_axis: str,
+    title: str,
+    baseline_value: float | None,
+) -> None:
+    for arm in ("treated", "control"):
+        arm_frame = frame.loc[frame["arm"] == arm].copy()
+        if arm_frame.empty:
+            continue
+        color = ARM_COLORS[arm]
+        _plot_seed_lines(ax, arm_frame, x_axis=x_axis, y_column="value", color=color)
+        _plot_mean_and_band(ax, arm_frame, x_axis=x_axis, y_column="value", color=color, label=arm)
+
+    if baseline_value is not None:
+        ax.axhline(
+            float(baseline_value),
+            color=BASELINE_COLOR,
+            linestyle="--",
+            linewidth=1.4,
+            label="baseline",
+        )
+    ax.set_title(title)
+    ax.set_xlabel("Epoch" if x_axis == "epoch" else "Optimizer Step")
+    ax.set_ylabel("Average EWoK Margin")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+
+def _plot_effect_panel(ax, frame: pd.DataFrame, *, x_axis: str, title: str) -> None:
+    pivot = (
+        frame.pivot_table(index=["seed", x_axis], columns="arm", values="value", aggfunc="first")
+        .reset_index()
+    )
+    if "treated" not in pivot.columns or "control" not in pivot.columns:
+        pivot = pd.DataFrame()
+    else:
+        pivot = pivot.dropna(subset=["treated", "control"], how="any")
+    if pivot.empty:
+        ax.set_title(title)
+        ax.set_xlabel("Epoch" if x_axis == "epoch" else "Optimizer Step")
+        ax.set_ylabel("treated - control")
+        ax.grid(True, alpha=0.25)
+        return
+
+    pivot["treated_minus_control"] = pivot["treated"] - pivot["control"]
+    _plot_seed_lines(ax, pivot, x_axis=x_axis, y_column="treated_minus_control", color=EFFECT_COLOR)
+    _plot_mean_and_band(
+        ax,
+        pivot,
+        x_axis=x_axis,
+        y_column="treated_minus_control",
+        color=EFFECT_COLOR,
+        label="treated - control",
+    )
+    ax.axhline(0.0, color=BASELINE_COLOR, linestyle="--", linewidth=1.2)
+    ax.set_title(title)
+    ax.set_xlabel("Epoch" if x_axis == "epoch" else "Optimizer Step")
+    ax.set_ylabel("treated - control")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+
+def _baseline_value(frame: pd.DataFrame) -> float | None:
+    values = [value for value in frame["baseline_value"].dropna().tolist()]
+    if not values:
+        return None
+    return float(values[0])
+
+
+def _average_plot_paths(output_dir: Path, group_by: str, reduction: str) -> tuple[Path, Path]:
+    return (
+        output_dir / f"arms_{_safe_name(group_by)}_{_safe_name(reduction)}.png",
+        output_dir / f"effect_{_safe_name(group_by)}_{_safe_name(reduction)}.png",
+    )
+
+
+def _group_plot_paths(output_dir: Path, group_by: str, reduction: str, lr: float) -> tuple[Path, Path]:
+    lr_tag = _safe_name(f"{float(lr):.0e}")
+    return (
+        output_dir / f"arms_{_safe_name(group_by)}_{_safe_name(reduction)}_lr_{lr_tag}.png",
+        output_dir / f"effect_{_safe_name(group_by)}_{_safe_name(reduction)}_lr_{lr_tag}.png",
+    )
+
+
+def generate_ablation_plots(
+    *,
+    ablation_dir: str | Path,
+    output_dir: str | Path | None = None,
+    group_by: str = DEFAULT_GROUP_BY,
+    reduction: str = DEFAULT_REDUCTION,
+    metric_name: str = DEFAULT_METRIC_NAME,
+    x_axis: str = "epoch",
+    dpi: int = 140,
+) -> dict[str, Path]:
+    if group_by not in SUPPORTED_GROUP_BYS:
+        raise ValueError(f"Unsupported group_by={group_by!r}; expected one of {SUPPORTED_GROUP_BYS}")
+    if reduction not in SUPPORTED_REDUCTIONS:
+        raise ValueError(f"Unsupported reduction={reduction!r}; expected one of {SUPPORTED_REDUCTIONS}")
+    if x_axis not in {"epoch", "step"}:
+        raise ValueError("x_axis must be 'epoch' or 'step'")
+
+    root = Path(ablation_dir).expanduser().resolve()
+    plot_dir = Path(output_dir).expanduser().resolve() if output_dir else root / "plots" / f"{group_by}_{reduction}"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = plot_dir / "plot_manifest.json"
+
+    manifest: dict[str, Any] = {
+        "generated_at": datetime.now().isoformat(),
+        "ablation_dir": str(root),
+        "output_dir": str(plot_dir),
+        "group_by": str(group_by),
+        "reduction": str(reduction),
+        "metric_name": str(metric_name),
+        "x_axis": str(x_axis),
+        "matplotlib_available": bool(plt is not None),
+        "plots": [],
+    }
+    if plt is None:
+        write_json(manifest_path, manifest)
+        return {"manifest_path": manifest_path}
+
+    frame = _load_curves_frame(root)
+    if frame.empty:
+        write_json(manifest_path, manifest)
+        return {"manifest_path": manifest_path}
+
+    frame = frame.loc[
+        (frame["metric_name"] == metric_name)
+        & (frame["group_by"] == group_by)
+        & (frame["reduction"] == reduction)
+    ].copy()
+    if frame.empty:
+        write_json(manifest_path, manifest)
+        return {"manifest_path": manifest_path}
+
+    frame["lr"] = frame["lr"].astype(float)
+    frame["seed"] = frame["seed"].astype(int)
+    frame["step"] = frame["step"].astype(int)
+    frame["epoch"] = frame["epoch"].astype(float)
+    frame["value"] = frame["value"].astype(float)
+    frame["group_name"] = frame["group_name"].astype(str)
+    lr_values = sorted(frame["lr"].drop_duplicates().tolist())
+
+    if group_by == "average":
+        fig_arms, axes_arms = plt.subplots(
+            max(1, len(lr_values)),
+            1,
+            figsize=(8.4, 4.2 * max(1, len(lr_values))),
+            squeeze=False,
+        )
+        fig_effect, axes_effect = plt.subplots(
+            max(1, len(lr_values)),
+            1,
+            figsize=(8.4, 4.2 * max(1, len(lr_values))),
+            squeeze=False,
+        )
+        for row_index, lr in enumerate(lr_values):
+            lr_frame = frame.loc[(frame["lr"] == lr) & (frame["group_name"] == "average")].copy()
+            _plot_arm_panel(
+                axes_arms[row_index, 0],
+                lr_frame,
+                x_axis=x_axis,
+                title=f"lr={float(lr):.0e}",
+                baseline_value=_baseline_value(lr_frame),
+            )
+            _plot_effect_panel(
+                axes_effect[row_index, 0],
+                lr_frame,
+                x_axis=x_axis,
+                title=f"lr={float(lr):.0e}",
+            )
+        fig_arms.tight_layout()
+        fig_effect.tight_layout()
+        arms_path, effect_path = _average_plot_paths(plot_dir, group_by, reduction)
+        fig_arms.savefig(arms_path, dpi=dpi)
+        fig_effect.savefig(effect_path, dpi=dpi)
+        plt.close(fig_arms)
+        plt.close(fig_effect)
+        manifest["plots"].append({"kind": "arms", "group_by": group_by, "reduction": reduction, "path": str(arms_path)})
+        manifest["plots"].append(
+            {"kind": "effect", "group_by": group_by, "reduction": reduction, "path": str(effect_path)}
+        )
+    else:
+        group_names = _group_label_order(group_by, frame["group_name"].drop_duplicates().tolist())
+        for lr in lr_values:
+            lr_frame = frame.loc[frame["lr"] == lr].copy()
+            ordered_groups = [name for name in group_names if name in set(lr_frame["group_name"].tolist())]
+            if not ordered_groups:
+                continue
+            cols = min(3, max(1, len(ordered_groups)))
+            rows = int(math.ceil(len(ordered_groups) / cols))
+            fig_arms, axes_arms = plt.subplots(rows, cols, figsize=(6.2 * cols, 4.4 * rows), squeeze=False)
+            fig_effect, axes_effect = plt.subplots(rows, cols, figsize=(6.2 * cols, 4.4 * rows), squeeze=False)
+            axes_arms_flat = list(axes_arms.flatten())
+            axes_effect_flat = list(axes_effect.flatten())
+            for index, group_name in enumerate(ordered_groups):
+                group_frame = lr_frame.loc[lr_frame["group_name"] == group_name].copy()
+                _plot_arm_panel(
+                    axes_arms_flat[index],
+                    group_frame,
+                    x_axis=x_axis,
+                    title=str(group_name),
+                    baseline_value=_baseline_value(group_frame),
+                )
+                _plot_effect_panel(
+                    axes_effect_flat[index],
+                    group_frame,
+                    x_axis=x_axis,
+                    title=str(group_name),
+                )
+            for axis in axes_arms_flat[len(ordered_groups):]:
+                axis.axis("off")
+            for axis in axes_effect_flat[len(ordered_groups):]:
+                axis.axis("off")
+            fig_arms.suptitle(f"{group_by} arm curves @ lr={float(lr):.0e}", fontsize=14)
+            fig_effect.suptitle(f"{group_by} treated - control @ lr={float(lr):.0e}", fontsize=14)
+            fig_arms.tight_layout(rect=[0, 0, 1, 0.97])
+            fig_effect.tight_layout(rect=[0, 0, 1, 0.97])
+            arms_path, effect_path = _group_plot_paths(plot_dir, group_by, reduction, float(lr))
+            fig_arms.savefig(arms_path, dpi=dpi)
+            fig_effect.savefig(effect_path, dpi=dpi)
+            plt.close(fig_arms)
+            plt.close(fig_effect)
+            manifest["plots"].append(
+                {
+                    "kind": "arms",
+                    "group_by": group_by,
+                    "reduction": reduction,
+                    "lr": float(lr),
+                    "path": str(arms_path),
+                }
+            )
+            manifest["plots"].append(
+                {
+                    "kind": "effect",
+                    "group_by": group_by,
+                    "reduction": reduction,
+                    "lr": float(lr),
+                    "path": str(effect_path),
+                }
+            )
+
+    write_json(manifest_path, manifest)
+    return {"manifest_path": manifest_path, "output_dir": plot_dir}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    outputs = generate_ablation_plots(
+        ablation_dir=args.ablation_dir,
+        output_dir=args.output_dir,
+        group_by=args.group_by,
+        reduction=args.reduction,
+        metric_name=args.metric_name,
+        x_axis=args.x_axis,
+        dpi=int(args.dpi),
+    )
+    print(f"plot manifest: {outputs['manifest_path']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -15,7 +15,7 @@ class TRAKConfig(AttributionConfigBase):
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run TRAK attribution for BOS-row EWoK analysis")
+    parser = argparse.ArgumentParser(description="Run TRAK attribution for EWoK analysis")
     return add_common_args(parser)
 
 
@@ -32,6 +32,8 @@ def parse_args(argv: Sequence[str] | None = None) -> TRAKConfig:
         max_candidate_rows=ns.max_candidate_rows,
         candidate_seed=ns.candidate_seed,
         recent_window_steps=ns.recent_window_steps,
+        ewok_variant=ns.ewok_variant,
+        ewok_filter_spec=ns.ewok_filter_spec,
         ewok_score_view=ns.ewok_score_view,
         ewok_target_scope=ns.ewok_target_scope,
         score_reduction=ns.score_reduction,
@@ -41,6 +43,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TRAKConfig:
         write_dense_scores=ns.write_dense_scores,
         device=ns.device,
         distributed=ns.distributed,
+        show_progress=ns.show_progress,
         batch_size=ns.batch_size,
         proj_dim=ns.proj_dim,
         use_fast_jl=ns.use_fast_jl,

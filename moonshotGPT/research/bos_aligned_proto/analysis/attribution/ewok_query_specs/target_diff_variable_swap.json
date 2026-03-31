@@ -1,0 +1,6 @@
+{
+  "name": "target_diff_variable_swap",
+  "description": "Restrict EWoK queries to rows whose target_diff is variable swap.",
+  "variant": "fast",
+  "target_diffs": ["variable swap"]
+}

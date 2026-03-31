@@ -1,0 +1,6 @@
+{
+  "name": "context_diff_negation",
+  "description": "Restrict EWoK queries to rows whose normalized context_diff is negation.",
+  "variant": "fast",
+  "context_diffs": ["negation"]
+}

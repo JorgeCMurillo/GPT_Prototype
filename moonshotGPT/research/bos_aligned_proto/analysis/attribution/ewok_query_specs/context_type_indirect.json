@@ -1,0 +1,6 @@
+{
+  "name": "context_type_indirect",
+  "description": "Restrict EWoK queries to indirect context types.",
+  "variant": "fast",
+  "context_types": ["indirect"]
+}

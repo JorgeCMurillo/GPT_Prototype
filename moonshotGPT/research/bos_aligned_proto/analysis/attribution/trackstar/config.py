@@ -18,7 +18,7 @@ class TrackstarConfig(AttributionConfigBase):
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run TrackStar attribution for BOS-row EWoK analysis")
+    parser = argparse.ArgumentParser(description="Run TrackStar attribution for EWoK analysis")
     parser = add_common_args(parser)
     # Bergson's projection_dim is per-module and per-side, not the same
     # overall JL dimension used by the TRAK backend. A small projected index is
@@ -70,6 +70,8 @@ def parse_args(argv: Sequence[str] | None = None) -> TrackstarConfig:
         max_candidate_rows=ns.max_candidate_rows,
         candidate_seed=ns.candidate_seed,
         recent_window_steps=ns.recent_window_steps,
+        ewok_variant=ns.ewok_variant,
+        ewok_filter_spec=ns.ewok_filter_spec,
         ewok_score_view=ns.ewok_score_view,
         ewok_target_scope=ns.ewok_target_scope,
         score_reduction=ns.score_reduction,
@@ -79,6 +81,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrackstarConfig:
         write_dense_scores=ns.write_dense_scores,
         device=ns.device,
         distributed=ns.distributed,
+        show_progress=ns.show_progress,
         batch_size=ns.batch_size,
         proj_dim=ns.proj_dim,
         use_fast_jl=ns.use_fast_jl,

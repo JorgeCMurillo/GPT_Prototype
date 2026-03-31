@@ -123,6 +123,44 @@ This gives the backend a smooth, differentiable objective that still matches
 the benchmark question: which data seems most aligned with making the model
 prefer the plausible concept-context pairing over the implausible one?
 
+## Candidate-Side CE Convention
+
+For a raw candidate token chunk
+
+$$
+r = (r_0, r_1, \ldots, r_{L-1}),
+$$
+
+the TrackStar adapter now hands Bergson the full unshifted chunk as both
+`input_ids` and `labels`.
+
+That is deliberate. Bergson's causal-LM CE collector applies the autoregressive
+shift internally, so giving it already-shifted labels would double-shift the
+targets and score the wrong prediction problem.
+
+One practical wrinkle is context length. The repo's GPT-2 checkpoints were
+trained with externally shifted examples of length `seq_len`, which correspond
+to raw chunks of length `seq_len + 1`. A plain Hugging Face GPT-2 forward pass
+would fail on that longer chunk when `n_positions == seq_len`. The current
+backend therefore keeps the full unshifted candidate chunk at the dataset
+layer, but patches the model forward only during Bergson candidate indexing: it
+runs the real model on the first `seq_len` tokens, appends one dummy logits
+row, and lets Bergson's own `logits[:, :-1]` shift recover the intended
+`seq_len` next-token targets without ever indexing `wpe` out of range.
+
+With the current fixed adapter, the default candidate-side scalar is standard
+mean next-token cross-entropy:
+
+$$
+CE(r) = \frac{1}{L-1}\sum_{i=0}^{L-2} -\log p_\theta(r_{i+1} \mid r_0, \ldots, r_i)
+$$
+
+when Bergson is using its default `loss_reduction="mean"` setting.
+
+Earlier local TrackStar versions accidentally passed already-shifted labels into
+Bergson. Because Bergson then shifted again internally, that older path was
+effectively misaligned by one token. The adapter now avoids that double-shift.
+
 ## Current Implemented Score
 
 For a checkpoint `theta`, target item `t`, candidate row `x`, and module `m`,

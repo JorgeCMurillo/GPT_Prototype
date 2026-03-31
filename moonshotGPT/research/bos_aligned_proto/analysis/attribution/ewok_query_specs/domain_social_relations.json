@@ -1,0 +1,6 @@
+{
+  "name": "domain_social_relations",
+  "description": "Restrict EWoK queries to the social-relations domain.",
+  "variant": "fast",
+  "domains": ["social-relations"]
+}

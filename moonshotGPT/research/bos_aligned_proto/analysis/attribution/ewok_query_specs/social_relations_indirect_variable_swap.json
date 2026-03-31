@@ -1,0 +1,8 @@
+{
+  "name": "social_relations_indirect_variable_swap",
+  "description": "Intersection example: social-relations rows with indirect contexts and variable-swap context_diff.",
+  "variant": "fast",
+  "domains": ["social-relations"],
+  "context_types": ["indirect"],
+  "context_diffs": ["variable swap"]
+}

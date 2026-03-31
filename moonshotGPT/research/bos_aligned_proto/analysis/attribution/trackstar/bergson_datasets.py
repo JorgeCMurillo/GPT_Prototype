@@ -1,8 +1,8 @@
-"""Dataset adapters for the Bergson BOS attribution backend.
+"""Dataset adapters for the Bergson attribution backend.
 
-This module keeps the BOS row manifest and candidate ordering logic unchanged
-while exposing a dataset schema that is convenient for Bergson-style gradient
-collection and for backend-local caching.
+This module keeps the shared candidate-example manifest and ordering logic
+unchanged while exposing a dataset schema that is convenient for Bergson-style
+gradient collection and for backend-local caching.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..common.checkpoints import CheckpointRef
-from ..common.row_dataset import FiniteBOSRowDataset, RowManifest
+from ..common.training_examples import ExampleManifest, FiniteTrainingExampleDataset
 
 
 @dataclass(frozen=True)
@@ -27,8 +27,8 @@ class CandidateIndexMetadata:
 
     Bergson's gradient index is only reusable when the checkpoint, candidate
     ordering, and index-affecting settings match exactly. We store the ordered
-    row ids rather than just a count so a stale cache cannot silently survive a
-    different candidate subset with the same cardinality.
+    candidate ids rather than just a count so a stale cache cannot silently
+    survive a different candidate subset with the same cardinality.
     """
 
     backend: str
@@ -36,7 +36,7 @@ class CandidateIndexMetadata:
     checkpoint_path: str
     fingerprint: str
     candidate_count: int
-    candidate_row_ids: tuple[int, ...]
+    candidate_ids: tuple[int, ...]
     projection_dim: int
     use_fast_jl: bool
     adam_second_moment_correction: bool
@@ -50,7 +50,7 @@ class CandidateIndexMetadata:
             "checkpoint_path": self.checkpoint_path,
             "fingerprint": self.fingerprint,
             "candidate_count": self.candidate_count,
-            "candidate_row_ids": list(self.candidate_row_ids),
+            "candidate_ids": list(self.candidate_ids),
             "projection_dim": self.projection_dim,
             "use_fast_jl": self.use_fast_jl,
             "adam_second_moment_correction": self.adam_second_moment_correction,
@@ -68,9 +68,9 @@ class _BergsonDatasetView:
     - `add_column(...)`
     - `save_to_disk(...)`
 
-    The BOS attribution code does not otherwise need a Hugging Face dataset, so
+    The attribution code does not otherwise need a Hugging Face dataset, so
     this lightweight view lets us satisfy Bergson's teardown contract without
-    replacing the existing manifest-backed row dataset.
+    replacing the existing manifest-backed candidate dataset.
     """
 
     def __init__(
@@ -157,9 +157,9 @@ def _normalize_python_column(column) -> list[Any]:
 
 
 class BergsonCandidateDataset(Dataset):
-    """Checkpoint-local BOS row dataset with the indexing semantics Bergson expects.
+    """Checkpoint-local training-example dataset with Bergson-compatible indexing.
 
-    The BOS attribution pipeline already has a stable row manifest and a stable
+    The attribution pipeline already has a stable manifest and a stable
     candidate selection step. This adapter deliberately reuses that logic and
     only changes the surface area presented to Bergson.
 
@@ -184,41 +184,62 @@ class BergsonCandidateDataset(Dataset):
         "input_ids",
         "labels",
         "attention_mask",
-        "row_id",
+        "candidate_id",
+        "candidate_kind",
         "shard_idx",
         "shard_path",
-        "local_row_idx",
+        "local_example_idx",
+        "token_offset_start",
+        "token_offset_end",
         "candidate_idx",
+        # Legacy aliases retained so older notebooks keep working.
+        "row_id",
+        "local_row_idx",
     )
 
-    def __init__(self, manifest: RowManifest, row_ids: Sequence[int]) -> None:
-        self._base = FiniteBOSRowDataset(manifest, row_ids)
-        self.row_ids = tuple(int(row_id) for row_id in row_ids)
+    def __init__(self, manifest: ExampleManifest, candidate_ids: Sequence[int]) -> None:
+        self._base = FiniteTrainingExampleDataset(manifest, candidate_ids)
+        self.candidate_ids = tuple(int(candidate_id) for candidate_id in candidate_ids)
         self.manifest = manifest
 
     def __len__(self) -> int:
         return len(self._base)
 
     def _single_item(self, index: int) -> dict:
-        """Return one candidate row in the richer schema TrackStar needs.
+        """Return one candidate example in the richer schema TrackStar needs.
 
         Bergson itself mainly needs token ids and labels for gradient
-        collection, but we also preserve row-manifest metadata so downstream
-        exports can still map scores back to BOS rows, shards, and local row
-        indices without redesigning the existing attribution pipeline.
+        collection, but we also preserve manifest metadata so downstream
+        exports can still map scores back to candidate examples, shards, and
+        local indices without redesigning the existing attribution pipeline.
+
+        Important implementation detail: `FiniteTrainingExampleDataset`
+        materializes the repo's standard shifted `(input_ids, labels)` training
+        pair. Bergson's causal-LM CE path applies its own shift internally, so
+        handing it those already-shifted labels would double-shift the target
+        sequence. To match standard causal-LM next-token scoring, this adapter
+        reconstructs the full unshifted token chunk and passes that chunk as
+        both `input_ids` and `labels`.
         """
 
         sample = self._base[index]
         input_ids = sample["input_ids"]
+        labels = sample["labels"]
+        full_tokens = torch.cat([input_ids, labels[-1:].clone()], dim=0)
         return {
-            "input_ids": input_ids,
-            "labels": sample["labels"],
-            "attention_mask": torch.ones_like(input_ids, dtype=torch.long),
-            "row_id": int(sample["row_id"]),
+            "input_ids": full_tokens,
+            "labels": full_tokens.clone(),
+            "attention_mask": torch.ones_like(full_tokens, dtype=torch.long),
+            "candidate_id": int(sample["candidate_id"]),
+            "candidate_kind": str(sample["candidate_kind"]),
             "shard_idx": int(sample["shard_idx"]),
             "shard_path": str(sample["shard_path"]),
-            "local_row_idx": int(sample["local_row_idx"]),
+            "local_example_idx": int(sample["local_example_idx"]),
+            "token_offset_start": int(sample["token_offset_start"]),
+            "token_offset_end": int(sample["token_offset_end"]),
             "candidate_idx": int(index),
+            "row_id": int(sample["row_id"]),
+            "local_row_idx": int(sample["local_row_idx"]),
         }
 
     @staticmethod
@@ -229,11 +250,16 @@ class BergsonCandidateDataset(Dataset):
             "input_ids": sample["input_ids"].tolist(),
             "labels": sample["labels"].tolist(),
             "attention_mask": sample["attention_mask"].tolist(),
-            "row_id": int(sample["row_id"]),
+            "candidate_id": int(sample["candidate_id"]),
+            "candidate_kind": str(sample["candidate_kind"]),
             "shard_idx": int(sample["shard_idx"]),
             "shard_path": str(sample["shard_path"]),
-            "local_row_idx": int(sample["local_row_idx"]),
+            "local_example_idx": int(sample["local_example_idx"]),
+            "token_offset_start": int(sample["token_offset_start"]),
+            "token_offset_end": int(sample["token_offset_end"]),
             "candidate_idx": int(sample["candidate_idx"]),
+            "row_id": int(sample["row_id"]),
+            "local_row_idx": int(sample["local_row_idx"]),
         }
 
     def _dataset_view(self) -> _BergsonDatasetView:
@@ -288,11 +314,16 @@ class BergsonCandidateDataset(Dataset):
             "input_ids": [sample["input_ids"].tolist() for sample in samples],
             "labels": [sample["labels"].tolist() for sample in samples],
             "attention_mask": [sample["attention_mask"].tolist() for sample in samples],
-            "row_id": [int(sample["row_id"]) for sample in samples],
+            "candidate_id": [int(sample["candidate_id"]) for sample in samples],
+            "candidate_kind": [str(sample["candidate_kind"]) for sample in samples],
             "shard_idx": [int(sample["shard_idx"]) for sample in samples],
             "shard_path": [str(sample["shard_path"]) for sample in samples],
-            "local_row_idx": [int(sample["local_row_idx"]) for sample in samples],
+            "local_example_idx": [int(sample["local_example_idx"]) for sample in samples],
+            "token_offset_start": [int(sample["token_offset_start"]) for sample in samples],
+            "token_offset_end": [int(sample["token_offset_end"]) for sample in samples],
             "candidate_idx": [int(sample["candidate_idx"]) for sample in samples],
+            "row_id": [int(sample["row_id"]) for sample in samples],
+            "local_row_idx": [int(sample["local_row_idx"]) for sample in samples],
         }
 
     @property
@@ -341,23 +372,23 @@ class BergsonCandidateDataset(Dataset):
 def build_candidate_index_fingerprint(
     *,
     checkpoint: CheckpointRef,
-    candidate_row_ids: Sequence[int],
+    candidate_ids: Sequence[int],
     projection_dim: int,
     use_fast_jl: bool,
     adam_second_moment_correction: bool,
 ) -> str:
     """Build a deterministic short hash for one candidate-index configuration.
 
-    The hash intentionally includes the ordered candidate row ids. Reordering
+    The hash intentionally includes the ordered candidate ids. Reordering
     candidates changes the meaning of every score column, so cache reuse is
-    only valid when the order is identical, not merely when the same set of row
+    only valid when the order is identical, not merely when the same set of
     ids appears.
     """
 
     payload = {
         "checkpoint_step": int(checkpoint.step),
         "checkpoint_path": str(checkpoint.path),
-        "candidate_row_ids": [int(row_id) for row_id in candidate_row_ids],
+        "candidate_ids": [int(candidate_id) for candidate_id in candidate_ids],
         "projection_dim": int(projection_dim),
         "use_fast_jl": bool(use_fast_jl),
         "adam_second_moment_correction": bool(adam_second_moment_correction),
@@ -369,17 +400,17 @@ def build_candidate_index_fingerprint(
 def build_candidate_index_metadata(
     *,
     checkpoint: CheckpointRef,
-    candidate_row_ids: Sequence[int],
+    candidate_ids: Sequence[int],
     projection_dim: int,
     use_fast_jl: bool,
     adam_second_moment_correction: bool,
 ) -> CandidateIndexMetadata:
     """Package the full cache identity for a checkpoint-local Bergson index."""
 
-    ordered_row_ids = tuple(int(row_id) for row_id in candidate_row_ids)
+    ordered_candidate_ids = tuple(int(candidate_id) for candidate_id in candidate_ids)
     fingerprint = build_candidate_index_fingerprint(
         checkpoint=checkpoint,
-        candidate_row_ids=ordered_row_ids,
+        candidate_ids=ordered_candidate_ids,
         projection_dim=projection_dim,
         use_fast_jl=use_fast_jl,
         adam_second_moment_correction=adam_second_moment_correction,
@@ -389,8 +420,8 @@ def build_candidate_index_metadata(
         checkpoint_step=int(checkpoint.step),
         checkpoint_path=str(checkpoint.path),
         fingerprint=fingerprint,
-        candidate_count=len(ordered_row_ids),
-        candidate_row_ids=ordered_row_ids,
+        candidate_count=len(ordered_candidate_ids),
+        candidate_ids=ordered_candidate_ids,
         projection_dim=int(projection_dim),
         use_fast_jl=bool(use_fast_jl),
         adam_second_moment_correction=bool(adam_second_moment_correction),

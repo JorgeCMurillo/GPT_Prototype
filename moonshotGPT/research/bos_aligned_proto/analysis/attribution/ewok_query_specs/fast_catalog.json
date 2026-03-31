@@ -1,0 +1,38 @@
+{
+  "variant": "fast",
+  "row_count": 1100,
+  "domains": {
+    "agent-properties": 100,
+    "material-dynamics": 100,
+    "material-properties": 100,
+    "physical-dynamics": 100,
+    "physical-interactions": 100,
+    "physical-relations": 100,
+    "quantitative-properties": 100,
+    "social-interactions": 100,
+    "social-properties": 100,
+    "social-relations": 100,
+    "spatial-relations": 100
+  },
+  "context_types": {
+    "direct": 491,
+    "indirect": 609
+  },
+  "context_diffs": {
+    "active-passive": 3,
+    "antonym": 600,
+    "material": 139,
+    "negation": 38,
+    "number": 22,
+    "other": 81,
+    "variable swap": 217
+  },
+  "target_diffs": {
+    "concept swap": 873,
+    "variable swap": 227
+  },
+  "notes": [
+    "ContextDiff is normalized so raw 'variable_swap' is treated as 'variable swap'.",
+    "Filters intersect across fields."
+  ]
+}

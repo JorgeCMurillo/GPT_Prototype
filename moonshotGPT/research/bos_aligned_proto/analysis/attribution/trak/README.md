@@ -47,8 +47,8 @@ written by the shared `common/` layer, not by this backend directly.
 
 ```bash
 conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trak \
-  --run_dir runs/research/bos_aligned_proto/<run_name> \
-  --data_dir data/processed/bos_aligned_proto/<data_view> \
+  --run_dir /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/bos_aligned_proto/<data_view> \
   --exp_name trak_smoke \
   --checkpoint_steps 16000 \
   --max_candidate_rows 512 \

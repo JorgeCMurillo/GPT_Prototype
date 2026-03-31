@@ -1,9 +1,10 @@
-"""Artifact export helpers for BOS-row TRAK runs.
+"""Artifact export helpers for attribution runs over faithful training examples.
 
 This module converts checkpoint-level attribution results into the concrete
 files that downstream analysis consumes. It handles JSON and CSV serialization,
-row-level and domain-level summaries, target diagnostics, and the optional
-dense score dump without mixing that reporting logic into the runner itself.
+candidate-level and domain-level summaries, target diagnostics, and the
+optional dense score dump without mixing that reporting logic into the runner
+itself.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from .ewok_targets import CheckpointScores, EWOKTargetBundle, TargetDiagnostics
-from .row_dataset import RowManifest
+from .training_examples import ExampleManifest, ExampleRef
 
 
 def _to_jsonable(value: Any):
@@ -58,10 +59,30 @@ def _diagnostics_by_target_id(target_diagnostics: tuple[TargetDiagnostics, ...])
     return {diag.target_id: diag for diag in target_diagnostics}
 
 
+def _candidate_metadata(example_ref: ExampleRef) -> dict[str, Any]:
+    """Return stable export metadata for one candidate example.
+
+    We keep the legacy `row_*` aliases so existing notebooks continue to work,
+    but the canonical fields are the more general `candidate_*` / `local_example_idx`
+    / token-offset columns.
+    """
+
+    return {
+        "candidate_id": int(example_ref.global_example_id),
+        "candidate_kind": str(example_ref.candidate_kind),
+        "shard_path": example_ref.shard_path,
+        "local_example_idx": int(example_ref.local_example_idx),
+        "token_offset_start": int(example_ref.token_offset_start),
+        "token_offset_end": int(example_ref.token_offset_end),
+        "row_id": int(example_ref.global_example_id),
+        "local_row_idx": int(example_ref.local_example_idx),
+    }
+
+
 def build_top_rows_frame(
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
     *,
     topk: int,
 ) -> pd.DataFrame:
@@ -77,7 +98,7 @@ def build_top_rows_frame(
 def build_bottom_rows_frame(
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
     *,
     bottomk: int,
 ) -> pd.DataFrame:
@@ -93,7 +114,7 @@ def build_bottom_rows_frame(
 def _build_ranked_rows_frame(
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
     *,
     k: int,
     descending: bool,
@@ -103,7 +124,7 @@ def _build_ranked_rows_frame(
 
     diagnostics = _diagnostics_by_target_id(result.target_diagnostics)
     records: list[dict[str, Any]] = []
-    row_ids = np.asarray(result.candidate_row_ids, dtype=np.int64)
+    candidate_ids = np.asarray(result.candidate_ids, dtype=np.int64)
 
     for target_idx, item in enumerate(bundle.items):
         target_scores = result.score_matrix[target_idx]
@@ -113,22 +134,20 @@ def _build_ranked_rows_frame(
         top_indices = ranked_indices[:k]
         diag = diagnostics[item.target_id]
         for rank, local_idx in enumerate(top_indices, start=1):
-            row_id = int(row_ids[int(local_idx)])
-            row_ref = manifest.row_ref(row_id)
+            example_id = int(candidate_ids[int(local_idx)])
+            example_ref = manifest.example_ref(example_id)
             records.append(
                 {
                     "checkpoint_step": result.checkpoint_step,
                     "target_id": item.target_id,
                     "domain": item.domain,
-                    "row_id": row_id,
                     "score": float(target_scores[int(local_idx)]),
                     "rank": rank,
                     "m1": diag.margin_1,
                     "m2": diag.margin_2,
                     "softplus_loss": diag.softplus_loss,
                     "combined_margin": diag.combined_margin,
-                    "shard_path": row_ref.shard_path,
-                    "local_row_idx": row_ref.local_row_idx,
+                    **_candidate_metadata(example_ref),
                 }
             )
 
@@ -138,8 +157,8 @@ def _build_ranked_rows_frame(
 def _summarize_rows(
     *,
     score_matrix: np.ndarray,
-    row_ids: tuple[int, ...],
-    manifest: RowManifest,
+    candidate_ids: tuple[int, ...],
+    manifest: ExampleManifest,
     checkpoint_step: int,
     group_name: str,
 ) -> pd.DataFrame:
@@ -150,21 +169,19 @@ def _summarize_rows(
     max_abs_score = np.abs(score_matrix).max(axis=0)
 
     records: list[dict[str, Any]] = []
-    for idx, row_id in enumerate(row_ids):
-        row_ref = manifest.row_ref(int(row_id))
+    for idx, candidate_id in enumerate(candidate_ids):
+        example_ref = manifest.example_ref(int(candidate_id))
         records.append(
             {
                 "checkpoint_step": checkpoint_step,
                 "group": group_name,
-                "row_id": int(row_id),
                 "mean_score": float(mean_score[idx]),
                 "mean_abs_score": float(mean_abs_score[idx]),
                 "positive_score_sum": float(positive_score_sum[idx]),
                 "negative_score_sum": float(negative_score_sum[idx]),
                 "max_abs_score": float(max_abs_score[idx]),
                 "target_count": int(score_matrix.shape[0]),
-                "shard_path": row_ref.shard_path,
-                "local_row_idx": row_ref.local_row_idx,
+                **_candidate_metadata(example_ref),
             }
         )
     return pd.DataFrame.from_records(records)
@@ -173,11 +190,11 @@ def _summarize_rows(
 def build_row_summary_frame(
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
 ) -> pd.DataFrame:
     return _summarize_rows(
         score_matrix=result.score_matrix,
-        row_ids=result.candidate_row_ids,
+        candidate_ids=result.candidate_ids,
         manifest=manifest,
         checkpoint_step=result.checkpoint_step,
         group_name="overall",
@@ -187,7 +204,7 @@ def build_row_summary_frame(
 def build_domain_summary_frame(
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
 ) -> pd.DataFrame:
     target_index = bundle.index_by_target_id()
     frames: list[pd.DataFrame] = []
@@ -200,7 +217,7 @@ def build_domain_summary_frame(
         frames.append(
             _summarize_rows(
                 score_matrix=result.score_matrix[indices, :],
-                row_ids=result.candidate_row_ids,
+                candidate_ids=result.candidate_ids,
                 manifest=manifest,
                 checkpoint_step=result.checkpoint_step,
                 group_name=group_name,
@@ -216,7 +233,7 @@ def write_checkpoint_outputs(
     output_dir: str | Path,
     result: CheckpointScores,
     bundle: EWOKTargetBundle,
-    manifest: RowManifest,
+    manifest: ExampleManifest,
     topk: int,
     bottomk: int,
     write_dense_scores: bool,

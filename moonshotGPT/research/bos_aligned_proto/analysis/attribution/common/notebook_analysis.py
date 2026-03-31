@@ -29,6 +29,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+try:
+    from research.bos_aligned_proto.pipeline.bos_packed_index import (
+        PACKED_INDEX_FORMAT,
+        PackedIndexView,
+    )
+except ImportError:
+    from ....pipeline.bos_packed_index import PACKED_INDEX_FORMAT, PackedIndexView
+
 
 _STEP_RE = re.compile(r"step(?P<step>\d{8})")
 _TOP_ROWS_RE = re.compile(r"^top_rows_step(?P<step>\d{8})\.csv$")
@@ -350,16 +358,41 @@ def _concept_hint_from_pairs(
 def _decode_exported_row_text(
     *,
     shard_path: str,
-    local_row_idx: int,
+    local_row_idx: int | None,
     data_dir: Path,
     checkpoint_path: Path,
+    candidate_id: int | None = None,
+    token_offset_start: int | None = None,
+    token_offset_end: int | None = None,
     max_chars: int | None = 500,
 ) -> str:
     meta = _load_row_pack_meta(str(data_dir))
-    row_tokens = int(meta["row_tokens"])
-    mm = _memmap_shard(str(Path(shard_path).expanduser().resolve()))
-    start = int(local_row_idx) * row_tokens
-    tokens = np.asarray(mm[start : start + row_tokens], dtype=np.int64)
+    if meta.get("format") == PACKED_INDEX_FORMAT:
+        view = PackedIndexView(data_dir)
+        split_name = Path(str(shard_path)).name.split("_", 1)[0]
+        if candidate_id is not None:
+            tokens = view.reconstruct_row(split_name, int(candidate_id)).astype(np.int64, copy=False)
+        else:
+            if local_row_idx is None:
+                return ""
+            shard_candidates = view.virtual_shards(split_name)
+            shard_match = next((shard for shard in shard_candidates if shard.shard_path == str(shard_path)), None)
+            if shard_match is None:
+                raise KeyError(
+                    f"Virtual shard path {shard_path!r} was not found in packed-index manifest for split {split_name!r}."
+                )
+            global_row_id = int(shard_match.row_start + int(local_row_idx))
+            tokens = view.reconstruct_row(split_name, global_row_id).astype(np.int64, copy=False)
+    else:
+        mm = _memmap_shard(str(Path(shard_path).expanduser().resolve()))
+        if token_offset_start is not None and token_offset_end is not None:
+            tokens = np.asarray(mm[int(token_offset_start) : int(token_offset_end)], dtype=np.int64)
+        else:
+            row_tokens = meta.get("row_tokens")
+            if row_tokens is None or local_row_idx is None:
+                return ""
+            start = int(local_row_idx) * int(row_tokens)
+            tokens = np.asarray(mm[start : start + int(row_tokens)], dtype=np.int64)
     tokenizer = _load_local_tokenizer(str(checkpoint_path))
     text = tokenizer.decode(tokens.tolist(), clean_up_tokenization_spaces=False)
     text = _clean_decoded_row_text(text, bos_token=tokenizer.bos_token, eos_token=tokenizer.eos_token)
@@ -379,7 +412,7 @@ def attach_row_text(
         return frame.copy()
     if text_column in frame.columns:
         return frame.copy()
-    if "shard_path" not in frame.columns or "local_row_idx" not in frame.columns:
+    if "shard_path" not in frame.columns:
         return frame.copy()
     data_dir = run.data_dir
     checkpoint_path = run.tokenizer_checkpoint_path
@@ -387,16 +420,34 @@ def attach_row_text(
         return frame.copy()
 
     annotated = frame.copy()
-    annotated[text_column] = [
-        _decode_exported_row_text(
-            shard_path=str(shard_path),
-            local_row_idx=int(local_row_idx),
-            data_dir=data_dir,
-            checkpoint_path=checkpoint_path,
-            max_chars=max_chars,
+    texts: list[str] = []
+    for record in annotated.to_dict(orient="records"):
+        local_row_idx = record.get("local_row_idx")
+        texts.append(
+            _decode_exported_row_text(
+                shard_path=str(record["shard_path"]),
+                local_row_idx=None if pd.isna(local_row_idx) else int(local_row_idx),
+                data_dir=data_dir,
+                checkpoint_path=checkpoint_path,
+                candidate_id=(
+                    None
+                    if "candidate_id" not in record or pd.isna(record["candidate_id"])
+                    else int(record["candidate_id"])
+                ),
+                token_offset_start=(
+                    None
+                    if "token_offset_start" not in record or pd.isna(record["token_offset_start"])
+                    else int(record["token_offset_start"])
+                ),
+                token_offset_end=(
+                    None
+                    if "token_offset_end" not in record or pd.isna(record["token_offset_end"])
+                    else int(record["token_offset_end"])
+                ),
+                max_chars=max_chars,
+            )
         )
-        for shard_path, local_row_idx in zip(annotated["shard_path"], annotated["local_row_idx"])
-    ]
+    annotated[text_column] = texts
     return annotated
 
 

@@ -1,4 +1,10 @@
-"""Top-level orchestration for BOS-row attribution runs."""
+"""Top-level orchestration for attribution runs over faithful training examples.
+
+The runner owns the shared workflow around candidate/example selection,
+checkpoint discovery, EWoK target construction, and artifact export. Backend
+implementations only need to score one checkpoint against an ordered set of
+candidate training examples.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +29,8 @@ from .common.config_base import AttributionConfigBase
 from .common.ewok_targets import CheckpointScores, EWOKTargetBundle, build_ewok_targets
 from .common.export import export_target_items, write_checkpoint_outputs, write_json
 from .common.exposures import ExposureIndex, build_exposure_index
-from .common.row_dataset import RowManifest, build_row_manifest
+from .common.training_examples import ExampleManifest, build_example_manifest
+from .common.training_metadata import resolve_training_example_spec
 from .trackstar.backend import build_backend as build_trackstar_backend
 from .trak.backend import build_backend as build_trak_backend
 from .trak.config import parse_args
@@ -77,7 +84,7 @@ class AttributionBackend(Protocol):
         self,
         *,
         checkpoint: CheckpointRef,
-        manifest: RowManifest,
+        manifest: ExampleManifest,
         candidate_selection: CandidateSelection,
         target_bundle: EWOKTargetBundle,
     ) -> CheckpointScores | None:
@@ -94,6 +101,16 @@ def _status(message: str, *, context: RunExecutionContext | None = None, root_on
         if context.world_size > 1:
             prefix = f"{prefix}[rank {context.rank}/{context.world_size}]"
     print(f"{timestamp} {prefix} {message}", flush=True)
+
+
+def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool = True):
+    if not enabled:
+        return None
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return None
+    return tqdm(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=leave)
 
 
 def _get_device(device_arg: str) -> torch.device:
@@ -240,7 +257,7 @@ def execute_attribution_run(
     *,
     config: AttributionConfigBase,
     checkpoints: list[CheckpointRef],
-    manifest: RowManifest,
+    manifest: ExampleManifest,
     exposure_index: ExposureIndex,
     target_bundle: EWOKTargetBundle,
     backend: AttributionBackend,
@@ -269,67 +286,86 @@ def execute_attribution_run(
 
     row_summaries: dict[int, object] = {}
     checkpoint_runs: list[dict] = []
+    checkpoint_progress = _build_tqdm(
+        enabled=context.is_root and config.show_progress and len(checkpoints) > 0,
+        total=len(checkpoints),
+        desc=f"{config.backend} checkpoints",
+        unit="ckpt",
+        leave=True,
+    )
 
-    for idx, checkpoint in enumerate(checkpoints):
-        previous_step = checkpoints[idx - 1].step if idx > 0 else None
-        candidate_selection = select_candidate_rows(
-            exposure_index,
-            strategy=config.candidate_strategy,
-            checkpoint_step=checkpoint.step,
-            previous_step=previous_step,
-            max_candidate_rows=config.max_candidate_rows,
-            seed=config.candidate_seed,
-            recent_window_steps=config.recent_window_steps,
-        )
-        _status(
-            "checkpoint "
-            f"step={checkpoint.step}: selected {candidate_selection.selected_count}/"
-            f"{candidate_selection.source_count} candidate row(s) "
-            f"with strategy={candidate_selection.strategy}",
-            context=context,
-            root_only=True,
-        )
-        result = backend.score_checkpoint(
-            checkpoint=checkpoint,
-            manifest=manifest,
-            candidate_selection=candidate_selection,
-            target_bundle=target_bundle,
-        )
-        if result is None:
-            continue
-        if not context.is_root:
-            raise RuntimeError("Only rank 0 may return assembled checkpoint scores for export")
+    try:
+        for idx, checkpoint in enumerate(checkpoints):
+            previous_step = checkpoints[idx - 1].step if idx > 0 else None
+            candidate_selection = select_candidate_rows(
+                exposure_index,
+                strategy=config.candidate_strategy,
+                checkpoint_step=checkpoint.step,
+                previous_step=previous_step,
+                max_candidate_rows=config.max_candidate_rows,
+                seed=config.candidate_seed,
+                recent_window_steps=config.recent_window_steps,
+            )
+            if checkpoint_progress is not None:
+                checkpoint_progress.set_postfix_str(
+                    f"step={checkpoint.step} candidates={candidate_selection.selected_count}"
+                )
+            _status(
+                "checkpoint "
+                f"step={checkpoint.step}: selected {candidate_selection.selected_count}/"
+                f"{candidate_selection.source_count} candidate example(s) "
+                f"with strategy={candidate_selection.strategy}",
+                context=context,
+                root_only=True,
+            )
+            result = backend.score_checkpoint(
+                checkpoint=checkpoint,
+                manifest=manifest,
+                candidate_selection=candidate_selection,
+                target_bundle=target_bundle,
+            )
+            if result is None:
+                if checkpoint_progress is not None:
+                    checkpoint_progress.update(1)
+                continue
+            if not context.is_root:
+                raise RuntimeError("Only rank 0 may return assembled checkpoint scores for export")
 
-        paths = write_checkpoint_outputs(
-            output_dir=output_dir,
-            result=result,
-            bundle=target_bundle,
-            manifest=manifest,
-            topk=config.topk,
-            bottomk=config.bottomk,
-            write_dense_scores=config.write_dense_scores,
-        )
-        row_summary_path = paths["row_summary"]
-        import pandas as pd
+            paths = write_checkpoint_outputs(
+                output_dir=output_dir,
+                result=result,
+                bundle=target_bundle,
+                manifest=manifest,
+                topk=config.topk,
+                bottomk=config.bottomk,
+                write_dense_scores=config.write_dense_scores,
+            )
+            row_summary_path = paths["row_summary"]
+            import pandas as pd
 
-        row_summaries[checkpoint.step] = pd.read_csv(row_summary_path)
-        checkpoint_runs.append(
-            {
-                "checkpoint_step": checkpoint.step,
-                "checkpoint_path": str(checkpoint.path),
-                "candidate_strategy": candidate_selection.strategy,
-                "source_candidate_count": candidate_selection.source_count,
-                "selected_candidate_count": candidate_selection.selected_count,
-                "artifacts": {name: (None if path is None else str(path)) for name, path in paths.items()},
-            }
-        )
-        _status(
-            "checkpoint "
-            f"step={checkpoint.step}: wrote artifacts top_rows={paths['top_rows']} "
-            f"row_summary={paths['row_summary']}",
-            context=context,
-            root_only=True,
-        )
+            row_summaries[checkpoint.step] = pd.read_csv(row_summary_path)
+            checkpoint_runs.append(
+                {
+                    "checkpoint_step": checkpoint.step,
+                    "checkpoint_path": str(checkpoint.path),
+                    "candidate_strategy": candidate_selection.strategy,
+                    "source_candidate_count": candidate_selection.source_count,
+                    "selected_candidate_count": candidate_selection.selected_count,
+                    "artifacts": {name: (None if path is None else str(path)) for name, path in paths.items()},
+                }
+            )
+            _status(
+                "checkpoint "
+                f"step={checkpoint.step}: wrote artifacts top_rows={paths['top_rows']} "
+                f"row_summary={paths['row_summary']}",
+                context=context,
+                root_only=True,
+            )
+            if checkpoint_progress is not None:
+                checkpoint_progress.update(1)
+    finally:
+        if checkpoint_progress is not None:
+            checkpoint_progress.close()
 
     if not context.is_root:
         return {
@@ -349,6 +385,9 @@ def execute_attribution_run(
         "config": asdict(config),
         "backend": config.backend,
         "distributed_mode": context.distributed_mode,
+        "candidate_kind": manifest.candidate_kind,
+        "seq_len": int(manifest.seq_len),
+        "example_tokens": int(manifest.example_tokens),
         "checkpoints": checkpoint_runs,
         "checkpoint_compare_csv": str(compare_path),
         "target_count": len(target_bundle.items),
@@ -391,19 +430,43 @@ def run(config: AttributionConfigBase) -> dict:
 
     initialize_execution_context(context)
     try:
-        manifest = build_row_manifest(runtime_config.data_dir, split="train")
+        example_spec = resolve_training_example_spec(
+            run_dir=runtime_config.run_dir,
+            data_dir=runtime_config.data_dir,
+        )
         _status(
-            f"loaded row manifest with {len(manifest.rows)} row(s) across {len(manifest.shard_paths)} shard(s)",
+            "resolved training-example semantics "
+            f"candidate_kind={example_spec.candidate_kind} seq_len={example_spec.seq_len}",
             context=context,
             root_only=True,
         )
-        exposure_index = build_exposure_index(runtime_config.run_dir, manifest)
+        manifest = build_example_manifest(
+            runtime_config.data_dir,
+            split="train",
+            candidate_kind=example_spec.candidate_kind,
+            seq_len=example_spec.seq_len,
+            show_progress=context.is_root and runtime_config.show_progress,
+        )
         _status(
-            f"built exposure index across {len(exposure_index.step_to_row_ids)} logged step(s)",
+            "loaded training-example manifest with "
+            f"{len(manifest.examples)} example(s) across {len(manifest.shard_paths)} shard(s) "
+            f"for candidate_kind={manifest.candidate_kind}",
+            context=context,
+            root_only=True,
+        )
+        exposure_index = build_exposure_index(
+            runtime_config.run_dir,
+            manifest,
+            show_progress=context.is_root and runtime_config.show_progress,
+        )
+        _status(
+            f"built exposure index across {len(exposure_index.step_to_example_ids)} logged step(s)",
             context=context,
             root_only=True,
         )
         target_bundle = build_ewok_targets(
+            variant=runtime_config.ewok_variant,
+            filter_spec_path=runtime_config.ewok_filter_spec,
             score_view=runtime_config.ewok_score_view,
             target_scope=runtime_config.ewok_target_scope,
             score_reduction=runtime_config.score_reduction,
@@ -411,7 +474,8 @@ def run(config: AttributionConfigBase) -> dict:
         )
         _status(
             "built target bundle with "
-            f"{len(target_bundle.items)} item(s) and groups={list(target_bundle.groups)}",
+            f"{len(target_bundle.items)} item(s) and groups={list(target_bundle.groups)} "
+            f"(variant={runtime_config.ewok_variant}, filter_spec={runtime_config.ewok_filter_spec})",
             context=context,
             root_only=True,
         )

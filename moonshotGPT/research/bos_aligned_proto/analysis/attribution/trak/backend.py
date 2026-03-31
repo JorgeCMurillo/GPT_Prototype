@@ -1,4 +1,4 @@
-"""TRAK integration for BOS rows and shared EWoK scoring."""
+"""TRAK integration for faithful training-example attribution against EWoK."""
 
 from __future__ import annotations
 
@@ -21,7 +21,11 @@ from ..common.ewok_targets import (
     score_target_batch,
     score_target_bundle,
 )
-from ..common.row_dataset import FiniteBOSRowDataset, RowManifest, iter_row_batches
+from ..common.training_examples import (
+    ExampleManifest,
+    FiniteTrainingExampleDataset,
+    iter_example_batches,
+)
 from .config import TRAKConfig
 
 try:
@@ -43,7 +47,7 @@ except ImportError as exc:  # pragma: no cover - exercised via build_backend err
 def _missing_trak_message() -> str:
     detail = "" if _TRAK_IMPORT_ERROR is None else f" Original import error: {_TRAK_IMPORT_ERROR}"
     return (
-        "The `traker` package is required to run BOS-row TRAK attribution. "
+        "The `traker` package is required to run attribution with the TRAK backend. "
         "Install it with `pip install traker` or `pip install 'traker[fast]'` before "
         "running `analysis.attribution.run_trak`." + detail
     )
@@ -121,7 +125,7 @@ class _BOSRowEWOKModelOutput(_AbstractModelOutput):  # pragma: no cover - exerci
 
 
 class TrakAttributionBackend:
-    """Checkpoint-local TRAK scorer for BOS rows against EWoK targets."""
+    """Checkpoint-local TRAK scorer for training examples against EWoK targets."""
 
     def __init__(self, *, config: TRAKConfig, model: torch.nn.Module, tokenizer) -> None:
         self.config = config
@@ -175,7 +179,7 @@ class TrakAttributionBackend:
         self,
         *,
         checkpoint: CheckpointRef,
-        manifest: RowManifest,
+        manifest: ExampleManifest,
         candidate_selection: CandidateSelection,
         target_bundle: EWOKTargetBundle,
     ) -> CheckpointScores:
@@ -188,18 +192,18 @@ class TrakAttributionBackend:
             temperature=self.config.temperature,
         )
 
-        candidate_row_ids = tuple(int(row_id) for row_id in candidate_selection.row_ids)
-        dataset = FiniteBOSRowDataset(manifest, candidate_row_ids)
+        candidate_ids = tuple(int(candidate_id) for candidate_id in candidate_selection.candidate_ids)
+        dataset = FiniteTrainingExampleDataset(manifest, candidate_ids)
         save_dir = Path(self.config.cache_dir) / f"step{checkpoint.step:08d}"
         save_dir.mkdir(parents=True, exist_ok=True)
         traker = self._new_traker(train_set_size=len(dataset), save_dir=save_dir)
 
         model_id = 0
         traker.load_checkpoint(state_dict, model_id=model_id)
-        for prepared in iter_row_batches(dataset, batch_size=self.config.batch_size):
+        for prepared in iter_example_batches(dataset, batch_size=self.config.batch_size):
             traker.featurize(
                 batch=prepared.batch,
-                num_samples=len(prepared.row_ids),
+                num_samples=len(prepared.example_ids),
                 inds=prepared.local_inds,
             )
         traker.finalize_features()
@@ -220,13 +224,13 @@ class TrakAttributionBackend:
         score_matrix = self._normalize_score_matrix(
             raw_scores,
             num_targets=len(target_bundle.items),
-            num_candidates=len(candidate_row_ids),
+            num_candidates=len(candidate_ids),
         )
 
         return CheckpointScores(
             checkpoint_step=checkpoint.step,
             checkpoint_path=str(checkpoint.path),
-            candidate_row_ids=candidate_row_ids,
+            candidate_ids=candidate_ids,
             target_ids=target_bundle.target_ids,
             score_matrix=score_matrix,
             target_diagnostics=target_diagnostics,
