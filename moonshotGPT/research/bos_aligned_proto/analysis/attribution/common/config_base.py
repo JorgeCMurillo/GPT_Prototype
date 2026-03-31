@@ -42,6 +42,8 @@ class AttributionConfigBase:
     cache_dir: Path | None = None
     checkpoint_steps: tuple[int, ...] = ()
     candidate_strategy: str = "between_checkpoints"
+    candidate_from_step: int | None = None
+    candidate_to_step: int | None = None
     max_candidate_rows: int = 50_000
     candidate_seed: int = 1337
     recent_window_steps: int = 2_000
@@ -117,6 +119,24 @@ class AttributionConfigBase:
             )
         if self.max_candidate_rows <= 0:
             raise ValueError("max_candidate_rows must be > 0")
+        if self.candidate_from_step is not None and int(self.candidate_from_step) < 0:
+            raise ValueError("candidate_from_step must be >= 0 when provided")
+        if self.candidate_to_step is not None and int(self.candidate_to_step) < 0:
+            raise ValueError("candidate_to_step must be >= 0 when provided")
+        if (
+            self.candidate_from_step is not None
+            and self.candidate_strategy not in {"between_checkpoints", "new_since_prev"}
+        ):
+            raise ValueError(
+                "candidate_from_step is only supported with candidate_strategy "
+                "'between_checkpoints' or 'new_since_prev'"
+            )
+        if (
+            self.candidate_from_step is not None
+            and self.candidate_to_step is not None
+            and int(self.candidate_to_step) <= int(self.candidate_from_step)
+        ):
+            raise ValueError("candidate_to_step must be greater than candidate_from_step")
         if self.recent_window_steps <= 0:
             raise ValueError("recent_window_steps must be > 0")
         if self.temperature <= 0:
@@ -140,6 +160,10 @@ class AttributionConfigBase:
             cache_dir=cache_dir,
             ewok_filter_spec=ewok_filter_spec,
             checkpoint_steps=_normalize_steps(self.checkpoint_steps),
+            candidate_from_step=(
+                None if self.candidate_from_step is None else int(self.candidate_from_step)
+            ),
+            candidate_to_step=None if self.candidate_to_step is None else int(self.candidate_to_step),
         )
 
 
@@ -171,6 +195,25 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         type=str,
         choices=CANDIDATE_STRATEGIES,
         default="between_checkpoints",
+    )
+    parser.add_argument(
+        "--candidate_from_step",
+        type=int,
+        default=None,
+        help=(
+            "Optional explicit lower bound for candidate selection. This lets you score one "
+            "checkpoint against a different exposure window, e.g. checkpoint 16000 on candidates "
+            "from 16000->20000."
+        ),
+    )
+    parser.add_argument(
+        "--candidate_to_step",
+        type=int,
+        default=None,
+        help=(
+            "Optional explicit upper bound for candidate selection. Defaults to the scored "
+            "checkpoint step when omitted."
+        ),
     )
     parser.add_argument("--max_candidate_rows", type=int, default=50_000)
     parser.add_argument("--candidate_seed", type=int, default=1337)

@@ -113,6 +113,40 @@ def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool 
     return tqdm(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=leave)
 
 
+def build_previous_checkpoint_step_map(checkpoints: list[CheckpointRef]) -> dict[int, int | None]:
+    previous_by_step: dict[int, int | None] = {}
+    previous_step: int | None = None
+    for checkpoint in checkpoints:
+        previous_by_step[int(checkpoint.step)] = previous_step
+        previous_step = int(checkpoint.step)
+    return previous_by_step
+
+
+def resolve_candidate_window(
+    *,
+    checkpoint_step: int,
+    previous_checkpoint_step: int | None,
+    config: AttributionConfigBase,
+) -> tuple[int | None, int]:
+    candidate_from_step = (
+        int(config.candidate_from_step)
+        if config.candidate_from_step is not None
+        else (None if previous_checkpoint_step is None else int(previous_checkpoint_step))
+    )
+    candidate_to_step = (
+        int(config.candidate_to_step)
+        if config.candidate_to_step is not None
+        else int(checkpoint_step)
+    )
+    if candidate_from_step is not None and candidate_to_step <= candidate_from_step:
+        raise ValueError(
+            f"Invalid candidate window for checkpoint {checkpoint_step}: "
+            f"candidate_to_step={candidate_to_step} must be greater than "
+            f"candidate_from_step={candidate_from_step}."
+        )
+    return candidate_from_step, candidate_to_step
+
+
 def _get_device(device_arg: str) -> torch.device:
     if device_arg == "cpu":
         return torch.device("cpu")
@@ -257,6 +291,7 @@ def execute_attribution_run(
     *,
     config: AttributionConfigBase,
     checkpoints: list[CheckpointRef],
+    previous_checkpoint_step_by_step: dict[int, int | None],
     manifest: ExampleManifest,
     exposure_index: ExposureIndex,
     target_bundle: EWOKTargetBundle,
@@ -295,26 +330,34 @@ def execute_attribution_run(
     )
 
     try:
-        for idx, checkpoint in enumerate(checkpoints):
-            previous_step = checkpoints[idx - 1].step if idx > 0 else None
+        for checkpoint in checkpoints:
+            previous_step, candidate_to_step = resolve_candidate_window(
+                checkpoint_step=checkpoint.step,
+                previous_checkpoint_step=previous_checkpoint_step_by_step.get(int(checkpoint.step)),
+                config=config,
+            )
             candidate_selection = select_candidate_rows(
                 exposure_index,
                 strategy=config.candidate_strategy,
                 checkpoint_step=checkpoint.step,
                 previous_step=previous_step,
+                candidate_to_step=candidate_to_step,
                 max_candidate_rows=config.max_candidate_rows,
                 seed=config.candidate_seed,
                 recent_window_steps=config.recent_window_steps,
             )
             if checkpoint_progress is not None:
                 checkpoint_progress.set_postfix_str(
-                    f"step={checkpoint.step} candidates={candidate_selection.selected_count}"
+                    "step="
+                    f"{checkpoint.step} window={candidate_selection.previous_step}->{candidate_selection.candidate_to_step} "
+                    f"candidates={candidate_selection.selected_count}"
                 )
             _status(
                 "checkpoint "
                 f"step={checkpoint.step}: selected {candidate_selection.selected_count}/"
                 f"{candidate_selection.source_count} candidate example(s) "
-                f"with strategy={candidate_selection.strategy}",
+                f"with strategy={candidate_selection.strategy} over window="
+                f"{candidate_selection.previous_step}->{candidate_selection.candidate_to_step}",
                 context=context,
                 root_only=True,
             )
@@ -349,6 +392,8 @@ def execute_attribution_run(
                     "checkpoint_step": checkpoint.step,
                     "checkpoint_path": str(checkpoint.path),
                     "candidate_strategy": candidate_selection.strategy,
+                    "candidate_from_step": candidate_selection.previous_step,
+                    "candidate_to_step": candidate_selection.candidate_to_step,
                     "source_candidate_count": candidate_selection.source_count,
                     "selected_candidate_count": candidate_selection.selected_count,
                     "artifacts": {name: (None if path is None else str(path)) for name, path in paths.items()},
@@ -416,8 +461,10 @@ def run(config: AttributionConfigBase) -> dict:
         context=context,
     )
 
+    discovered_checkpoints = discover_checkpoints(runtime_config.run_dir)
+    previous_checkpoint_step_by_step = build_previous_checkpoint_step_map(discovered_checkpoints)
     checkpoints = select_checkpoints(
-        discover_checkpoints(runtime_config.run_dir),
+        discovered_checkpoints,
         requested_steps=runtime_config.checkpoint_steps,
     )
     if not checkpoints:
@@ -427,6 +474,13 @@ def run(config: AttributionConfigBase) -> dict:
         context=context,
         root_only=True,
     )
+    if runtime_config.candidate_from_step is not None or runtime_config.candidate_to_step is not None:
+        _status(
+            "using explicit candidate window override "
+            f"from={runtime_config.candidate_from_step} to={runtime_config.candidate_to_step}",
+            context=context,
+            root_only=True,
+        )
 
     initialize_execution_context(context)
     try:
@@ -501,6 +555,7 @@ def run(config: AttributionConfigBase) -> dict:
         return execute_attribution_run(
             config=runtime_config,
             checkpoints=checkpoints,
+            previous_checkpoint_step_by_step=previous_checkpoint_step_by_step,
             manifest=manifest,
             exposure_index=exposure_index,
             target_bundle=target_bundle,

@@ -407,6 +407,31 @@ conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attri
   --device cuda
 ```
 
+If you want to decouple the scored checkpoint from the candidate-exposure
+window, use `--candidate_from_step` and `--candidate_to_step`. For example, to
+score the model at checkpoint `16000` against examples exposed between steps
+`16000 -> 20000`:
+
+```bash
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+  --run_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name> \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --exp_name trackstar_varswap_ckpt16000_window16000_20000 \
+  --checkpoint_steps 16000 \
+  --candidate_from_step 16000 \
+  --candidate_to_step 20000 \
+  --ewok_filter_spec /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/target_diff_variable_swap.json \
+  --ewok_score_view babylm_completion_choice \
+  --score_reduction mean \
+  --write_dense_scores \
+  --device cuda
+```
+
+Without these explicit overrides, `between_checkpoints` now uses the real
+previous discovered checkpoint for a requested step. So `--checkpoint_steps
+20000` will default to the `16000 -> 20000` window when `16000` is the previous
+saved checkpoint in the run.
+
 By default, TrackStar now shows progress feedback for the main long-running
 phases:
 

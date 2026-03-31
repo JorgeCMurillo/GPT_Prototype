@@ -19,6 +19,7 @@ class CandidateSelection:
     strategy: str
     checkpoint_step: int
     previous_step: int | None
+    candidate_to_step: int
     source_count: int
     selected_count: int
     candidate_ids: tuple[int, ...]
@@ -35,11 +36,12 @@ def _deterministic_subsample(
     *,
     max_candidate_rows: int,
     seed: int,
-    checkpoint_step: int,
+    sample_key: int | str,
 ) -> tuple[int, ...]:
     if len(candidate_ids) <= max_candidate_rows:
         return candidate_ids
-    rng = random.Random(seed + checkpoint_step)
+    rng_seed = int(seed) + int(sample_key) if isinstance(sample_key, int) else f"{seed}:{sample_key}"
+    rng = random.Random(rng_seed)
     sampled = rng.sample(list(candidate_ids), max_candidate_rows)
     return tuple(sorted(int(candidate_id) for candidate_id in sampled))
 
@@ -48,19 +50,19 @@ def _rows_for_strategy(
     exposure_index: ExposureIndex,
     *,
     strategy: str,
-    checkpoint_step: int,
+    candidate_to_step: int,
     previous_step: int | None,
     recent_window_steps: int,
 ) -> tuple[int, ...]:
     if strategy == "between_checkpoints":
-        return exposure_index.ids_exposed_between_steps(previous_step, checkpoint_step)
+        return exposure_index.ids_exposed_between_steps(previous_step, candidate_to_step)
     if strategy == "up_to_step":
-        return exposure_index.ids_exposed_up_to_step(checkpoint_step)
+        return exposure_index.ids_exposed_up_to_step(candidate_to_step)
     if strategy == "recent_window":
-        lower = max(0, int(checkpoint_step) - int(recent_window_steps))
-        return exposure_index.ids_exposed_between_steps(lower, checkpoint_step)
+        lower = max(0, int(candidate_to_step) - int(recent_window_steps))
+        return exposure_index.ids_exposed_between_steps(lower, candidate_to_step)
     if strategy == "new_since_prev":
-        return exposure_index.ids_first_seen_between_steps(previous_step, checkpoint_step)
+        return exposure_index.ids_first_seen_between_steps(previous_step, candidate_to_step)
     raise ValueError(f"Unknown candidate strategy: {strategy}")
 
 
@@ -70,27 +72,34 @@ def select_candidate_rows(
     strategy: str,
     checkpoint_step: int,
     previous_step: int | None,
+    candidate_to_step: int | None = None,
     max_candidate_rows: int,
     seed: int,
     recent_window_steps: int,
 ) -> CandidateSelection:
+    effective_candidate_to_step = int(checkpoint_step if candidate_to_step is None else candidate_to_step)
     source_candidate_ids = _rows_for_strategy(
         exposure_index,
         strategy=strategy,
-        checkpoint_step=checkpoint_step,
+        candidate_to_step=effective_candidate_to_step,
         previous_step=previous_step,
         recent_window_steps=recent_window_steps,
     )
+    sample_key: int | str = int(checkpoint_step)
+    if effective_candidate_to_step != int(checkpoint_step):
+        lower_text = "none" if previous_step is None else str(int(previous_step))
+        sample_key = f"{lower_text}:{effective_candidate_to_step}"
     selected_candidate_ids = _deterministic_subsample(
         source_candidate_ids,
         max_candidate_rows=max_candidate_rows,
         seed=seed,
-        checkpoint_step=checkpoint_step,
+        sample_key=sample_key,
     )
     return CandidateSelection(
         strategy=strategy,
         checkpoint_step=int(checkpoint_step),
         previous_step=None if previous_step is None else int(previous_step),
+        candidate_to_step=effective_candidate_to_step,
         source_count=len(source_candidate_ids),
         selected_count=len(selected_candidate_ids),
         candidate_ids=selected_candidate_ids,
