@@ -216,6 +216,17 @@ $$
 S_+(x_i) = \sum_j max(s(x_i, q_j), 0)
 $$
 
+- `net_pooled`
+  Uses the signed pooled score:
+
+$$
+S_{net}(x_i) = \sum_j s(x_i, q_j)
+$$
+
+  When `dense_scores_stepXXXXXXXX.npy` is available, this is computed exactly
+  from the dense matrix. Otherwise the builder falls back to the row-summary
+  `mean_score`, multiplied by `target_count` when that metadata is present.
+
 - `mean_score`
   Uses the row-summary mean over all selected EWoK queries.
 - `mean_abs_score`

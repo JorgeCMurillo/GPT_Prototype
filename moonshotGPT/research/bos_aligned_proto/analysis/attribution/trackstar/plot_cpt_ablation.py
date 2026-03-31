@@ -65,12 +65,55 @@ def _load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _load_json(path: str | Path) -> dict[str, Any]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def _load_curves_frame(ablation_dir: str | Path) -> pd.DataFrame:
     path = Path(ablation_dir).expanduser().resolve() / "ablation_curves.jsonl"
     rows = _load_jsonl(path)
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame.from_records(rows)
+
+
+def _resolve_selection_metadata(ablation_dir: Path) -> tuple[str | None, dict[str, Any] | None]:
+    manifest_path = ablation_dir / "ablation_manifest.json"
+    if not manifest_path.exists():
+        return None, None
+    try:
+        manifest = _load_json(manifest_path)
+    except Exception:
+        return None, None
+
+    matched_pool_dir = manifest.get("matched_pool_dir")
+    if not matched_pool_dir:
+        return None, None
+    summary_path = Path(str(matched_pool_dir)).expanduser().resolve() / "summary.json"
+    if not summary_path.exists():
+        return None, None
+    try:
+        summary = _load_json(summary_path)
+    except Exception:
+        return None, None
+
+    score_mode = summary.get("score_mode")
+    target_id = summary.get("target_id")
+    if score_mode:
+        label = f"selection={score_mode}"
+        if target_id:
+            label = f"{label} target={target_id}"
+        return label, summary
+
+    selection_source = summary.get("selection_source")
+    if isinstance(selection_source, dict) and selection_source:
+        source_kind = selection_source.get("kind", "unknown")
+        label = f"selection_source={source_kind}"
+        if selection_source.get("target_id"):
+            label = f"{label} target={selection_source['target_id']}"
+        return label, summary
+    return None, summary
 
 
 def _safe_name(value: str) -> str:
@@ -183,18 +226,55 @@ def _baseline_value(frame: pd.DataFrame) -> float | None:
     return float(values[0])
 
 
-def _average_plot_paths(output_dir: Path, group_by: str, reduction: str) -> tuple[Path, Path]:
+def _selection_filename_tag(selection_metadata: dict[str, Any] | None) -> str | None:
+    if not isinstance(selection_metadata, dict):
+        return None
+    score_mode = selection_metadata.get("score_mode")
+    if score_mode:
+        tag = f"selection_{score_mode}"
+        target_id = selection_metadata.get("target_id")
+        if target_id:
+            tag = f"{tag}_{target_id}"
+        return _safe_name(str(tag))
+    selection_source = selection_metadata.get("selection_source")
+    if isinstance(selection_source, dict):
+        source_kind = selection_source.get("kind")
+        if source_kind:
+            return _safe_name(f"selection_{source_kind}")
+    return None
+
+
+def _average_plot_paths(
+    output_dir: Path,
+    group_by: str,
+    reduction: str,
+    *,
+    selection_tag: str | None = None,
+) -> tuple[Path, Path]:
+    base = f"{_safe_name(group_by)}_{_safe_name(reduction)}"
+    if selection_tag:
+        base = f"{base}_{selection_tag}"
     return (
-        output_dir / f"arms_{_safe_name(group_by)}_{_safe_name(reduction)}.png",
-        output_dir / f"effect_{_safe_name(group_by)}_{_safe_name(reduction)}.png",
+        output_dir / f"arms_{base}.png",
+        output_dir / f"effect_{base}.png",
     )
 
 
-def _group_plot_paths(output_dir: Path, group_by: str, reduction: str, lr: float) -> tuple[Path, Path]:
+def _group_plot_paths(
+    output_dir: Path,
+    group_by: str,
+    reduction: str,
+    lr: float,
+    *,
+    selection_tag: str | None = None,
+) -> tuple[Path, Path]:
     lr_tag = _safe_name(f"{float(lr):.0e}")
+    base = f"{_safe_name(group_by)}_{_safe_name(reduction)}"
+    if selection_tag:
+        base = f"{base}_{selection_tag}"
     return (
-        output_dir / f"arms_{_safe_name(group_by)}_{_safe_name(reduction)}_lr_{lr_tag}.png",
-        output_dir / f"effect_{_safe_name(group_by)}_{_safe_name(reduction)}_lr_{lr_tag}.png",
+        output_dir / f"arms_{base}_lr_{lr_tag}.png",
+        output_dir / f"effect_{base}_lr_{lr_tag}.png",
     )
 
 
@@ -219,6 +299,8 @@ def generate_ablation_plots(
     plot_dir = Path(output_dir).expanduser().resolve() if output_dir else root / "plots" / f"{group_by}_{reduction}"
     plot_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = plot_dir / "plot_manifest.json"
+    selection_label, selection_metadata = _resolve_selection_metadata(root)
+    selection_filename_tag = _selection_filename_tag(selection_metadata)
 
     manifest: dict[str, Any] = {
         "generated_at": datetime.now().isoformat(),
@@ -228,6 +310,9 @@ def generate_ablation_plots(
         "reduction": str(reduction),
         "metric_name": str(metric_name),
         "x_axis": str(x_axis),
+        "selection_label": selection_label,
+        "selection_metadata": selection_metadata,
+        "selection_filename_tag": selection_filename_tag,
         "matplotlib_available": bool(plt is not None),
         "plots": [],
     }
@@ -285,9 +370,21 @@ def generate_ablation_plots(
                 x_axis=x_axis,
                 title=f"lr={float(lr):.0e}",
             )
-        fig_arms.tight_layout()
-        fig_effect.tight_layout()
-        arms_path, effect_path = _average_plot_paths(plot_dir, group_by, reduction)
+        arms_title = "average arm curves"
+        effect_title = "average treated - control"
+        if selection_label:
+            arms_title = f"{arms_title}\n{selection_label}"
+            effect_title = f"{effect_title}\n{selection_label}"
+        fig_arms.suptitle(arms_title, fontsize=14)
+        fig_effect.suptitle(effect_title, fontsize=14)
+        fig_arms.tight_layout(rect=[0, 0, 1, 0.95])
+        fig_effect.tight_layout(rect=[0, 0, 1, 0.95])
+        arms_path, effect_path = _average_plot_paths(
+            plot_dir,
+            group_by,
+            reduction,
+            selection_tag=selection_filename_tag,
+        )
         fig_arms.savefig(arms_path, dpi=dpi)
         fig_effect.savefig(effect_path, dpi=dpi)
         plt.close(fig_arms)
@@ -328,11 +425,22 @@ def generate_ablation_plots(
                 axis.axis("off")
             for axis in axes_effect_flat[len(ordered_groups):]:
                 axis.axis("off")
-            fig_arms.suptitle(f"{group_by} arm curves @ lr={float(lr):.0e}", fontsize=14)
-            fig_effect.suptitle(f"{group_by} treated - control @ lr={float(lr):.0e}", fontsize=14)
-            fig_arms.tight_layout(rect=[0, 0, 1, 0.97])
-            fig_effect.tight_layout(rect=[0, 0, 1, 0.97])
-            arms_path, effect_path = _group_plot_paths(plot_dir, group_by, reduction, float(lr))
+            arms_title = f"{group_by} arm curves @ lr={float(lr):.0e}"
+            effect_title = f"{group_by} treated - control @ lr={float(lr):.0e}"
+            if selection_label:
+                arms_title = f"{arms_title}\n{selection_label}"
+                effect_title = f"{effect_title}\n{selection_label}"
+            fig_arms.suptitle(arms_title, fontsize=14)
+            fig_effect.suptitle(effect_title, fontsize=14)
+            fig_arms.tight_layout(rect=[0, 0, 1, 0.94])
+            fig_effect.tight_layout(rect=[0, 0, 1, 0.94])
+            arms_path, effect_path = _group_plot_paths(
+                plot_dir,
+                group_by,
+                reduction,
+                float(lr),
+                selection_tag=selection_filename_tag,
+            )
             fig_arms.savefig(arms_path, dpi=dpi)
             fig_effect.savefig(effect_path, dpi=dpi)
             plt.close(fig_arms)

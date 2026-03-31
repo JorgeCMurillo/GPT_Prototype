@@ -124,6 +124,14 @@ def _render_command(parts: Sequence[str]) -> str:
     return " ".join(shlex.quote(str(part)) for part in parts)
 
 
+def _auto_plot_group_bys(primary_group_by: str) -> tuple[str, ...]:
+    ordered: list[str] = []
+    for group_by in ("average", "domain", "ContextDiff", "TargetDiff", "ContextType", str(primary_group_by)):
+        if group_by not in ordered:
+            ordered.append(group_by)
+    return tuple(ordered)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -241,16 +249,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if progress is not None:
             progress.set_postfix_str("plotting")
-        plot_outputs = generate_ablation_plots(
-            ablation_dir=output_dir,
-            output_dir=output_dir / "plots",
-            group_by=str(args.plot_group_by),
-            reduction=str(args.plot_reduction),
-            metric_name=str(args.metric_name),
-            x_axis=str(args.plot_x_axis),
-            dpi=int(args.dpi),
-        )
-        manifest["plot_outputs"] = {key: str(value) for key, value in plot_outputs.items()}
+        plot_outputs: dict[str, dict[str, str]] = {}
+        for group_by in _auto_plot_group_bys(str(args.plot_group_by)):
+            group_output_dir = (
+                output_dir / "plots"
+                if group_by == str(args.plot_group_by)
+                else output_dir / "plots" / f"{group_by}_{str(args.plot_reduction)}"
+            )
+            outputs = generate_ablation_plots(
+                ablation_dir=output_dir,
+                output_dir=group_output_dir,
+                group_by=group_by,
+                reduction=str(args.plot_reduction),
+                metric_name=str(args.metric_name),
+                x_axis=str(args.plot_x_axis),
+                dpi=int(args.dpi),
+            )
+            plot_outputs[group_by] = {key: str(value) for key, value in outputs.items()}
+        manifest["plot_outputs"] = plot_outputs
         write_json(manifest_path, manifest)
         if progress is not None:
             progress.update(1)
@@ -260,8 +276,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"ablation manifest: {manifest_path}")
     print(f"aggregation summary: {aggregation_outputs['summary_path']}")
-    if "manifest_path" in plot_outputs:
-        print(f"plot manifest: {plot_outputs['manifest_path']}")
+    for group_by, outputs in plot_outputs.items():
+        if "manifest_path" in outputs:
+            print(f"{group_by} plot manifest: {outputs['manifest_path']}")
     return 0
 
 

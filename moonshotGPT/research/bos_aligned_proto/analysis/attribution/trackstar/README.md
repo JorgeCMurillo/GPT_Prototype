@@ -255,8 +255,14 @@ useful views:
 - pooled candidate ranking from `row_summary_stepXXXXXXXX.csv`, including
   `positive_score_sum`:
 
-$$
+$$ 
 S_+(x_i) = \sum_j max(s(x_i, q_j), 0)
+$$
+
+- signed net pooling for treated/control selection:
+
+$$
+S_{net}(x_i) = \sum_j s(x_i, q_j)
 $$
 
 - per-query candidate ranking from `dense_scores_stepXXXXXXXX.npy`, where one
@@ -386,6 +392,21 @@ add `--dry_run`.
 
 The child trainer still prints its own logs inside each run. If you want the
 older quieter behavior, add `--no_progress`.
+
+By default, the ablation runner now auto-generates:
+
+- the average treated/control and treated-minus-control plots
+- a per-domain plot set
+- grouped plot sets for `ContextDiff`, `TargetDiff`, and `ContextType`
+
+The per-domain effect plot is laid out as a 4x3 grid when all EWoK domains are
+present. The grouped category plots are written under subdirectories such as
+`plots/ContextDiff_mean/`, `plots/TargetDiff_mean/`, and
+`plots/ContextType_mean/`. The plot titles now also include the matched-pool
+selection mode when `summary.json` is available under the matched-pool root,
+for example `selection=positive_pooled` or `selection=net_pooled`. The PNG
+filenames now include the same information as a tag such as
+`selection_positive_pooled` or `selection_net_pooled`.
 
 To regenerate plots from an existing ablation directory:
 

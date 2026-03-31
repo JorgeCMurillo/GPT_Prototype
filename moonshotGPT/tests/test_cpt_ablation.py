@@ -265,6 +265,22 @@ def test_generate_ablation_plots_writes_pngs(tmp_path: Path) -> None:
         baseline_summary_path=baseline_path,
         metric_name="babylm_completion_choice_margin_combined",
     )
+    matched_root = tmp_path / "matched_positive_pooled_top1000"
+    matched_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        matched_root / "summary.json",
+        {
+            "score_mode": "positive_pooled",
+            "target_id": None,
+            "selection_source": {"kind": "row_summary", "column": "positive_score_sum"},
+        },
+    )
+    _write_json(
+        ablation_dir / "ablation_manifest.json",
+        {
+            "matched_pool_dir": str(matched_root),
+        },
+    )
 
     plot_outputs = plot_cpt_ablation.generate_ablation_plots(
         ablation_dir=ablation_dir,
@@ -277,9 +293,13 @@ def test_generate_ablation_plots_writes_pngs(tmp_path: Path) -> None:
     )
 
     manifest = json.loads(Path(plot_outputs["manifest_path"]).read_text(encoding="utf-8"))
+    assert manifest["selection_label"] == "selection=positive_pooled"
+    assert manifest["selection_metadata"]["score_mode"] == "positive_pooled"
+    assert manifest["selection_filename_tag"] == "selection_positive_pooled"
     assert len(manifest["plots"]) == 2
     for plot_record in manifest["plots"]:
         assert Path(plot_record["path"]).exists()
+        assert "selection_positive_pooled" in Path(plot_record["path"]).name
 
 
 def test_run_cpt_ablation_dry_run_writes_manifest_and_plans_runs(tmp_path: Path) -> None:
@@ -339,3 +359,11 @@ def test_run_cpt_ablation_parser_supports_progress_toggle() -> None:
 
     assert default_args.show_progress is True
     assert quiet_args.show_progress is False
+
+
+def test_run_cpt_ablation_auto_plots_include_all_grouped_views() -> None:
+    expected = ("average", "domain", "ContextDiff", "TargetDiff", "ContextType")
+    assert run_cpt_ablation._auto_plot_group_bys("average") == expected
+    assert run_cpt_ablation._auto_plot_group_bys("domain") == expected
+    assert run_cpt_ablation._auto_plot_group_bys("ContextDiff") == expected
+    assert run_cpt_ablation._auto_plot_group_bys("TargetDiff") == expected

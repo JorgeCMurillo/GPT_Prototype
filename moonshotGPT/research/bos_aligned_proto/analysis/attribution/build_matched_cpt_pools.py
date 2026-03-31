@@ -19,6 +19,10 @@ It supports two main selection modes:
 
 - `positive_pooled`: rank candidates by `positive_score_sum` from
   `row_summary_stepXXXXXXXX.csv`
+- `net_pooled`: rank candidates by the signed pooled score
+  `sum_j s(x_i, q_j)`, using `dense_scores_stepXXXXXXXX.npy` when available
+- `mean_score`: rank candidates by the signed mean row-summary score
+- `mean_abs_score`: rank candidates by the row-summary mean absolute score
 - `per_query`: rank candidates by one target-specific row of the dense score
   matrix, selected by `target_id`
 """
@@ -45,6 +49,7 @@ from .common.training_examples import (
 
 SUPPORTED_SCORE_MODES = (
     "positive_pooled",
+    "net_pooled",
     "mean_score",
     "mean_abs_score",
     "per_query",
@@ -108,6 +113,24 @@ def _score_mode_source_column(score_mode: str) -> str:
             f"score_mode={score_mode!r} does not map to a row-summary column; "
             f"expected one of {tuple(SCORE_MODE_TO_ROW_SUMMARY_COLUMN)}"
         ) from exc
+
+
+def _load_dense_scores_matrix(artifacts: StepArtifactPaths, *, expected_candidates: int) -> np.ndarray:
+    if artifacts.dense_scores_path is None:
+        raise FileNotFoundError(
+            "This score mode requires dense scores. Re-run attribution with --write_dense_scores."
+        )
+    dense_scores = np.load(artifacts.dense_scores_path)
+    if dense_scores.ndim != 2:
+        raise ValueError(
+            f"Expected dense score matrix to be 2D, got shape {dense_scores.shape} from {artifacts.dense_scores_path}"
+        )
+    if dense_scores.shape[1] != int(expected_candidates):
+        raise ValueError(
+            "Dense-score candidate dimension does not match row summary ordering: "
+            f"{dense_scores.shape[1]} vs {expected_candidates}"
+        )
+    return np.asarray(dense_scores, dtype=np.float64)
 
 
 def _resolve_source_candidate_kind(frame: pd.DataFrame) -> CandidateKind:
@@ -221,35 +244,55 @@ def load_candidate_score_frame(
     frame["selection_score"] = np.nan
     frame["selection_target_id"] = None
 
+    if score_mode == "net_pooled":
+        if artifacts.dense_scores_path is not None:
+            dense_scores = _load_dense_scores_matrix(artifacts, expected_candidates=len(frame))
+            frame["selection_score"] = dense_scores.sum(axis=0)
+            frame.attrs["selection_source"] = {
+                "kind": "dense_scores",
+                "pooling": "sum_signed",
+            }
+            return frame
+        source_column = "mean_score"
+        if source_column not in frame.columns:
+            raise ValueError(
+                f"Row summary does not contain {source_column!r}. Available columns: {sorted(frame.columns.tolist())}"
+            )
+        frame["selection_score"] = frame[source_column].astype(float)
+        if "target_count" in frame.columns and frame["target_count"].notna().all():
+            frame["selection_score"] = frame["selection_score"] * frame["target_count"].astype(float)
+            frame.attrs["selection_source"] = {
+                "kind": "row_summary",
+                "column": source_column,
+                "pooling": "sum_signed_via_mean_times_target_count",
+            }
+        else:
+            # When target_count is unavailable, mean_score is still ranking-equivalent
+            # to the signed pooled sum as long as all candidates share the same query set.
+            frame.attrs["selection_source"] = {
+                "kind": "row_summary",
+                "column": source_column,
+                "pooling": "mean_signed_proxy",
+            }
+        return frame
+
     if score_mode == "per_query":
         if not target_id:
             raise ValueError("score_mode='per_query' requires --target_id")
-        if artifacts.dense_scores_path is None:
-            raise FileNotFoundError(
-                "Per-query selection requires dense scores. Re-run attribution with --write_dense_scores."
-            )
         if artifacts.target_items_path is None:
             raise FileNotFoundError(
                 f"Per-query selection requires target_items.jsonl under {Path(attribution_dir).expanduser().resolve()}"
             )
-        dense_scores = np.load(artifacts.dense_scores_path)
-        if dense_scores.ndim != 2:
-            raise ValueError(
-                f"Expected dense score matrix to be 2D, got shape {dense_scores.shape} from {artifacts.dense_scores_path}"
-            )
+        dense_scores = _load_dense_scores_matrix(artifacts, expected_candidates=len(frame))
         target_items = _load_jsonl(artifacts.target_items_path)
         target_ids = [str(row["target_id"]) for row in target_items]
         try:
             target_index = target_ids.index(str(target_id))
         except ValueError as exc:
             raise ValueError(f"target_id={target_id!r} was not found in {artifacts.target_items_path}") from exc
-        if dense_scores.shape[1] != len(frame):
-            raise ValueError(
-                "Dense-score candidate dimension does not match row summary ordering: "
-                f"{dense_scores.shape[1]} vs {len(frame)}"
-            )
-        frame["selection_score"] = np.asarray(dense_scores[target_index], dtype=np.float64)
+        frame["selection_score"] = dense_scores[target_index]
         frame["selection_target_id"] = str(target_id)
+        frame.attrs["selection_source"] = {"kind": "dense_scores", "target_id": str(target_id)}
         return frame
 
     source_column = _score_mode_source_column(score_mode)
@@ -258,6 +301,7 @@ def load_candidate_score_frame(
             f"Row summary does not contain {source_column!r}. Available columns: {sorted(frame.columns.tolist())}"
         )
     frame["selection_score"] = frame[source_column].astype(float)
+    frame.attrs["selection_source"] = {"kind": "row_summary", "column": source_column}
     return frame
 
 
@@ -569,6 +613,13 @@ def build_matched_cpt_pools(
 
     summary_path = output_root / "summary.json"
     balance_report = _build_balance_report(treated=treated, control=control, pairings=pairings)
+    selection_source = scored.attrs.get("selection_source")
+    if not isinstance(selection_source, dict):
+        selection_source = (
+            {"kind": "dense_scores", "target_id": target_id}
+            if score_mode == "per_query"
+            else {"kind": "row_summary", "column": _score_mode_source_column(score_mode)}
+        )
     write_json(
         summary_path,
         {
@@ -589,11 +640,7 @@ def build_matched_cpt_pools(
             + int((pairings["match_level"] == "exact_shard").sum()),
             "relaxed_matches": int((pairings["match_level"] == "matched_kind_tokens_below_threshold").sum())
             + int((pairings["match_level"] == "matched_kind_tokens").sum()),
-            "selection_source": (
-                {"kind": "dense_scores", "target_id": target_id}
-                if score_mode == "per_query"
-                else {"kind": "row_summary", "column": _score_mode_source_column(score_mode)}
-            ),
+            "selection_source": selection_source,
             "source_candidate_kind": str(source_candidate_kind),
             "materialized_format": "exact_window_row_packed",
             "balance_report": balance_report,
