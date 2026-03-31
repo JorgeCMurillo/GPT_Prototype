@@ -2,8 +2,8 @@
 """Evaluate a Hugging Face causal language model on HellaSwag.
 
 Usage examples:
-  python hellaswag_eval.py --model gpt2
-  python hellaswag_eval.py --model /path/to/local/checkpoint --batch-size 32 --max-examples 1000
+  python evaluation/hellaswag.py --model gpt2
+  python evaluation/hellaswag.py --model /path/to/local/checkpoint --batch-size 32 --max-examples 1000
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(Path(__file__).resolve().parent / "hellaswag_eval_results"),
+        default=str(Path(__file__).resolve().parent.parent / "hellaswag_eval_results"),
         help="Directory for saved evaluation results",
     )
     parser.add_argument(

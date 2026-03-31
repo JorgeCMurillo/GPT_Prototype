@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# moonshotGPT artifacts and large data
+moonshotGPT/experiments/
+moonshotGPT/fineweb_edu_10B/
+moonshotGPT/fineweb_edu_10B_bosrow/
+moonshotGPT/ref_loss_gpt2m_*/
+moonshotGPT/*.bin
+moonshotGPT/*.log
+moonshotGPT/openai_key.txt
+moonshotGPT/ewok_fast_jsonl*.zip

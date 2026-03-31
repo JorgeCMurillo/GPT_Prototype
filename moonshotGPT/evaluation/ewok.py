@@ -115,8 +115,9 @@ _LEGACY_SRC = Path(
     "/home/jorge/tokenPred/babylm_10m/test_eval/evaluation-pipeline-2025/evaluation_data/fast_eval/ewok_fast"
 )
 _THIS_DIR = Path(__file__).resolve().parent
-_DEFAULT_ZIP = _THIS_DIR / "ewok_fast_jsonl.zip"
-_DEFAULT_DIR = _THIS_DIR / "ewok_fast"
+_PROJECT_DIR = _THIS_DIR.parent
+_DEFAULT_ZIP = _PROJECT_DIR / "ewok_fast_jsonl.zip"
+_DEFAULT_DIR = _PROJECT_DIR / "ewok_fast"
 _DEFAULT_ZIP_PASSWORD = os.environ.get("EWOK_ZIP_PASSWORD", "ew2026")
 
 
