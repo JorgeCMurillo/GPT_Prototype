@@ -34,6 +34,16 @@ from .cpt_ablation import (
 from .plot_cpt_ablation import generate_ablation_plots
 
 
+def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool = True):
+    if not enabled:
+        return None
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return None
+    return tqdm(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=leave)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -92,6 +102,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Override ablation warmup. By default the runner uses 5% of ablation steps.",
+    )
+    parser.add_argument(
+        "--no_progress",
+        action="store_false",
+        dest="show_progress",
+        help="Disable the outer ablation tqdm progress bar.",
     )
     parser.add_argument(
         "--baseline_device",
@@ -170,48 +186,77 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"manifest: {manifest_path}")
         return 0
 
-    print("running baseline EWoK evaluation for the base checkpoint")
-    baseline_artifacts = evaluate_checkpoint_baseline(
-        checkpoint_dir=args.base_ckpt,
-        output_dir=output_dir / "baseline",
-        ewok_batch_size=int(args.ewok_batch_size),
-        metric_name=str(args.metric_name),
-        device=args.baseline_device,
+    progress = _build_tqdm(
+        enabled=bool(args.show_progress),
+        total=len(specs) + 3,
+        desc="TrackStar CPT ablation",
+        unit="stage",
+        leave=True,
     )
-    manifest["baseline"] = {key: str(value) for key, value in baseline_artifacts.items()}
-    write_json(manifest_path, manifest)
-
-    run_records = []
-    for index, spec in enumerate(specs, start=1):
-        print(
-            f"[{index}/{len(specs)}] arm={spec.arm} lr={spec.learning_rate:.12g} "
-            f"seed={spec.seed} max_steps={spec.budget.max_train_steps}"
+    try:
+        if progress is not None:
+            progress.set_postfix_str("baseline")
+        print("running baseline EWoK evaluation for the base checkpoint")
+        baseline_artifacts = evaluate_checkpoint_baseline(
+            checkpoint_dir=args.base_ckpt,
+            output_dir=output_dir / "baseline",
+            ewok_batch_size=int(args.ewok_batch_size),
+            metric_name=str(args.metric_name),
+            device=args.baseline_device,
         )
-        run_record = launch_training_run(spec, dry_run=False)
-        run_records.append(run_record)
-        manifest["run_records"] = run_records
+        manifest["baseline"] = {key: str(value) for key, value in baseline_artifacts.items()}
         write_json(manifest_path, manifest)
+        if progress is not None:
+            progress.update(1)
 
-    aggregation_outputs = run_ablation_aggregation(
-        output_dir=output_dir,
-        run_records=run_records,
-        baseline_summary_path=baseline_artifacts["summary_path"],
-        metric_name=str(args.metric_name),
-    )
-    manifest["aggregation_outputs"] = {key: str(value) for key, value in aggregation_outputs.items()}
-    write_json(manifest_path, manifest)
+        run_records = []
+        for index, spec in enumerate(specs, start=1):
+            if progress is not None:
+                progress.set_postfix_str(
+                    f"run {index}/{len(specs)} {spec.arm} lr={spec.learning_rate:.12g} seed={spec.seed}"
+                )
+            print(
+                f"[{index}/{len(specs)}] arm={spec.arm} lr={spec.learning_rate:.12g} "
+                f"seed={spec.seed} max_steps={spec.budget.max_train_steps}"
+            )
+            run_record = launch_training_run(spec, dry_run=False)
+            run_records.append(run_record)
+            manifest["run_records"] = run_records
+            write_json(manifest_path, manifest)
+            if progress is not None:
+                progress.update(1)
 
-    plot_outputs = generate_ablation_plots(
-        ablation_dir=output_dir,
-        output_dir=output_dir / "plots",
-        group_by=str(args.plot_group_by),
-        reduction=str(args.plot_reduction),
-        metric_name=str(args.metric_name),
-        x_axis=str(args.plot_x_axis),
-        dpi=int(args.dpi),
-    )
-    manifest["plot_outputs"] = {key: str(value) for key, value in plot_outputs.items()}
-    write_json(manifest_path, manifest)
+        if progress is not None:
+            progress.set_postfix_str("aggregation")
+        aggregation_outputs = run_ablation_aggregation(
+            output_dir=output_dir,
+            run_records=run_records,
+            baseline_summary_path=baseline_artifacts["summary_path"],
+            metric_name=str(args.metric_name),
+        )
+        manifest["aggregation_outputs"] = {key: str(value) for key, value in aggregation_outputs.items()}
+        write_json(manifest_path, manifest)
+        if progress is not None:
+            progress.update(1)
+
+        if progress is not None:
+            progress.set_postfix_str("plotting")
+        plot_outputs = generate_ablation_plots(
+            ablation_dir=output_dir,
+            output_dir=output_dir / "plots",
+            group_by=str(args.plot_group_by),
+            reduction=str(args.plot_reduction),
+            metric_name=str(args.metric_name),
+            x_axis=str(args.plot_x_axis),
+            dpi=int(args.dpi),
+        )
+        manifest["plot_outputs"] = {key: str(value) for key, value in plot_outputs.items()}
+        write_json(manifest_path, manifest)
+        if progress is not None:
+            progress.update(1)
+    finally:
+        if progress is not None:
+            progress.close()
 
     print(f"ablation manifest: {manifest_path}")
     print(f"aggregation summary: {aggregation_outputs['summary_path']}")

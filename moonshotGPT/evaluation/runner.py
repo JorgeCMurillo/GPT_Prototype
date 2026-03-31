@@ -12,12 +12,20 @@ from typing import Any, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-try:
-    from attention_compat import sdpa_kernel
-except ImportError:
-    from moonshotGPT.attention_compat import sdpa_kernel
+from torch.nn.attention import sdpa_kernel
 
 from .ewok import BABYLM_COMPLETION_CHOICE, EWOK_CONTEXT_SENSITIVITY
+
+
+def _normalize_ewok_reductions(value: str) -> tuple[str, ...]:
+    raw = str(value).strip().lower()
+    if raw == "mean":
+        return ("mean",)
+    if raw == "sum":
+        return ("sum",)
+    if raw == "both":
+        return ("sum", "mean")
+    raise ValueError(f"Unsupported ewok_reductions={value!r}; expected 'mean', 'sum', or 'both'.")
 
 
 def run_parallel_validation(
@@ -646,6 +654,7 @@ def run_ewok_eval_step(
     tokenizer,
     evaluate_fn,
     ewok_batch_size: int,
+    ewok_reductions: str = "mean",
     opt_step: int,
     last_train_loss,
     loss_val: float,
@@ -673,95 +682,146 @@ def run_ewok_eval_step(
     if accelerator.is_main_process:
         print("starting EWoK evaluation on main process")
         with torch.no_grad():
-            metrics_by_method_sum, per_item_sum = _evaluate_ewok_all_methods(
-                evaluate_fn,
-                accelerator.unwrap_model(model),
-                tokenizer,
-                batch_size=ewok_batch_size,
-                score_reduction="sum",
+            reductions = _normalize_ewok_reductions(ewok_reductions)
+            reduction_results: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+            for reduction in reductions:
+                reduction_results[reduction] = _evaluate_ewok_all_methods(
+                    evaluate_fn,
+                    accelerator.unwrap_model(model),
+                    tokenizer,
+                    batch_size=ewok_batch_size,
+                    score_reduction=reduction,
+                )
+
+            metrics_by_method_mean, per_item_mean = reduction_results.get("mean", (None, None))
+            metrics_by_method_sum, per_item_sum = reduction_results.get("sum", (None, None))
+
+            babylm_mean = None if metrics_by_method_mean is None else metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
+            babylm_sum = None if metrics_by_method_sum is None else metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
+            context_mean = None if metrics_by_method_mean is None else metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
+            context_sum = None if metrics_by_method_sum is None else metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
+
+            eval_off_mean = None if babylm_mean is None else babylm_mean["domain_scores_official"]
+            eval_full_mean = None if babylm_mean is None else babylm_mean["domain_scores_full"]
+            eval_margin_stats_mean = None if babylm_mean is None else babylm_mean.get("domain_margin_stats")
+            eval_off_sum = None if babylm_sum is None else babylm_sum["domain_scores_official"]
+            eval_full_sum = None if babylm_sum is None else babylm_sum["domain_scores_full"]
+            eval_margin_stats_sum = None if babylm_sum is None else babylm_sum.get("domain_margin_stats")
+            eval_by_category_full_mean = (
+                None
+                if per_item_mean is None
+                else _aggregate_eval_full_by_category(
+                    per_item_mean,
+                    ewok_row_category_lookup,
+                    ewok_category_columns,
+                )
             )
-            metrics_by_method_mean, per_item_mean = _evaluate_ewok_all_methods(
-                evaluate_fn,
-                accelerator.unwrap_model(model),
-                tokenizer,
-                batch_size=ewok_batch_size,
-                score_reduction="mean",
-            )
-            babylm_sum = metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
-            babylm_mean = metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
-            context_sum = metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
-            context_mean = metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
-            eval_off_sum = babylm_sum["domain_scores_official"]
-            eval_full_sum = babylm_sum["domain_scores_full"]
-            eval_margin_stats_sum = babylm_sum.get("domain_margin_stats")
-            eval_off_mean = babylm_mean["domain_scores_official"]
-            eval_full_mean = babylm_mean["domain_scores_full"]
-            eval_margin_stats_mean = babylm_mean.get("domain_margin_stats")
-            eval_by_category_full_sum = _aggregate_eval_full_by_category(
-                per_item_sum,
-                ewok_row_category_lookup,
-                ewok_category_columns,
-            )
-            eval_by_category_full_mean = _aggregate_eval_full_by_category(
-                per_item_mean,
-                ewok_row_category_lookup,
-                ewok_category_columns,
+            eval_by_category_full_sum = (
+                None
+                if per_item_sum is None
+                else _aggregate_eval_full_by_category(
+                    per_item_sum,
+                    ewok_row_category_lookup,
+                    ewok_category_columns,
+                )
             )
 
-        for r in per_item_sum:
-            rr = dict(r)
-            rr.update(
-                {
-                    "type": "ewok_item",
-                    "step": int(opt_step),
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            append_jsonl_fn(ewok_items_path, rr)
-        for r in per_item_mean:
-            rr = dict(r)
-            rr.update(
-                {
-                    "type": "ewok_item_mean",
-                    "step": int(opt_step),
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            append_jsonl_fn(ewok_items_path, rr)
+        timestamp = datetime.now().isoformat()
+        if per_item_sum is not None:
+            for r in per_item_sum:
+                rr = dict(r)
+                rr.update(
+                    {
+                        "type": "ewok_item",
+                        "step": int(opt_step),
+                        "timestamp": timestamp,
+                    }
+                )
+                append_jsonl_fn(ewok_items_path, rr)
+        if per_item_mean is not None:
+            for r in per_item_mean:
+                rr = dict(r)
+                rr.update(
+                    {
+                        "type": "ewok_item_mean",
+                        "step": int(opt_step),
+                        "timestamp": timestamp,
+                    }
+                )
+                append_jsonl_fn(ewok_items_path, rr)
+
+        primary_reduction = "mean" if "mean" in reductions else reductions[0]
+        primary_official = eval_off_mean if primary_reduction == "mean" else eval_off_sum
+        primary_full = eval_full_mean if primary_reduction == "mean" else eval_full_sum
+        primary_margin_stats = eval_margin_stats_mean if primary_reduction == "mean" else eval_margin_stats_sum
+        primary_context = context_mean if primary_reduction == "mean" else context_sum
 
         record = {
             "step": int(opt_step),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
             "train_loss_last": float(last_train_loss) if last_train_loss is not None else float(loss_val),
             "lr": float(last_lr) if last_lr is not None else get_current_lr_fn(optimizer),
             "grad_norm_l2": float(last_grad_norm) if last_grad_norm is not None else None,
             "param_norm_l2": float(last_param_norm) if last_param_norm is not None else None,
             "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
-            # Keep these keys as backward-compatible aliases for sum-reduction.
-            "eval_official": to_jsonable_fn(eval_off_sum),
-            "eval_full": to_jsonable_fn(eval_full_sum),
-            "eval_official_sum": to_jsonable_fn(eval_off_sum),
-            "eval_full_sum": to_jsonable_fn(eval_full_sum),
-            "eval_official_mean": to_jsonable_fn(eval_off_mean),
-            "eval_full_mean": to_jsonable_fn(eval_full_mean),
-            # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
-            "eval_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
-            "eval_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
-            "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
-            "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
-            "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
-            "eval_babylm_completion_choice_official": to_jsonable_fn(eval_off_sum),
-            "eval_babylm_completion_choice_full": to_jsonable_fn(eval_full_sum),
-            "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
-            "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
-            "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
-            "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
-            "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
-            "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
-            "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
-            "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
-            "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+            "eval_official": to_jsonable_fn(primary_official),
+            "eval_full": to_jsonable_fn(primary_full),
+            "eval_margin_stats": to_jsonable_fn(primary_margin_stats),
+            "eval_babylm_completion_choice_official": to_jsonable_fn(primary_official),
+            "eval_babylm_completion_choice_full": to_jsonable_fn(primary_full),
+            "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(primary_margin_stats),
+            "ewok_reductions": list(reductions),
+            "ewok_primary_reduction": primary_reduction,
         }
+        if primary_context is not None:
+            record.update(
+                {
+                    "eval_context_sensitivity_official": to_jsonable_fn(
+                        primary_context["domain_scores_official"]
+                    ),
+                    "eval_context_sensitivity_full": to_jsonable_fn(
+                        primary_context["domain_scores_full"]
+                    ),
+                    "eval_context_sensitivity_margin_stats": to_jsonable_fn(
+                        primary_context.get("domain_margin_stats")
+                    ),
+                    "eval_ewok_paper_context_sensitivity_official": to_jsonable_fn(
+                        primary_context["domain_scores_official"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_full": to_jsonable_fn(
+                        primary_context["domain_scores_full"]
+                    ),
+                    "eval_ewok_paper_context_sensitivity_margin_stats": to_jsonable_fn(
+                        primary_context.get("domain_margin_stats")
+                    ),
+                }
+            )
+        if eval_off_sum is not None:
+            record.update(
+                {
+                    "eval_official_sum": to_jsonable_fn(eval_off_sum),
+                    "eval_full_sum": to_jsonable_fn(eval_full_sum),
+                    "eval_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+                    "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+                    "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
+                    "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
+                    "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+                    "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+                }
+            )
+        if eval_off_mean is not None:
+            record.update(
+                {
+                    "eval_official_mean": to_jsonable_fn(eval_off_mean),
+                    "eval_full_mean": to_jsonable_fn(eval_full_mean),
+                    "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+                    "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+                    "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
+                    "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
+                    "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+                    "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+                }
+            )
         if context_sum is not None:
             record.update(
                 {
@@ -842,6 +902,7 @@ def run_final_ewok_eval_main_process(
     tokenizer,
     evaluate_fn,
     ewok_batch_size: int,
+    ewok_reductions: str = "mean",
     opt_step: int,
     optimizer,
     tokens_seen_local_total: int,
@@ -862,93 +923,143 @@ def run_final_ewok_eval_main_process(
     model.eval()
     accelerator.unwrap_model(model).eval()
     with torch.no_grad():
-        metrics_by_method_sum, per_item_sum = _evaluate_ewok_all_methods(
-            evaluate_fn,
-            accelerator.unwrap_model(model),
-            tokenizer,
-            batch_size=ewok_batch_size,
-            score_reduction="sum",
+        reductions = _normalize_ewok_reductions(ewok_reductions)
+        reduction_results: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+        for reduction in reductions:
+            reduction_results[reduction] = _evaluate_ewok_all_methods(
+                evaluate_fn,
+                accelerator.unwrap_model(model),
+                tokenizer,
+                batch_size=ewok_batch_size,
+                score_reduction=reduction,
+            )
+
+        metrics_by_method_mean, per_item_mean = reduction_results.get("mean", (None, None))
+        metrics_by_method_sum, per_item_sum = reduction_results.get("sum", (None, None))
+
+        babylm_mean = None if metrics_by_method_mean is None else metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
+        babylm_sum = None if metrics_by_method_sum is None else metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
+        context_mean = None if metrics_by_method_mean is None else metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
+        context_sum = None if metrics_by_method_sum is None else metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
+        eval_off_mean = None if babylm_mean is None else babylm_mean["domain_scores_official"]
+        eval_full_mean = None if babylm_mean is None else babylm_mean["domain_scores_full"]
+        eval_margin_stats_mean = None if babylm_mean is None else babylm_mean.get("domain_margin_stats")
+        eval_off_sum = None if babylm_sum is None else babylm_sum["domain_scores_official"]
+        eval_full_sum = None if babylm_sum is None else babylm_sum["domain_scores_full"]
+        eval_margin_stats_sum = None if babylm_sum is None else babylm_sum.get("domain_margin_stats")
+        eval_by_category_full_mean = (
+            None
+            if per_item_mean is None
+            else _aggregate_eval_full_by_category(
+                per_item_mean,
+                ewok_row_category_lookup,
+                ewok_category_columns,
+            )
         )
-        metrics_by_method_mean, per_item_mean = _evaluate_ewok_all_methods(
-            evaluate_fn,
-            accelerator.unwrap_model(model),
-            tokenizer,
-            batch_size=ewok_batch_size,
-            score_reduction="mean",
-        )
-        babylm_sum = metrics_by_method_sum[BABYLM_COMPLETION_CHOICE]
-        babylm_mean = metrics_by_method_mean[BABYLM_COMPLETION_CHOICE]
-        context_sum = metrics_by_method_sum.get(EWOK_CONTEXT_SENSITIVITY)
-        context_mean = metrics_by_method_mean.get(EWOK_CONTEXT_SENSITIVITY)
-        eval_off_sum = babylm_sum["domain_scores_official"]
-        eval_full_sum = babylm_sum["domain_scores_full"]
-        eval_margin_stats_sum = babylm_sum.get("domain_margin_stats")
-        eval_off_mean = babylm_mean["domain_scores_official"]
-        eval_full_mean = babylm_mean["domain_scores_full"]
-        eval_margin_stats_mean = babylm_mean.get("domain_margin_stats")
-        eval_by_category_full_sum = _aggregate_eval_full_by_category(
-            per_item_sum,
-            ewok_row_category_lookup,
-            ewok_category_columns,
-        )
-        eval_by_category_full_mean = _aggregate_eval_full_by_category(
-            per_item_mean,
-            ewok_row_category_lookup,
-            ewok_category_columns,
+        eval_by_category_full_sum = (
+            None
+            if per_item_sum is None
+            else _aggregate_eval_full_by_category(
+                per_item_sum,
+                ewok_row_category_lookup,
+                ewok_category_columns,
+            )
         )
 
-    for r in per_item_sum:
-        rr = dict(r)
-        rr.update(
-            {
-                "type": "ewok_item_final",
-                "step": int(opt_step),
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-        append_jsonl_fn(ewok_items_path, rr)
-    for r in per_item_mean:
-        rr = dict(r)
-        rr.update(
-            {
-                "type": "ewok_item_final_mean",
-                "step": int(opt_step),
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-        append_jsonl_fn(ewok_items_path, rr)
+    timestamp = datetime.now().isoformat()
+    if per_item_sum is not None:
+        for r in per_item_sum:
+            rr = dict(r)
+            rr.update(
+                {
+                    "type": "ewok_item_final",
+                    "step": int(opt_step),
+                    "timestamp": timestamp,
+                }
+            )
+            append_jsonl_fn(ewok_items_path, rr)
+    if per_item_mean is not None:
+        for r in per_item_mean:
+            rr = dict(r)
+            rr.update(
+                {
+                    "type": "ewok_item_final_mean",
+                    "step": int(opt_step),
+                    "timestamp": timestamp,
+                }
+            )
+            append_jsonl_fn(ewok_items_path, rr)
+
+    primary_reduction = "mean" if "mean" in reductions else reductions[0]
+    primary_official = eval_off_mean if primary_reduction == "mean" else eval_off_sum
+    primary_full = eval_full_mean if primary_reduction == "mean" else eval_full_sum
+    primary_margin_stats = eval_margin_stats_mean if primary_reduction == "mean" else eval_margin_stats_sum
+    primary_context = context_mean if primary_reduction == "mean" else context_sum
 
     record = {
         "step": int(opt_step),
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timestamp,
         "final": True,
         "lr": get_current_lr_fn(optimizer),
         "tokens_seen_global_approx": int(tokens_seen_local_total * accelerator.num_processes),
-        # Keep these keys as backward-compatible aliases for sum-reduction.
-        "eval_official": to_jsonable_fn(eval_off_sum),
-        "eval_full": to_jsonable_fn(eval_full_sum),
-        "eval_official_sum": to_jsonable_fn(eval_off_sum),
-        "eval_full_sum": to_jsonable_fn(eval_full_sum),
-        "eval_official_mean": to_jsonable_fn(eval_off_mean),
-        "eval_full_mean": to_jsonable_fn(eval_full_mean),
-        # Margin stats include mean_signed_m / mean_abs_m per domain and global average.
-        "eval_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
-        "eval_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
-        "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
-        "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
-        "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
-        "eval_babylm_completion_choice_official": to_jsonable_fn(eval_off_sum),
-        "eval_babylm_completion_choice_full": to_jsonable_fn(eval_full_sum),
-        "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
-        "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
-        "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
-        "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
-        "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(eval_margin_stats_sum),
-        "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
-        "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
-        "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
-        "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+        "eval_official": to_jsonable_fn(primary_official),
+        "eval_full": to_jsonable_fn(primary_full),
+        "eval_margin_stats": to_jsonable_fn(primary_margin_stats),
+        "eval_babylm_completion_choice_official": to_jsonable_fn(primary_official),
+        "eval_babylm_completion_choice_full": to_jsonable_fn(primary_full),
+        "eval_babylm_completion_choice_margin_stats": to_jsonable_fn(primary_margin_stats),
+        "ewok_reductions": list(reductions),
+        "ewok_primary_reduction": primary_reduction,
     }
+    if primary_context is not None:
+        record.update(
+            {
+                "eval_context_sensitivity_official": to_jsonable_fn(
+                    primary_context["domain_scores_official"]
+                ),
+                "eval_context_sensitivity_full": to_jsonable_fn(
+                    primary_context["domain_scores_full"]
+                ),
+                "eval_context_sensitivity_margin_stats": to_jsonable_fn(
+                    primary_context.get("domain_margin_stats")
+                ),
+                "eval_ewok_paper_context_sensitivity_official": to_jsonable_fn(
+                    primary_context["domain_scores_official"]
+                ),
+                "eval_ewok_paper_context_sensitivity_full": to_jsonable_fn(
+                    primary_context["domain_scores_full"]
+                ),
+                "eval_ewok_paper_context_sensitivity_margin_stats": to_jsonable_fn(
+                    primary_context.get("domain_margin_stats")
+                ),
+            }
+        )
+    if eval_off_sum is not None:
+        record.update(
+            {
+                "eval_official_sum": to_jsonable_fn(eval_off_sum),
+                "eval_full_sum": to_jsonable_fn(eval_full_sum),
+                "eval_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+                "eval_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+                "eval_babylm_completion_choice_official_sum": to_jsonable_fn(eval_off_sum),
+                "eval_babylm_completion_choice_full_sum": to_jsonable_fn(eval_full_sum),
+                "eval_babylm_completion_choice_margin_stats_sum": to_jsonable_fn(eval_margin_stats_sum),
+                "eval_babylm_completion_choice_by_category_full_sum": to_jsonable_fn(eval_by_category_full_sum),
+            }
+        )
+    if eval_off_mean is not None:
+        record.update(
+            {
+                "eval_official_mean": to_jsonable_fn(eval_off_mean),
+                "eval_full_mean": to_jsonable_fn(eval_full_mean),
+                "eval_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+                "eval_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+                "eval_babylm_completion_choice_official_mean": to_jsonable_fn(eval_off_mean),
+                "eval_babylm_completion_choice_full_mean": to_jsonable_fn(eval_full_mean),
+                "eval_babylm_completion_choice_margin_stats_mean": to_jsonable_fn(eval_margin_stats_mean),
+                "eval_babylm_completion_choice_by_category_full_mean": to_jsonable_fn(eval_by_category_full_mean),
+            }
+        )
     if context_sum is not None:
         record.update(
             {

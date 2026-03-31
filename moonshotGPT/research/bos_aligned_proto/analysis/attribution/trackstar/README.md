@@ -377,6 +377,16 @@ conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attri
 If you want to inspect the ablation plan without launching child training runs,
 add `--dry_run`.
 
+`run_cpt_ablation.py` now also shows an outer tqdm bar for:
+
+- baseline evaluation
+- each treated/control child run
+- aggregation
+- plotting
+
+The child trainer still prints its own logs inside each run. If you want the
+older quieter behavior, add `--no_progress`.
+
 To regenerate plots from an existing ablation directory:
 
 ```bash

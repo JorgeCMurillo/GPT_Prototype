@@ -389,6 +389,8 @@ def build_bos_trainer_command(
         str(int(ewok_every)),
         "--ewok_batch_size",
         str(int(ewok_batch_size)),
+        "--ewok_reductions",
+        "mean",
         "--save_every",
         "0",
         "--exposure_every",

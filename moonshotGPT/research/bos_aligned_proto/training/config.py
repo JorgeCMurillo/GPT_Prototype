@@ -20,7 +20,7 @@ _REPO_ROOT = os.path.dirname(_RESEARCH_ROOT)
 DEFAULT_EXPERIMENTS_DIR = os.path.join(_REPO_ROOT, "runs", "research", "bos_aligned_proto")
 
 CLI_DESCRIPTION = (
-    "Train GPT-2 from either raw token streams or exact BOS packed-index artifacts "
+    "Train GPT-2 from raw token streams, exact BOS rows, or BOS packed-index artifacts "
     "with token-budget accumulation, exposure logging, and EWoK/CORE evaluation."
 )
 
@@ -63,8 +63,18 @@ class TrainConfig:
     core_local_files_only: bool = False
     ewok_every: int = 250
     ewok_batch_size: int = 4
+    ewok_reductions: str = "mean"
     save_every: int = 2000
     exposure_every: int = 100
+    debug_trace_data: bool = False
+    debug_trace_steps: int = 10
+    debug_trace_output_dir: str = ""
+    debug_train_parity: bool = False
+    debug_overfit_batches: int = 0
+    debug_train_output_dir: str = ""
+    debug_compare_to: str = ""
+    debug_compute_update_norm: bool = False
+    debug_disable_fused_adamw: bool = False
     push_to_hub: bool = False
     skip_final_ewok: bool = False
     include_ewok_sum_plots: bool = False
@@ -78,9 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--loader_kind",
         type=str,
-        choices=("stream", "bos_packed_index"),
+        choices=("stream", "bos_row", "bos_packed_index"),
         default="bos_packed_index",
-        help="Training data backend: raw contiguous token stream or exact BOS packed-index rows.",
+        help="Training data backend: raw contiguous token stream, exact BOS rows, or exact BOS packed-index rows.",
     )
 
     parser.add_argument("--seed", type=int, default=42)
@@ -142,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Directory containing the selected training artifact. "
             "For --loader_kind=stream this is the raw token shard directory. "
+            "For --loader_kind=bos_row this is the row-packed artifact directory. "
             "For --loader_kind=bos_packed_index this is the packed-index artifact directory."
         ),
     )
@@ -274,6 +285,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Batch size inside EWoK evaluate()",
     )
     parser.add_argument(
+        "--ewok_reductions",
+        type=str,
+        choices=("mean", "sum", "both"),
+        default="mean",
+        help=(
+            "Which EWoK score reductions to compute and log. "
+            "'mean' is the default and only logs mean-reduction EWoK items; "
+            "'both' restores the older mean+sum behavior."
+        ),
+    )
+    parser.add_argument(
         "--save_every",
         type=int,
         default=2000,
@@ -284,6 +306,59 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=100,
         help="Log exposure meta every N optimizer steps (0 disables)",
+    )
+    parser.add_argument(
+        "--debug_trace_data",
+        action="store_true",
+        help=(
+            "Write per-rank JSONL traces of emitted training samples during the first "
+            "debug_trace_steps optimizer steps. Debug-only; does not change training semantics."
+        ),
+    )
+    parser.add_argument(
+        "--debug_trace_steps",
+        type=int,
+        default=10,
+        help="How many optimizer steps of train batches to trace when --debug_trace_data is enabled.",
+    )
+    parser.add_argument(
+        "--debug_trace_output_dir",
+        type=str,
+        default="",
+        help="Optional override for where per-rank data traces and overlap reports are written.",
+    )
+    parser.add_argument(
+        "--debug_train_parity",
+        action="store_true",
+        help="Enable JSONL training-parity debug logging plus summary generation.",
+    )
+    parser.add_argument(
+        "--debug_overfit_batches",
+        type=int,
+        default=0,
+        help="If >0, cache this many local train batches and replay them forever for tiny-overfit debugging.",
+    )
+    parser.add_argument(
+        "--debug_train_output_dir",
+        type=str,
+        default="",
+        help="Optional override for the debug-training artifact directory.",
+    )
+    parser.add_argument(
+        "--debug_compare_to",
+        type=str,
+        default="",
+        help="Optional path to another train_debug_rank*.jsonl log to diff against after the run.",
+    )
+    parser.add_argument(
+        "--debug_compute_update_norm",
+        action="store_true",
+        help="Compute per-step parameter update L2 norm. Debug-only and more expensive.",
+    )
+    parser.add_argument(
+        "--debug_disable_fused_adamw",
+        action="store_true",
+        help="Force non-fused AdamW in debug runs to help isolate optimizer drift.",
     )
 
     parser.add_argument("--push_to_hub", action="store_true")

@@ -1,6 +1,8 @@
 """Train GPT-style models from either raw token streams or exact BOS packed rows."""
 
 from dataclasses import asdict
+import hashlib
+import json
 import os, random, math, inspect, subprocess, sys
 from datetime import datetime
 from contextlib import nullcontext
@@ -33,6 +35,7 @@ _PROTO_ROOT = os.path.dirname(_THIS_DIR)
 _RESEARCH_ROOT = os.path.dirname(_PROTO_ROOT)
 _REPO_ROOT = os.path.dirname(_RESEARCH_ROOT)
 PLOT_STEP_METRICS_SCRIPT = os.path.join(_REPO_ROOT, "plot_step_metrics.py")
+ANALYZE_RANK_OVERLAP_SCRIPT = os.path.join(_REPO_ROOT, "analyze_rank_overlap.py")
 if _REPO_ROOT not in sys.path:
     sys.path.append(_REPO_ROOT)
 
@@ -57,6 +60,15 @@ except ImportError:
     )
 
 from shard_loader import make_dataloader as make_stream_dataloader
+
+try:
+    from research.bos_aligned_proto.pipeline.bos_row_loader import (
+        make_bos_row_dataloader,
+    )
+except ImportError:
+    from ..pipeline.bos_row_loader import (
+        make_bos_row_dataloader,
+    )
 
 try:
     from research.bos_aligned_proto.pipeline.bos_packed_index import (
@@ -155,6 +167,20 @@ from training_utils.resume_trim import (
     trim_run_logs_after_step,
     validate_replay_compatibility,
 )
+from training_utils.debug_parity import (
+    DebugParityConfig,
+    StepDebugRecord,
+    cache_debug_batches,
+    compute_update_norm_l2,
+    finalize_debug_outputs,
+    maybe_snapshot_parameters,
+    replay_cached_batches_with_index,
+    resolve_debug_paths,
+    summarize_batch,
+    write_debug_manifest,
+    write_step_debug_record,
+    yield_batches_with_index,
+)
 
 
 # -----------------------------
@@ -205,6 +231,7 @@ def build_llmc_style_optimizer(
     beta1: float,
     beta2: float,
     device: torch.device,
+    allow_fused: bool = True,
 ):
     param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
     decay_params = [p for _, p in param_dict.items() if p.dim() >= 2]
@@ -215,7 +242,7 @@ def build_llmc_style_optimizer(
     ]
 
     fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-    use_fused = fused_available and device.type == "cuda"
+    use_fused = fused_available and device.type == "cuda" and allow_fused
     optimizer_kwargs = {"fused": use_fused} if fused_available else {}
 
     optimizer = AdamW(
@@ -261,6 +288,206 @@ def _flatten_meta(meta_obj):
         for x in meta_obj:
             out.extend(_flatten_meta(x))
     return out
+
+
+def _count_tokens_in_bin(path: str) -> int:
+    nbytes = os.path.getsize(path)
+    if nbytes % 2 != 0:
+        raise ValueError(f"Token shard has odd byte size: {path}")
+    return nbytes // 2
+
+
+def _build_stream_global_offset_map(data_dir: str, split: str) -> dict[str, int]:
+    offsets: dict[str, int] = {}
+    running = 0
+    for name in sorted(os.listdir(data_dir)):
+        if not (name.startswith(f"{split}_") and name.endswith(".bin")):
+            continue
+        shard_path = os.path.abspath(os.path.join(data_dir, name))
+        offsets[shard_path] = running
+        offsets[name] = running
+        running += _count_tokens_in_bin(shard_path)
+    return offsets
+
+
+def _build_packed_global_offset_map(data_dir: str, split: str) -> dict[str, int]:
+    meta_path = os.path.join(data_dir, "meta.json")
+    virtual_shards_path = os.path.join(data_dir, f"{split}.virtual_shards.jsonl")
+    if not os.path.exists(meta_path) or not os.path.exists(virtual_shards_path):
+        return {}
+    meta = load_json(meta_path)
+    row_tokens = int(meta.get("row_tokens", 0) or 0)
+    if row_tokens <= 0:
+        return {}
+
+    offsets: dict[str, int] = {}
+    with open(virtual_shards_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            payload = json.loads(text)
+            shard_path = os.path.abspath(str(payload["shard_path"]))
+            shard_base = int(payload.get("row_start", 0)) * row_tokens
+            offsets[shard_path] = shard_base
+            offsets[os.path.basename(shard_path)] = shard_base
+    return offsets
+
+
+def _build_debug_global_offset_map(data_dir: str, split: str, loader_kind: str) -> dict[str, int]:
+    if loader_kind in {"stream", "bos_row"}:
+        return _build_stream_global_offset_map(data_dir=data_dir, split=split)
+    if loader_kind == "bos_packed_index":
+        return _build_packed_global_offset_map(data_dir=data_dir, split=split)
+    return {}
+
+
+def _optional_int(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if torch.is_tensor(value):
+        if value.numel() != 1:
+            return None
+        return int(value.item())
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _sample_offset_info(
+    *,
+    meta,
+    sample_in_batch: int,
+    seq_len: int,
+    global_offset_map: dict[str, int],
+) -> dict[str, int | str | None]:
+    if not isinstance(meta, dict):
+        return {
+            "shard_idx": None,
+            "shard_path": None,
+            "local_start_offset": None,
+            "local_end_offset": None,
+            "global_start_offset": None,
+            "global_end_offset": None,
+            "worker_id": None,
+            "num_workers": None,
+        }
+
+    shard_idx = _optional_int(meta.get("shard_idx"))
+    shard_path = meta.get("shard_path")
+    if shard_path is not None:
+        shard_path = str(shard_path)
+
+    row_tokens = _optional_int(meta.get("row_tokens"))
+    base_start = _optional_int(meta.get("start"))
+    worker_id = _optional_int(meta.get("worker_id"))
+    num_workers = _optional_int(meta.get("num_workers"))
+
+    if row_tokens is not None:
+        sample_spacing = int(row_tokens)
+        sample_span = int(row_tokens)
+    else:
+        sample_spacing = int(seq_len)
+        sample_span = int(seq_len + 1)
+
+    local_start = None
+    local_end = None
+    if base_start is not None:
+        local_start = int(base_start + sample_in_batch * sample_spacing)
+        local_end = int(local_start + sample_span)
+
+    global_start = None
+    global_end = None
+    if shard_path is not None and local_start is not None:
+        shard_key = os.path.abspath(shard_path)
+        shard_base = global_offset_map.get(shard_key)
+        if shard_base is None:
+            shard_base = global_offset_map.get(shard_path)
+        if shard_base is None:
+            shard_base = global_offset_map.get(os.path.basename(shard_path))
+        if shard_base is not None:
+            global_start = int(shard_base + local_start)
+            global_end = int(global_start + sample_span)
+
+    return {
+        "shard_idx": shard_idx,
+        "shard_path": shard_path,
+        "local_start_offset": local_start,
+        "local_end_offset": local_end,
+        "global_start_offset": global_start,
+        "global_end_offset": global_end,
+        "worker_id": worker_id,
+        "num_workers": num_workers,
+    }
+
+
+def _write_debug_batch_trace(
+    *,
+    handle,
+    input_ids,
+    labels,
+    meta,
+    loader_kind: str,
+    rank: int,
+    world_size: int,
+    global_step: int,
+    micro_step: int,
+    grad_accum_steps: int,
+    seq_len: int,
+    sample_index_start: int,
+    global_offset_map: dict[str, int],
+) -> int:
+    if handle is None:
+        return int(sample_index_start)
+    if not torch.is_tensor(input_ids) or not torch.is_tensor(labels):
+        return int(sample_index_start)
+
+    input_np = input_ids.detach().cpu().numpy()
+    label_np = labels.detach().cpu().numpy()
+    if input_np.ndim != 2 or label_np.ndim != 2:
+        return int(sample_index_start)
+
+    next_index = int(sample_index_start)
+    micro_step_in_step = int(micro_step % max(1, grad_accum_steps))
+
+    for sample_in_batch in range(int(input_np.shape[0])):
+        full_window = np.concatenate(
+            [
+                np.asarray(input_np[sample_in_batch], dtype=np.int64),
+                np.asarray(label_np[sample_in_batch, -1:], dtype=np.int64),
+            ],
+            axis=0,
+        )
+        offset_info = _sample_offset_info(
+            meta=meta if isinstance(meta, dict) else None,
+            sample_in_batch=sample_in_batch,
+            seq_len=seq_len,
+            global_offset_map=global_offset_map,
+        )
+        record = {
+            "type": "data_trace",
+            "loader_kind": str(loader_kind),
+            "rank": int(rank),
+            "world_size": int(world_size),
+            "global_step": int(global_step),
+            "micro_step": int(micro_step),
+            "micro_step_in_step": int(micro_step_in_step),
+            "batch_index": int(micro_step),
+            "sample_index": int(next_index),
+            "batch_position": int(sample_in_batch),
+            "sample_in_batch": int(sample_in_batch),
+            "sequence_length": int(full_window.size),
+            "input_length": int(input_np.shape[1]),
+            "sha1": hashlib.sha1(np.asarray(full_window, dtype=np.int64).tobytes()).hexdigest(),
+            **offset_info,
+        }
+        handle.write(json.dumps(record) + "\n")
+        next_index += 1
+
+    return int(next_index)
 
 def _has_stream_shards(path: str) -> bool:
     """Best-effort check for raw token stream shards."""
@@ -355,21 +582,53 @@ def main(cfg: TrainConfig) -> None:
     core_local_files_only = cfg.core_local_files_only
     ewok_every = cfg.ewok_every
     ewok_batch_size = cfg.ewok_batch_size
+    ewok_reductions = str(cfg.ewok_reductions)
     save_every = cfg.save_every
     exposure_every = cfg.exposure_every
+    debug_trace_data = bool(cfg.debug_trace_data)
+    debug_trace_steps = int(cfg.debug_trace_steps)
+    debug_trace_output_dir = str(cfg.debug_trace_output_dir).strip()
+    debug_train_parity = bool(cfg.debug_train_parity)
+    debug_overfit_batches = int(cfg.debug_overfit_batches)
+    debug_train_output_dir = str(cfg.debug_train_output_dir).strip()
+    debug_compare_to = str(cfg.debug_compare_to).strip()
+    debug_compute_update_norm = bool(cfg.debug_compute_update_norm)
+    debug_disable_fused_adamw = bool(cfg.debug_disable_fused_adamw)
     push_to_hub = cfg.push_to_hub
     skip_final_ewok = cfg.skip_final_ewok
     include_ewok_sum_plots = cfg.include_ewok_sum_plots
     init_from_ckpt = str(cfg.init_from_ckpt).strip()
     resume_from_run = str(cfg.resume_from_run).strip()
 
-    if loader_kind not in {"stream", "bos_packed_index"}:
+    if loader_kind not in {"stream", "bos_row", "bos_packed_index"}:
         raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
 
     if init_from_ckpt and resume_from_run:
         raise ValueError("Use only one of --init_from_ckpt or --resume_from_run, not both.")
     if init_from_ckpt and not os.path.isdir(init_from_ckpt):
         raise FileNotFoundError(f"--init_from_ckpt not found: {init_from_ckpt}")
+    if debug_trace_data and debug_trace_steps <= 0:
+        raise ValueError("--debug_trace_steps must be > 0 when --debug_trace_data is enabled.")
+    if debug_overfit_batches < 0:
+        raise ValueError(f"--debug_overfit_batches must be >= 0, got {debug_overfit_batches}")
+
+    debug_cfg = DebugParityConfig(
+        enabled=bool(
+            debug_train_parity
+            or debug_overfit_batches > 0
+            or bool(debug_train_output_dir)
+            or bool(debug_compare_to)
+            or bool(debug_compute_update_norm)
+            or bool(debug_disable_fused_adamw)
+        ),
+        overfit_batches=debug_overfit_batches,
+        output_dir=debug_train_output_dir,
+        compare_to=(os.path.abspath(debug_compare_to) if debug_compare_to else ""),
+        compute_update_norm=debug_compute_update_norm,
+        disable_fused_adamw=debug_disable_fused_adamw,
+    )
+    if debug_cfg.compare_to and not os.path.isfile(debug_cfg.compare_to):
+        raise FileNotFoundError(f"--debug_compare_to not found: {debug_cfg.compare_to}")
 
     set_all_seeds(seed)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -383,6 +642,8 @@ def main(cfg: TrainConfig) -> None:
     row_tokens = seq_len + 1
     virtual_shard_rows = None
     if loader_kind == "stream":
+        source_shards_fingerprint = fingerprint_source_shards(data_dir)
+    elif loader_kind == "bos_row":
         source_shards_fingerprint = fingerprint_source_shards(data_dir)
     elif loader_kind == "bos_packed_index":
         packed_index_meta = load_json(os.path.join(data_dir, "meta.json"))
@@ -430,7 +691,12 @@ def main(cfg: TrainConfig) -> None:
         resume_state = load_trainer_state(resume_ckpt_dir)
         out_dir = resume_run_dir
     else:
-        loader_tag = "stream" if loader_kind == "stream" else "bospackedindex"
+        if loader_kind == "stream":
+            loader_tag = "stream"
+        elif loader_kind == "bos_row":
+            loader_tag = "bosrow"
+        else:
+            loader_tag = "bospackedindex"
         run_name = (
             f"babygpt_fineweb_{loader_tag}_mbs{micro_batch_size}_T{seq_len}_"
             f"d{n_embd}_h{n_head}_L{n_layer}_"
@@ -455,6 +721,8 @@ def main(cfg: TrainConfig) -> None:
             n_head=n_head,
             n_layer=n_layer,
         )
+    if debug_cfg.enabled and debug_cfg.overfit_batches > 0 and resume_mode:
+        raise ValueError("Tiny-overfit replay mode does not support --resume_from_run.")
     analysis_plot_dir = os.path.join(out_dir, "plots_from_step_metrics")
 
     if accelerator.is_main_process:
@@ -462,20 +730,41 @@ def main(cfg: TrainConfig) -> None:
         os.makedirs(analysis_plot_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
+    rank_id = accelerator.process_index
+    debug_paths = resolve_debug_paths(
+        out_dir=out_dir,
+        output_dir_override=debug_cfg.output_dir,
+        rank=rank_id,
+    )
+    if debug_cfg.enabled and accelerator.is_main_process:
+        os.makedirs(debug_paths.root_dir, exist_ok=True)
+    accelerator.wait_for_everyone()
+
     # Logs
     exposures_dir = os.path.join(out_dir, "exposures")
     if exposure_every > 0 and accelerator.is_main_process:
         os.makedirs(exposures_dir, exist_ok=True)
+    debug_trace_dir = (
+        os.path.abspath(debug_trace_output_dir)
+        if debug_trace_output_dir
+        else os.path.join(out_dir, "debug_data_traces", f"from_step{int(resume_step_hint):07d}")
+    )
+    if debug_trace_data and accelerator.is_main_process:
+        os.makedirs(debug_trace_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
-    rank_id = accelerator.process_index
     exposure_path = os.path.join(exposures_dir, f"exposures_rank{rank_id:04d}.jsonl")
+    debug_trace_path = os.path.join(debug_trace_dir, f"data_trace_rank{rank_id:04d}.jsonl")
+    debug_trace_summary_path = os.path.join(debug_trace_dir, "overlap_summary.txt")
     scalars_path = os.path.join(out_dir, "scalars.jsonl")
     ewok_items_path = os.path.join(out_dir, "ewok_items.jsonl")
     hellaswag_metrics_path = os.path.join(out_dir, "hellaswag_metrics.jsonl")
     core_metrics_path = os.path.join(out_dir, "core_metrics.jsonl")
     metrics_path = os.path.join(out_dir, "step_metrics.json")
     run_config_path = os.path.join(out_dir, "run_config.json")
+    debug_jsonl_path = debug_paths.jsonl_path
+    if debug_cfg.enabled and os.path.exists(debug_jsonl_path):
+        os.remove(debug_jsonl_path)
 
     if accelerator.is_main_process:
         if resume_mode:
@@ -497,6 +786,20 @@ def main(cfg: TrainConfig) -> None:
                     "script": os.path.abspath(__file__),
                     "config": to_jsonable(asdict(cfg)),
                     "args": invocation_args,
+                },
+            )
+        if debug_trace_data:
+            atomic_write_json(
+                os.path.join(debug_trace_dir, "trace_manifest.json"),
+                {
+                    "created_at": datetime.now().isoformat(),
+                    "trace_dir": debug_trace_dir,
+                    "trace_glob": "data_trace_rank*.jsonl",
+                    "debug_trace_steps": int(debug_trace_steps),
+                    "loader_kind": str(loader_kind),
+                    "world_size": int(accelerator.num_processes),
+                    "data_dir": os.path.abspath(data_dir),
+                    "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
                 },
             )
 
@@ -574,8 +877,22 @@ def main(cfg: TrainConfig) -> None:
         print(f"ewok_batch_size             = {ewok_batch_size}")
         print(f"save_every                  = {save_every}")
         print(f"exposure_every              = {exposure_every}")
+        print(f"debug_trace_data            = {debug_trace_data}")
+        print(f"debug_trace_steps           = {debug_trace_steps}")
+        if debug_trace_data:
+            print(f"debug_trace_dir             = {debug_trace_dir}")
+        if debug_cfg.enabled:
+            print("---- Debug parity ----")
+            print(f"debug mode                  = {debug_cfg.mode}")
+            print(f"debug_overfit_batches       = {debug_cfg.overfit_batches}")
+            print(f"debug_compute_update_norm   = {debug_cfg.compute_update_norm}")
+            print(f"debug_disable_fused_adamw   = {debug_cfg.disable_fused_adamw}")
+            print(f"debug_output_dir            = {debug_paths.root_dir}")
+            print(f"debug_compare_to            = {debug_cfg.compare_to or '<none>'}")
+            print("----------------------")
         print(f"skip_final_ewok             = {skip_final_ewok}")
         print(f"include_ewok_sum_plots      = {include_ewok_sum_plots}")
+        print(f"ewok_reductions             = {ewok_reductions}")
 
     # Tokenizer
     tokenizer_source = "gpt2"
@@ -631,6 +948,31 @@ def main(cfg: TrainConfig) -> None:
             num_workers=max(0, min(num_workers, 2)),
             max_blocks=None,
             shard_by_rank=False,
+        )
+    elif loader_kind == "bos_row":
+        train_loader = make_bos_row_dataloader(
+            data_dir=data_dir,
+            split="train",
+            batch_size=micro_batch_size,
+            seq_len=seq_len,
+            shuffle_blocks=shuffle_blocks,
+            seed=seed,
+            num_workers=num_workers,
+            max_blocks=None,
+            shard_by_rank=True,
+            return_meta=True,
+        )
+        val_loader = make_bos_row_dataloader(
+            data_dir=data_dir,
+            split="val",
+            batch_size=micro_batch_size,
+            seq_len=seq_len,
+            shuffle_blocks=False,
+            seed=seed,
+            num_workers=max(0, min(num_workers, 2)),
+            max_blocks=None,
+            shard_by_rank=False,
+            return_meta=False,
         )
     elif loader_kind == "bos_packed_index":
         train_loader = make_bos_packed_index_dataloader(
@@ -701,6 +1043,7 @@ def main(cfg: TrainConfig) -> None:
         beta1=beta1,
         beta2=beta2,
         device=device,
+        allow_fused=not debug_cfg.disable_fused_adamw,
     )
     optimizer.zero_grad(set_to_none=True)
 
@@ -871,6 +1214,17 @@ def main(cfg: TrainConfig) -> None:
             )
             print(f"Saved checkpoint to {ckpt_dir}/")
 
+    debug_trace_global_offset_map = {}
+    debug_trace_handle = None
+    debug_trace_samples_written = 0
+    if debug_trace_data:
+        debug_trace_global_offset_map = _build_debug_global_offset_map(
+            data_dir=data_dir,
+            split="train",
+            loader_kind=loader_kind,
+        )
+        debug_trace_handle = open(debug_trace_path, "w", encoding="utf-8", buffering=1)
+
     # Training loop
     model.train()
     autocast_ctx = accelerator.autocast if hasattr(accelerator, "autocast") else nullcontext
@@ -891,7 +1245,16 @@ def main(cfg: TrainConfig) -> None:
             f"for this run ({micro_steps_total})."
         )
 
-    train_iter = iter(train_loader)
+    debug_cached_batches = []
+    debug_cached_batch_summaries = []
+    if debug_cfg.enabled and debug_cfg.overfit_batches > 0:
+        debug_cached_batches, debug_cached_batch_summaries = cache_debug_batches(
+            train_loader,
+            debug_cfg.overfit_batches,
+        )
+        train_iter = replay_cached_batches_with_index(debug_cached_batches)
+    else:
+        train_iter = yield_batches_with_index(train_loader)
     resume_fast_forward_stats = None
     if resume_mode and start_micro_step > 0:
         resume_fast_forward_stats = fast_forward_iterator_data_only(
@@ -911,6 +1274,27 @@ def main(cfg: TrainConfig) -> None:
                 "Resume dataloader fast-forward exhausted iterator early. "
                 "Replay state cannot be reconstructed safely."
             )
+
+    if debug_cfg.enabled and accelerator.is_main_process:
+        write_debug_manifest(
+            paths=debug_paths,
+            config=debug_cfg,
+            manifest={
+                "script_name": "research.bos_aligned_proto.training.trainer",
+                "rank_log_glob": "train_debug_rank*.jsonl",
+                "world_size": int(world_size),
+                "loader_kind": str(loader_kind),
+                "data_dir": os.path.abspath(data_dir),
+                "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
+                "resume_mode": bool(resume_mode),
+                "resume_step_hint": int(resume_step_hint),
+                "grad_accum_steps": int(grad_accum_steps),
+                "tokens_per_opt_step_global": int(effective_total_tokens),
+                "optimizer_use_fused": bool(use_fused),
+                "compare_to": (debug_cfg.compare_to or None),
+                "cached_batch_summaries_rank0": debug_cached_batch_summaries,
+            },
+        )
 
     pbar = tqdm(
         train_iter,
@@ -956,7 +1340,7 @@ def main(cfg: TrainConfig) -> None:
     opt_step_loss_sum = 0.0
     opt_step_loss_count = 0
 
-    for micro_step, batch in enumerate(pbar, start=start_micro_step):
+    for micro_step, (fixed_batch_index, batch) in enumerate(pbar, start=start_micro_step):
         if opt_step >= max_train_steps:
             break
 
@@ -966,6 +1350,36 @@ def main(cfg: TrainConfig) -> None:
         else:
             input_ids, labels = batch
             meta = None
+
+        debug_batch_summary = summarize_batch(batch) if debug_cfg.enabled else None
+        debug_opt_step_before = int(opt_step)
+        debug_optimizer_step_occurred = False
+        debug_lr_schedule_applied = False
+        debug_lr_before = None
+        debug_lr_after = None
+        debug_grad_norm_preclip = None
+        debug_grad_norm_postclip = None
+        debug_param_norm = None
+        debug_update_norm = None
+        debug_grad_accum_count = 0
+        debug_running_loss_mean = None
+
+        if debug_trace_handle is not None and int(opt_step) < int(debug_trace_steps):
+            debug_trace_samples_written = _write_debug_batch_trace(
+                handle=debug_trace_handle,
+                input_ids=input_ids,
+                labels=labels,
+                meta=meta,
+                loader_kind=loader_kind,
+                rank=accelerator.process_index,
+                world_size=accelerator.num_processes,
+                global_step=int(opt_step) + 1,
+                micro_step=int(micro_step),
+                grad_accum_steps=int(grad_accum_steps),
+                seq_len=int(seq_len),
+                sample_index_start=int(debug_trace_samples_written),
+                global_offset_map=debug_trace_global_offset_map,
+            )
 
         input_ids = input_ids.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
@@ -1005,6 +1419,8 @@ def main(cfg: TrainConfig) -> None:
                 loss_raw_item = float(loss_raw.detach().item())
                 opt_step_loss_sum += loss_raw_item
                 opt_step_loss_count += 1
+                debug_grad_accum_count = int(opt_step_loss_count)
+                debug_running_loss_mean = opt_step_loss_sum / max(1, opt_step_loss_count)
 
                 # Accelerate handles grad-accum loss scaling inside accelerator.backward().
                 loss = loss_raw
@@ -1012,6 +1428,8 @@ def main(cfg: TrainConfig) -> None:
             accelerator.backward(loss)
 
             if accelerator.sync_gradients:
+                debug_optimizer_step_occurred = True
+                debug_lr_schedule_applied = True
                 step_lr = get_llmc_lr(
                     step=opt_step,
                     learning_rate=learning_rate,
@@ -1024,6 +1442,7 @@ def main(cfg: TrainConfig) -> None:
 
                 # norms + lr before update
                 lr_before = get_current_lr(optimizer)
+                debug_lr_before = lr_before
 
                 if grad_clip > 0:
                     grad_norm_preclip = float(
@@ -1034,23 +1453,37 @@ def main(cfg: TrainConfig) -> None:
                     grad_norm_preclip = global_grad_norm_l2(model)
                     grad_norm_postclip = None
 
+                debug_grad_norm_preclip = grad_norm_preclip
+                debug_grad_norm_postclip = grad_norm_postclip
+                debug_param_snapshot = None
+                if debug_cfg.compute_update_norm and accelerator.is_main_process:
+                    debug_param_snapshot = maybe_snapshot_parameters(
+                        accelerator.unwrap_model(model),
+                        enabled=True,
+                    )
+
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 opt_step += 1
 
                 lr_after = get_current_lr(optimizer)
+                debug_lr_after = lr_after
 
                 # param norm after update (main only to reduce overhead)
                 param_norm = None
                 if accelerator.is_main_process:
-                    param_norm = global_param_norm_l2(accelerator.unwrap_model(model))
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    param_norm = global_param_norm_l2(unwrapped_model)
+                    debug_update_norm = compute_update_norm_l2(unwrapped_model, debug_param_snapshot)
 
                 # stash last-step scalars
                 last_lr = lr_after
                 last_grad_norm = grad_norm_preclip
                 last_param_norm = param_norm
+                debug_param_norm = param_norm
                 last_train_loss = opt_step_loss_sum / max(1, opt_step_loss_count)
                 last_train_loss_micro = loss_raw_item
+                debug_running_loss_mean = last_train_loss
                 opt_step_loss_sum = 0.0
                 opt_step_loss_count = 0
 
@@ -1077,6 +1510,57 @@ def main(cfg: TrainConfig) -> None:
                         "micro_batch_size": int(micro_batch_size),
                         "seq_len": int(seq_len),
                     })
+
+        if debug_cfg.enabled and debug_batch_summary is not None:
+            tokens_seen_global_approx = int(tokens_seen_local_total * accelerator.num_processes)
+            write_step_debug_record(
+                debug_jsonl_path,
+                StepDebugRecord(
+                    event="train_microstep",
+                    timestamp=datetime.now().isoformat(),
+                    script_name="research.bos_aligned_proto.training.trainer",
+                    mode=debug_cfg.mode,
+                    rank=int(accelerator.process_index),
+                    world_size=int(accelerator.num_processes),
+                    loader_kind=str(loader_kind),
+                    optimizer_step_before=debug_opt_step_before,
+                    optimizer_step_after=int(opt_step),
+                    optimizer_step_target=(
+                        int(opt_step) if debug_optimizer_step_occurred else int(debug_opt_step_before) + 1
+                    ),
+                    optimizer_step_occurred=bool(debug_optimizer_step_occurred),
+                    scheduler_step_occurred=False,
+                    lr_schedule_applied=bool(debug_lr_schedule_applied),
+                    global_micro_step=int(micro_step) + 1,
+                    micro_step_in_optimizer_step=int(debug_grad_accum_count),
+                    grad_accum_steps=int(grad_accum_steps),
+                    grad_accum_count=int(debug_grad_accum_count),
+                    train_loss_raw=float(loss_raw_item),
+                    train_loss_opt_step_running_mean=float(debug_running_loss_mean),
+                    lr_before_step=debug_lr_before,
+                    lr_after_step=debug_lr_after,
+                    lr_current=float(get_current_lr(optimizer)),
+                    grad_norm_l2_preclip=debug_grad_norm_preclip,
+                    grad_norm_l2_postclip=debug_grad_norm_postclip,
+                    param_norm_l2=debug_param_norm,
+                    update_norm_l2=debug_update_norm,
+                    optimizer_use_fused=bool(use_fused),
+                    tokens_this_microstep=int(ntok),
+                    tokens_seen_local_total=int(tokens_seen_local_total),
+                    tokens_seen_global_approx=int(tokens_seen_global_approx),
+                    tokens_per_opt_step_global=int(effective_total_tokens),
+                    fixed_batch_mode=bool(debug_cfg.overfit_batches > 0),
+                    fixed_batch_index=(None if fixed_batch_index is None else int(fixed_batch_index)),
+                    cached_batch_count=int(len(debug_cached_batches)),
+                    input_shape=list(debug_batch_summary["input_shape"]),
+                    label_shape=list(debug_batch_summary["label_shape"]),
+                    label_ignore_count=int(debug_batch_summary["label_ignore_count"]),
+                    input_ids_sha1=str(debug_batch_summary["input_ids_sha1"]),
+                    labels_sha1=str(debug_batch_summary["labels_sha1"]),
+                    meta_present=bool(debug_batch_summary["meta_present"]),
+                    meta_sha1=debug_batch_summary["meta_sha1"],
+                ),
+            )
 
         # stats (no masks, no padding)
         bs_tokens = int(labels.numel())
@@ -1256,6 +1740,7 @@ def main(cfg: TrainConfig) -> None:
                     tokenizer=tokenizer,
                     evaluate_fn=evaluate,
                     ewok_batch_size=ewok_batch_size,
+                    ewok_reductions=ewok_reductions,
                     opt_step=opt_step,
                     last_train_loss=last_train_loss,
                     loss_val=loss_val,
@@ -1286,8 +1771,38 @@ def main(cfg: TrainConfig) -> None:
                 save_plot()
                 save_checkpoint("periodic", opt_step)
 
+    if debug_trace_handle is not None:
+        debug_trace_handle.flush()
+        debug_trace_handle.close()
+
     # Finalize
     accelerator.wait_for_everyone()
+
+    if debug_trace_data and accelerator.is_main_process and os.path.exists(ANALYZE_RANK_OVERLAP_SCRIPT):
+        try:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    ANALYZE_RANK_OVERLAP_SCRIPT,
+                    "--trace-dir",
+                    debug_trace_dir,
+                    "--output-dir",
+                    debug_trace_dir,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode == 0:
+                print(f"Generated overlap summary at {debug_trace_summary_path}")
+                if proc.stdout:
+                    print(proc.stdout.strip())
+            else:
+                print(f"[warn] analyze_rank_overlap.py exited with code {proc.returncode}; skipping summary.")
+                if proc.stderr:
+                    print(proc.stderr.strip())
+        except Exception as exc:
+            print(f"[warn] failed to run analyze_rank_overlap.py: {exc}")
 
     if accelerator.is_local_main_process:
         avg_loss = total_loss_sum / max(1, total_tokens)
@@ -1331,6 +1846,7 @@ def main(cfg: TrainConfig) -> None:
             tokenizer=tokenizer,
             evaluate_fn=evaluate,
             ewok_batch_size=ewok_batch_size,
+            ewok_reductions=ewok_reductions,
             opt_step=opt_step,
             optimizer=optimizer,
             tokens_seen_local_total=tokens_seen_local_total,
@@ -1390,6 +1906,21 @@ def main(cfg: TrainConfig) -> None:
         tokenizer.push_to_hub(out_dir)
         accelerator.unwrap_model(model).push_to_hub(out_dir)
         print(f"Pushed model to hub repo: {out_dir}")
+
+    accelerator.wait_for_everyone()
+    if debug_cfg.enabled and accelerator.is_main_process:
+        debug_summary, debug_diff = finalize_debug_outputs(
+            paths=debug_paths,
+            compare_to=debug_cfg.compare_to,
+        )
+        print(f"Debug summary written to {debug_paths.summary_txt_path}")
+        if debug_diff is not None:
+            print(
+                "Debug diff report written to "
+                f"{debug_paths.diff_txt_path} (status={debug_diff.get('status')})"
+            )
+        elif debug_summary:
+            print("Debug parity log finalized without external comparison.")
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
