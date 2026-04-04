@@ -74,6 +74,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--ewok_batch_size", type=int, default=DEFAULT_EWOK_BATCH_SIZE)
     parser.add_argument(
+        "--save_final_checkpoint",
+        action="store_true",
+        help="Persist a final child-run checkpoint/model directory. Disabled by default to save disk space.",
+    )
+    parser.add_argument(
         "--plot_group_by",
         choices=SUPPORTED_GROUP_BYS,
         default=DEFAULT_GROUP_BY,
@@ -155,6 +160,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ewok_batch_size=int(args.ewok_batch_size),
         num_workers=int(args.num_workers),
         warmup_iters=args.warmup_iters,
+        save_final_checkpoint=bool(args.save_final_checkpoint),
     )
 
     planned_runs = [spec_to_record(spec) for spec in specs]
@@ -173,6 +179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "num_epochs": int(args.num_epochs),
             "num_processes": int(args.num_processes),
             "ewok_batch_size": int(args.ewok_batch_size),
+            "save_final_checkpoint": bool(args.save_final_checkpoint),
             "plot_group_by": str(args.plot_group_by),
             "plot_reduction": str(args.plot_reduction),
             "plot_x_axis": str(args.plot_x_axis),

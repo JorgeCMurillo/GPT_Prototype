@@ -163,6 +163,37 @@ effectively misaligned by one token. The adapter now avoids that double-shift.
 
 ## Current Implemented Score
 
+Two projection layouts now exist:
+
+- `module`
+  The legacy Bergson-backed path that projects each 2D weight module
+  independently before concatenation.
+- `paper_blocks`
+  The paper-faithful GPT-2 path that first pools corrected gradients into
+  eight contiguous layer blocks, keeps attention and MLP separate, and then
+  applies two-sided random projection per pooled block.
+
+For the current 24-layer GPT-2 checkpoints, `paper_blocks` uses:
+
+- 8 layer blocks of 3 layers each
+- 2 families per block: `attn` and `mlp`
+- 16 pooled blocks total
+
+Within one pooled block, the code treats the constituent module gradients as an
+implicit block-diagonal matrix and applies the TrackStar two-sided projection
+as:
+
+$$
+L \; diag(G_1, \ldots, G_k) \; R^T
+=
+\sum_i L_i G_i R_i^T
+$$
+
+where `L_i` and `R_i` are the deterministic row/column slices of the pooled
+block projection matrices that correspond to module `i`. This keeps the
+projection mathematically faithful to the paper's "pool first, then project"
+design without materializing an enormous sparse matrix.
+
 For a checkpoint `theta`, target item `t`, candidate row `x`, and module `m`,
 the current backend can be summarized as:
 

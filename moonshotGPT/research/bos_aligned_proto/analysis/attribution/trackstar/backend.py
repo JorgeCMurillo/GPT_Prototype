@@ -30,8 +30,17 @@ from .bergson_datasets import (
     BergsonCandidateDataset,
     CandidateIndexMetadata,
     build_candidate_index_metadata,
+    load_flat_gradient_index,
 )
 from .bergson_queries import collect_query_module_grads, score_bundle_diagnostics, subset_target_bundle
+from .paper_blocks import (
+    MODULE_LAYOUT,
+    PAPER_BLOCK_LAYOUT,
+    build_gpt2_paper_block_layout,
+    collect_paper_block_candidate_index,
+    collect_query_paper_block_grads,
+    paper_block_layout_metadata,
+)
 from ..common.candidates import CandidateSelection
 from ..common.checkpoints import CheckpointRef, load_checkpoint_state_dict
 from ..common.ewok_targets import CheckpointScores, EWOKTargetBundle, TargetDiagnostics
@@ -550,6 +559,19 @@ class BergsonAttributionBackend:
             raise ValueError("Model does not expose any Bergson-supported 2D weight modules")
         return modules
 
+    def _paper_block_layout(self) -> Any:
+        """Build the paper-faithful pooled-block layout for the live model."""
+
+        modules = self._candidate_gradient_modules()
+        module_shapes = {
+            name: tuple(int(dim) for dim in module.weight.shape)
+            for name, module in modules.items()
+        }
+        return build_gpt2_paper_block_layout(
+            module_shapes,
+            feature_dim=int(self.config.paper_block_features),
+        )
+
     def _ordered_optimizer_param_names(self) -> tuple[str, ...]:
         """Rebuild the training-time AdamW parameter ordering from the live model."""
 
@@ -816,13 +838,23 @@ class BergsonAttributionBackend:
     ) -> CandidateIndexMetadata:
         """Describe the exact candidate index we expect for this checkpoint."""
 
-        projection_dim = int(self.config.proj_dim) if self.config.use_fast_jl else 0
+        if self.config.projection_layout == PAPER_BLOCK_LAYOUT:
+            projection_dim = int(self.config.paper_block_features) if self.config.use_fast_jl else 0
+            paper_block_features = int(self.config.paper_block_features)
+            paper_block_side = int(self.config.paper_block_side)
+        else:
+            projection_dim = int(self.config.proj_dim) if self.config.use_fast_jl else 0
+            paper_block_features = 0
+            paper_block_side = 0
         return build_candidate_index_metadata(
             checkpoint=checkpoint,
             candidate_ids=candidate_ids,
             projection_dim=projection_dim,
             use_fast_jl=self.config.use_fast_jl,
             adam_second_moment_correction=self._candidate_uses_adam_second_moment_correction(checkpoint),
+            projection_layout=self.config.projection_layout,
+            paper_block_features=paper_block_features,
+            paper_block_side=paper_block_side,
         )
 
     def _index_is_reusable(self, metadata_path: Path, expected: CandidateIndexMetadata) -> bool:
@@ -968,10 +1000,23 @@ class BergsonAttributionBackend:
             if index_dir.exists():
                 shutil.rmtree(index_dir)
 
+        paper_block_layout = None
+        if self.config.projection_layout == PAPER_BLOCK_LAYOUT:
+            paper_block_layout = self._paper_block_layout()
+            self._status(
+                "using paper-faithful pooled-block projection with "
+                f"{len(paper_block_layout.blocks)} blocks x {paper_block_layout.feature_dim} features",
+                root_only=not self.execution_context.is_distributed,
+            )
+
         projection_dim = int(self.config.proj_dim) if self.config.use_fast_jl else 0
         processor = None
         if self.runtime.GradientProcessor is not None:  # pragma: no branch - optional API
-            processor_projection_dim = int(self.config.proj_dim) if self.config.use_fast_jl else None
+            processor_projection_dim = (
+                None
+                if self.config.projection_layout == PAPER_BLOCK_LAYOUT
+                else (int(self.config.proj_dim) if self.config.use_fast_jl else None)
+            )
             try:
                 processor_kwargs: dict[str, Any] = {"projection_dim": processor_projection_dim}
                 if candidate_normalizers:
@@ -1000,6 +1045,19 @@ class BergsonAttributionBackend:
                     root_only=not self.execution_context.is_distributed,
                 )
                 preprocess_cfg = self.runtime.PreprocessConfig()
+        if self.config.projection_layout == PAPER_BLOCK_LAYOUT:
+            if processor is None:
+                raise ImportError(
+                    _missing_bergson_message(
+                        "paper_blocks mode requires Bergson GradientProcessor support."
+                    )
+                )
+            if preprocess_cfg is None:
+                raise ImportError(
+                    _missing_bergson_message(
+                        "paper_blocks mode requires Bergson PreprocessConfig support."
+                    )
+                )
 
         if self.runtime.IndexConfig is None:
             raise ImportError(
@@ -1019,7 +1077,7 @@ class BergsonAttributionBackend:
             # rely on saved preconditioners in the main path.
             "skip_preconditioners": True,
         }
-        if projection_dim > 0:
+        if projection_dim > 0 and self.config.projection_layout != PAPER_BLOCK_LAYOUT:
             index_kwargs["projection_dim"] = projection_dim
         if self.execution_context.distributed_mode == "fsdp":
             index_kwargs["fsdp"] = True
@@ -1049,13 +1107,24 @@ class BergsonAttributionBackend:
                     root_only=True,
                 ),
             ):
-                self.runtime.collect_gradients(
-                    self.model,
-                    candidate_dataset,
-                    processor,
-                    index_cfg,
-                    **collect_kwargs,
-                )
+                if self.config.projection_layout == PAPER_BLOCK_LAYOUT:
+                    assert paper_block_layout is not None
+                    collect_paper_block_candidate_index(
+                        model=self.model,
+                        data=candidate_dataset,
+                        processor=processor,
+                        cfg=index_cfg,
+                        preprocess_cfg=preprocess_cfg,
+                        layout=paper_block_layout,
+                    )
+                else:
+                    self.runtime.collect_gradients(
+                        self.model,
+                        candidate_dataset,
+                        processor,
+                        index_cfg,
+                        **collect_kwargs,
+                    )
         self._status(
             f"finished candidate index build for step={checkpoint.step} at {index_dir}",
             root_only=not self.execution_context.is_distributed,
@@ -1066,6 +1135,11 @@ class BergsonAttributionBackend:
         if self.execution_context.is_root:
             self._promote_partial_index(index_dir)
             _write_json(metadata_path, expected.to_json())
+            if paper_block_layout is not None:
+                _write_json(
+                    index_dir / "paper_block_layout.json",
+                    paper_block_layout_metadata(paper_block_layout),
+                )
         if self.execution_context.is_distributed and dist.is_initialized():
             dist.barrier()
         return index_dir, expected
@@ -1113,8 +1187,7 @@ class BergsonAttributionBackend:
                 "Could not find Bergson gradient artifacts under either "
                 f"{index_dir} or {self._partial_index_dir(index_dir)}"
             )
-        loaded = self.runtime.load_gradients(str(gradient_dir), structured=True)
-        return self._normalize_loaded_gradients(loaded)
+        return load_flat_gradient_index(gradient_dir)
 
     @staticmethod
     def _normalize_score_matrix(
@@ -1414,20 +1487,36 @@ class BergsonAttributionBackend:
                 f"across {len(index_grads)} module(s)",
                 root_only=not self.execution_context.is_distributed,
             )
-            query_target_ids, query_grads = collect_query_module_grads(
-                self.model,
-                self.tokenizer,
-                local_bundle,
-                batch_size=self.config.batch_size,
-                temperature=self.config.temperature,
-                module_names=tuple(index_grads),
-                reduction="item",
-                projection_dim=int(self.config.proj_dim) if self.config.use_fast_jl else None,
-                projection_type="rademacher",
-                weight_normalizers=query_weight_normalizers,
-                show_progress=self.config.show_progress and self.execution_context.is_root,
-                progress_desc=f"step {checkpoint.step} query gradients",
-            )
+            if self.config.projection_layout == PAPER_BLOCK_LAYOUT:
+                paper_block_layout = self._paper_block_layout()
+                query_target_ids, query_grads = collect_query_paper_block_grads(
+                    self.model,
+                    self.tokenizer,
+                    local_bundle,
+                    batch_size=self.config.batch_size,
+                    temperature=self.config.temperature,
+                    layout=paper_block_layout,
+                    reduction="item",
+                    weight_normalizers=query_weight_normalizers,
+                    projection_type="rademacher",
+                    show_progress=self.config.show_progress and self.execution_context.is_root,
+                    progress_desc=f"step {checkpoint.step} query gradients",
+                )
+            else:
+                query_target_ids, query_grads = collect_query_module_grads(
+                    self.model,
+                    self.tokenizer,
+                    local_bundle,
+                    batch_size=self.config.batch_size,
+                    temperature=self.config.temperature,
+                    module_names=tuple(index_grads),
+                    reduction="item",
+                    projection_dim=int(self.config.proj_dim) if self.config.use_fast_jl else None,
+                    projection_type="rademacher",
+                    weight_normalizers=query_weight_normalizers,
+                    show_progress=self.config.show_progress and self.execution_context.is_root,
+                    progress_desc=f"step {checkpoint.step} query gradients",
+                )
             if tuple(query_target_ids) != local_bundle.target_ids:
                 raise ValueError("Item-level query gradient ordering drifted away from target bundle ordering")
             self._status(

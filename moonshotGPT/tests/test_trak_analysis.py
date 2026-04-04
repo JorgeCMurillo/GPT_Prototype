@@ -528,6 +528,8 @@ def test_trackstar_arg_parser_defaults_to_projected_indexing(tmp_path) -> None:
 
     assert ns.use_fast_jl is True
     assert ns.proj_dim == 16
+    assert ns.projection_layout == "module"
+    assert ns.paper_block_features == 4096
     assert ns.bottomk == 0
     assert ns.show_progress is True
 
@@ -550,6 +552,20 @@ def test_trackstar_arg_parser_accepts_candidate_window_overrides(tmp_path) -> No
 
     assert ns.candidate_from_step == 16000
     assert ns.candidate_to_step == 20000
+
+
+def test_trackstar_config_resolves_paper_block_projection_fields(tmp_path) -> None:
+    config = TrackstarConfig(
+        run_dir=tmp_path / "run",
+        data_dir=tmp_path / "data",
+        use_fast_jl=True,
+        projection_layout="paper_blocks",
+        paper_block_features=4096,
+    ).resolved()
+
+    assert config.projection_layout == "paper_blocks"
+    assert config.paper_block_features == 4096
+    assert config.paper_block_side == 64
 
 
 def test_build_bottom_rows_frame_returns_lowest_scoring_rows(tmp_path) -> None:

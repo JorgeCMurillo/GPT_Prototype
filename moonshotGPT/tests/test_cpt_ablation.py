@@ -181,6 +181,7 @@ def test_prepare_bos_row_training_view_and_build_specs_use_requested_defaults(tm
     assert "mean" in specs[0].command
     assert "--hellaswag_every" in specs[0].command
     assert "--core_every" in specs[0].command
+    assert "--no-save_final_checkpoint" in specs[0].command
 
 
 def test_build_bos_trainer_command_uses_accelerate_for_multi_process(tmp_path: Path) -> None:
@@ -330,6 +331,7 @@ def test_run_cpt_ablation_dry_run_writes_manifest_and_plans_runs(tmp_path: Path)
     assert len(manifest["planned_runs"]) == 2
     assert manifest["defaults"]["micro_batch_size"] == 4
     assert manifest["defaults"]["total_batch_tokens"] == 32768
+    assert manifest["defaults"]["save_final_checkpoint"] is False
 
 
 def test_run_cpt_ablation_parser_supports_progress_toggle() -> None:
@@ -359,6 +361,7 @@ def test_run_cpt_ablation_parser_supports_progress_toggle() -> None:
 
     assert default_args.show_progress is True
     assert quiet_args.show_progress is False
+    assert default_args.save_final_checkpoint is False
 
 
 def test_run_cpt_ablation_auto_plots_include_all_grouped_views() -> None:

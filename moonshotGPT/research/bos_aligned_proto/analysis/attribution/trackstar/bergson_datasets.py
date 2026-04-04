@@ -40,6 +40,9 @@ class CandidateIndexMetadata:
     projection_dim: int
     use_fast_jl: bool
     adam_second_moment_correction: bool
+    projection_layout: str = "module"
+    paper_block_features: int = 0
+    paper_block_side: int = 0
 
     def to_json(self) -> dict:
         """Return a plain JSON-serializable representation for cache metadata."""
@@ -54,6 +57,9 @@ class CandidateIndexMetadata:
             "projection_dim": self.projection_dim,
             "use_fast_jl": self.use_fast_jl,
             "adam_second_moment_correction": self.adam_second_moment_correction,
+            "projection_layout": self.projection_layout,
+            "paper_block_features": self.paper_block_features,
+            "paper_block_side": self.paper_block_side,
         }
 
 
@@ -376,6 +382,9 @@ def build_candidate_index_fingerprint(
     projection_dim: int,
     use_fast_jl: bool,
     adam_second_moment_correction: bool,
+    projection_layout: str = "module",
+    paper_block_features: int = 0,
+    paper_block_side: int = 0,
 ) -> str:
     """Build a deterministic short hash for one candidate-index configuration.
 
@@ -392,6 +401,9 @@ def build_candidate_index_fingerprint(
         "projection_dim": int(projection_dim),
         "use_fast_jl": bool(use_fast_jl),
         "adam_second_moment_correction": bool(adam_second_moment_correction),
+        "projection_layout": str(projection_layout),
+        "paper_block_features": int(paper_block_features),
+        "paper_block_side": int(paper_block_side),
     }
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]
@@ -404,6 +416,9 @@ def build_candidate_index_metadata(
     projection_dim: int,
     use_fast_jl: bool,
     adam_second_moment_correction: bool,
+    projection_layout: str = "module",
+    paper_block_features: int = 0,
+    paper_block_side: int = 0,
 ) -> CandidateIndexMetadata:
     """Package the full cache identity for a checkpoint-local Bergson index."""
 
@@ -414,6 +429,9 @@ def build_candidate_index_metadata(
         projection_dim=projection_dim,
         use_fast_jl=use_fast_jl,
         adam_second_moment_correction=adam_second_moment_correction,
+        projection_layout=projection_layout,
+        paper_block_features=paper_block_features,
+        paper_block_side=paper_block_side,
     )
     return CandidateIndexMetadata(
         backend="trackstar",
@@ -425,7 +443,41 @@ def build_candidate_index_metadata(
         projection_dim=int(projection_dim),
         use_fast_jl=bool(use_fast_jl),
         adam_second_moment_correction=bool(adam_second_moment_correction),
+        projection_layout=str(projection_layout),
+        paper_block_features=int(paper_block_features),
+        paper_block_side=int(paper_block_side),
     )
+
+
+def load_flat_gradient_index(index_dir: str | Path) -> dict[str, np.ndarray]:
+    """Load a flat gradient memmap written by Bergson's Builder.
+
+    The TrackStar integration always writes unstructured `[num_grads, total_dim]`
+    indices plus `info.json`/`grad_sizes`. Loading locally avoids assuming the
+    installed Bergson version understands every repo-local pooled-block layout.
+    """
+
+    root = Path(index_dir)
+    info = json.loads((root / "info.json").read_text(encoding="utf-8"))
+    num_grads = int(info["num_grads"])
+    grad_sizes = info.get("grad_sizes")
+    if not isinstance(grad_sizes, dict) or not grad_sizes:
+        raise ValueError(f"Gradient index at {root} is missing non-empty grad_sizes metadata")
+    base_dtype = np.dtype(str(info.get("base_dtype", "float32")))
+    total_dim = int(sum(int(size) for size in grad_sizes.values()))
+    mmap = np.memmap(
+        root / "gradients.bin",
+        dtype=base_dtype,
+        mode="r",
+        shape=(num_grads, total_dim),
+    )
+    grads: dict[str, np.ndarray] = {}
+    start = 0
+    for name, size in grad_sizes.items():
+        width = int(size)
+        grads[str(name)] = np.asarray(mmap[:, start : start + width], dtype=np.float64)
+        start += width
+    return grads
 
 
 __all__ = [
@@ -433,4 +485,5 @@ __all__ = [
     "CandidateIndexMetadata",
     "build_candidate_index_fingerprint",
     "build_candidate_index_metadata",
+    "load_flat_gradient_index",
 ]

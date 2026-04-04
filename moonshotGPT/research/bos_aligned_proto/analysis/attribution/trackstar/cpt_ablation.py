@@ -331,6 +331,7 @@ def build_bos_trainer_command(
     ewok_batch_size: int,
     num_processes: int,
     num_workers: int = 0,
+    save_final_checkpoint: bool = False,
 ) -> list[str]:
     if int(num_processes) <= 1:
         prefix = [sys.executable, "-m", TRAINER_MODULE]
@@ -344,7 +345,7 @@ def build_bos_trainer_command(
             TRAINER_MODULE,
         ]
 
-    return prefix + [
+    command = prefix + [
         "--loader_kind",
         "bos_row",
         "--data_dir",
@@ -396,6 +397,9 @@ def build_bos_trainer_command(
         "--exposure_every",
         "0",
     ]
+    if not save_final_checkpoint:
+        command.append("--no-save_final_checkpoint")
+    return command
 
 
 def locate_trainer_run_dir(experiments_dir: str | Path, expected_run_name: str) -> Path | None:
@@ -909,6 +913,7 @@ def build_ablation_run_specs(
     ewok_batch_size: int,
     num_workers: int = 0,
     warmup_iters: int | None = None,
+    save_final_checkpoint: bool = False,
 ) -> tuple[dict[str, Path], list[AblationRunSpec]]:
     output_root = Path(output_dir).expanduser().resolve()
     datasets = resolve_matched_pool_datasets(matched_pool_dir)
@@ -975,6 +980,7 @@ def build_ablation_run_specs(
                     ewok_batch_size=ewok_batch_size,
                     num_processes=num_processes,
                     num_workers=num_workers,
+                    save_final_checkpoint=save_final_checkpoint,
                 )
                 specs.append(
                     AblationRunSpec(

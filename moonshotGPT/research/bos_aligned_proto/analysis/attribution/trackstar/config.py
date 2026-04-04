@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from ..common.config_base import AttributionConfigBase, add_common_args
+from .paper_blocks import MODULE_LAYOUT, PAPER_BLOCK_LAYOUT, validate_paper_block_features
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,27 @@ class TrackstarConfig(AttributionConfigBase):
     use_hessian_correction: bool = True
     hessian_lambda: float | None = None
     hessian_target_components: int = 1000
+    projection_layout: str = MODULE_LAYOUT
+    paper_block_features: int = 4096
+    paper_block_side: int = 64
+
+    def resolved(self) -> "TrackstarConfig":
+        base = super().resolved()
+        projection_layout = str(getattr(base, "projection_layout", self.projection_layout))
+        if projection_layout not in {MODULE_LAYOUT, PAPER_BLOCK_LAYOUT}:
+            raise ValueError(
+                f"Unknown projection_layout={projection_layout!r}; "
+                f"expected one of {(MODULE_LAYOUT, PAPER_BLOCK_LAYOUT)!r}"
+            )
+        paper_block_features = int(getattr(base, "paper_block_features", self.paper_block_features))
+        paper_block_side = validate_paper_block_features(paper_block_features)
+        if projection_layout == PAPER_BLOCK_LAYOUT and not bool(base.use_fast_jl):
+            raise ValueError("paper_blocks mode requires random projection; omit --no_fast_jl")
+        payload = dict(base.__dict__)
+        payload["projection_layout"] = projection_layout
+        payload["paper_block_features"] = paper_block_features
+        payload["paper_block_side"] = paper_block_side
+        return TrackstarConfig(**payload)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -29,6 +51,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_false",
         dest="use_fast_jl",
         help="Disable Bergson's per-module random projection. Not recommended for large models.",
+    )
+    parser.add_argument(
+        "--projection_layout",
+        choices=(MODULE_LAYOUT, PAPER_BLOCK_LAYOUT),
+        default=MODULE_LAYOUT,
+        help=(
+            "Projection layout to use. `module` keeps Bergson's existing per-module projection; "
+            "`paper_blocks` pools GPT-2 gradients into the TrackStar paper's 8 layer blocks "
+            "with separate attention/MLP projections."
+        ),
+    )
+    parser.add_argument(
+        "--paper_block_features",
+        type=int,
+        default=4096,
+        help="Projected feature count per pooled paper block. Must be a perfect square.",
     )
     parser.add_argument(
         "--no_hessian_correction",
@@ -90,6 +128,8 @@ def parse_args(argv: Sequence[str] | None = None) -> TrackstarConfig:
         use_hessian_correction=ns.use_hessian_correction,
         hessian_lambda=ns.hessian_lambda,
         hessian_target_components=ns.hessian_target_components,
+        projection_layout=ns.projection_layout,
+        paper_block_features=ns.paper_block_features,
         max_targets=ns.max_targets,
     ).resolved()
 

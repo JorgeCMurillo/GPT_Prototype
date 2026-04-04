@@ -28,9 +28,11 @@ trackstar/
   config.py
   backend.py
   cpt_ablation.py
+  one_step_sanity.py
   bergson_datasets.py
   bergson_queries.py
   run_cpt_ablation.py
+  run_one_step_sanity.py
   plot_cpt_ablation.py
 ```
 
@@ -40,6 +42,8 @@ trackstar/
   Main Bergson-backed scoring implementation.
 - `cpt_ablation.py`
   Shared helper layer for TrackStar continued-pretraining ablations.
+- `one_step_sanity.py`
+  Shared helper layer for tiny-update target-loss sanity checks.
 - `bergson_datasets.py`
   Candidate-example dataset adapter used when building or reading Bergson
   indices.
@@ -47,6 +51,8 @@ trackstar/
   EWoK query construction and loss logic for the custom paired objective.
 - `run_cpt_ablation.py`
   Paired treated/control continued-pretraining runner.
+- `run_one_step_sanity.py`
+  Tiny-update evaluator for top/matched-random/bottom candidate groups.
 - `plot_cpt_ablation.py`
   Plotter for treated/control EWoK margin curves and treated-minus-control
   effects.
@@ -328,6 +334,11 @@ Recommended first LR sweep:
 - `ablation_summary.json`
 - `plots/`
 
+To reduce disk usage, ablation child runs do not save final model checkpoints
+by default. The runner still preserves the metric files, `ewok_items.jsonl`,
+aggregated summaries, and plots. If you want child runs to emit final model
+artifacts, add `--save_final_checkpoint`.
+
 The baseline files capture the checkpoint before any ablation updates. The
 curves file then stores per-eval-point margins with:
 
@@ -423,6 +434,111 @@ conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attri
 - `--group_by ContextDiff`
 - `--group_by TargetDiff`
 - `--group_by ContextType`
+
+## One-Step Sanity Check
+
+When you want to verify that the attribution direction itself is sensible
+before committing to a full continued-pretraining ablation, the repo now
+includes a one-step target-loss check.
+
+The idea is:
+
+1. fix one checkpoint `theta`;
+2. build three candidate pools from the saved attribution scores:
+   - top-ranked
+   - matched-random
+   - bottom-ranked
+3. repeatedly sample tiny candidate minibatches `B` from each pool;
+4. reset to the same checkpoint each trial;
+5. compute the targeted EWoK softplus loss `L_Q(theta)`;
+6. take one tiny SGD step on the candidate CE loss;
+7. measure:
+
+$$
+\Delta_Q(B) = L_Q(\theta') - L_Q(\theta)
+$$
+
+If the attribution direction is behaving sensibly, top-ranked batches should
+tend to make `Delta_Q(B)` more negative than matched-random batches, while
+bottom-ranked batches should be less helpful or harmful.
+
+By default this sanity check uses:
+
+- `score_mode = net_pooled`
+- the same EWoK filter/view/reduction/temperature stored in the attribution
+  run config when `config.json` is available
+- a tiny plain SGD step, not a full optimizer-state resume
+
+Example:
+
+```bash
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.trackstar.run_one_step_sanity \
+  --base_ckpt /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/ckpt_periodic_step0016000 \
+  --attribution_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/trackstar_varswap_ckpt16000_window16000_20000 \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --step 16000 \
+  --group_size 1000 \
+  --candidate_batch_size 4 \
+  --num_trials_per_group 64 \
+  --update_lr 1e-5
+```
+
+This writes:
+
+- `config.json`
+- `group_top_candidates.csv`
+- `group_matched_random_candidates.csv`
+- `group_bottom_candidates.csv`
+- `trial_results.jsonl`
+- `summary.json`
+
+The `summary.json` file reports the baseline query loss and per-group
+statistics for:
+
+- `delta_q`
+- candidate batch CE loss
+- candidate gradient norm
+- mean batch selection score
+
+The one-step sanity runner shows tqdm progress for:
+
+- setup / pool construction
+- the baseline target-loss pass
+- the sampled one-step trial loop
+
+## Raw Gradient Audit
+
+When you want an even stricter sign/orientation check, the repo also includes a
+raw-gradient audit runner:
+
+```bash
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.trackstar.run_raw_dot_audit \
+  --base_ckpt /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/ckpt_periodic_step0016000 \
+  --attribution_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/trackstar_varswap_ckpt16000_window16000_20000 \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --step 16000 \
+  --num_examples_per_group 64 \
+  --update_lr 2e-5
+```
+
+This runner samples single examples from the `top`, `matched_random`, and
+`bottom` pools and records three quantities for each sampled example:
+
+- exported attribution `selection_score`
+- raw first-order signal `-<grad L_Q, grad loss_x>`
+- actual tiny-step `Delta_Q(x)` on that single example
+
+It writes:
+
+- `sampled_top_candidates.csv`
+- `sampled_matched_random_candidates.csv`
+- `sampled_bottom_candidates.csv`
+- `audit_results.jsonl`
+- `summary.json`
+
+The summary includes global Pearson/Spearman correlations between exported
+scores, raw dots, and negative actual deltas so you can see whether the sign
+and ranking are coherent before trusting the longer ablation workflow.
 
 ## Example Command
 
