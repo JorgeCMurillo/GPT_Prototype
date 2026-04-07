@@ -22,6 +22,7 @@ analysis/
   plot_ewok_baseline_full_mean.py
   plot_ewok_checkpoint_baseline_compare.py
   attribution/
+  discourse_tracking/
   notebooks/
 ```
 
@@ -43,7 +44,7 @@ Typical command:
 
 ```bash
 conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.run_checkpoint_evals \
-  runs/research/bos_aligned_proto/<run_name> \
+  /home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/<run_name> \
   --step 16000
 ```
 
@@ -73,6 +74,20 @@ This is where the reusable implementation lives for:
 - export of summaries and checkpoint-to-checkpoint comparisons.
 
 If you want the main answer to "which rows seem to improve EWoK?", start here.
+
+### `discourse_tracking/`
+
+Feature-first mining utilities for finding training text that looks like it
+should teach entity persistence and role binding across context. This layer is
+useful when you want interpretable pools such as:
+
+- high persistence + high relation density;
+- random controls;
+- low-binding negatives;
+- repetition-heavy negatives.
+
+It can also materialize those pools into exact continued-pretraining datasets
+for short intervention runs.
 
 ### `notebooks/`
 

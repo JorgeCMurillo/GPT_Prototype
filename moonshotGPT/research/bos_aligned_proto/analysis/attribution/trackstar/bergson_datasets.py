@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np

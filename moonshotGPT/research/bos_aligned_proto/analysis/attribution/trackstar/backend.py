@@ -79,6 +79,20 @@ class BergsonShardResult:
     diagnostics: tuple[TargetDiagnostics, ...]
 
 
+def _module_gradient_shape(module: torch.nn.Module) -> tuple[int, int]:
+    """Return the Bergson gradient matrix shape `[out, in]` for one module."""
+
+    if isinstance(module, HFConv1D):
+        return (int(module.nf), int(module.nx))
+    weight = getattr(module, "weight", None)
+    if not isinstance(weight, torch.Tensor) or weight.ndim != 2:
+        raise ValueError(
+            f"Expected a Bergson-supported 2D weight module, got {type(module)!r} "
+            f"with weight shape {getattr(weight, 'shape', None)!r}"
+        )
+    return tuple(int(dim) for dim in weight.shape)
+
+
 def _missing_bergson_message(detail: str | None = None) -> str:
     """Construct a consistent optional-dependency error message."""
 
@@ -563,12 +577,8 @@ class BergsonAttributionBackend:
         """Build the paper-faithful pooled-block layout for the live model."""
 
         modules = self._candidate_gradient_modules()
-        module_shapes = {
-            name: tuple(int(dim) for dim in module.weight.shape)
-            for name, module in modules.items()
-        }
         return build_gpt2_paper_block_layout(
-            module_shapes,
+            {name: _module_gradient_shape(module) for name, module in modules.items()},
             feature_dim=int(self.config.paper_block_features),
         )
 
