@@ -109,6 +109,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Override ablation warmup. By default the runner uses 5% of ablation steps.",
     )
     parser.add_argument(
+        "--allow_unequal_budgets",
+        action="store_false",
+        dest="enforce_equal_budgets",
+        help="Allow treated/control arms to proceed even if their row or step budgets differ. Strict equal budgets are enforced by default.",
+    )
+    parser.add_argument(
         "--no_progress",
         action="store_false",
         dest="show_progress",
@@ -160,6 +166,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ewok_batch_size=int(args.ewok_batch_size),
         num_workers=int(args.num_workers),
         warmup_iters=args.warmup_iters,
+        enforce_equal_budgets=bool(args.enforce_equal_budgets),
         save_final_checkpoint=bool(args.save_final_checkpoint),
     )
 
@@ -184,6 +191,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "plot_reduction": str(args.plot_reduction),
             "plot_x_axis": str(args.plot_x_axis),
             "warmup_iters": (None if args.warmup_iters is None else int(args.warmup_iters)),
+            "enforce_equal_budgets": bool(args.enforce_equal_budgets),
         },
         "training_views": {arm: str(path) for arm, path in training_views.items()},
         "planned_runs": planned_runs,

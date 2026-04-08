@@ -20,6 +20,9 @@ This package helps you ask a different question first:
 
 Does the text itself look like discourse that should teach identity tracking?
 
+For an explicit methods-style description of the current package behavior, see
+[METHODS.md](./METHODS.md).
+
 ## Feature Set
 
 The current first-pass features are:
@@ -32,6 +35,9 @@ The current first-pass features are:
   Fraction of tracked entities that reappear in at least two sentences.
 - `relation_density`
   Relation edges per sentence.
+- `effective_cast_size`
+  Effective number of discourse-active entities from sentence-coverage
+  concentration, used to penalize very diffuse casts.
 - `discourse_length`
   Represented by `sentence_count` and `token_count_text`.
 - repetition guardrails
@@ -185,6 +191,11 @@ Pool membership is driven by written thresholds from the candidate sample:
   high repeated n-grams with weak relation structure
 - random control pool:
   deterministic sample from the eligible remainder
+
+The positive pool is not "top K by score." It is the subset of eligible windows
+that satisfy the written threshold rule. `priority_score` is used afterward to
+rank examples within those interpretable buckets and to support fallback
+selection if the strict positive rule returns zero rows.
 
 Cluster selection is also fixed-rule:
 

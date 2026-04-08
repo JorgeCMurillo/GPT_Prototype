@@ -242,6 +242,12 @@ def _feature_summary_from_mentions(
     sentences_with_entities = sum(1 for entities in sentences if entities)
     multi_entity_sentences = sum(1 for entities in sentences if len(set(entities)) >= 2)
     avg_entities_per_sentence = _safe_ratio(entity_mention_count, sentence_count)
+    sentence_coverages = [len(sentence_ids) for sentence_ids in entity_sentence_sets.values()]
+    total_sentence_coverage = float(sum(sentence_coverages))
+    coverage_hhi = float(
+        sum((coverage / total_sentence_coverage) ** 2 for coverage in sentence_coverages)
+    ) if total_sentence_coverage > 0.0 else 0.0
+    effective_cast_size = float(1.0 / coverage_hhi) if coverage_hhi > 0.0 else 0.0
 
     repetition = _repetition_features(text, sentences=[_normalize_space(sentence) for sentence in _sentence_texts_from_regex(text)])
     return {
@@ -258,6 +264,7 @@ def _feature_summary_from_mentions(
         "relation_density": float(_safe_ratio(relation_count, sentence_count)),
         "pronoun_count": int(pronoun_count),
         "pronoun_density": float(_safe_ratio(pronoun_count, len(word_tokens))),
+        "effective_cast_size": float(effective_cast_size),
         "entity_sentence_coverage": float(_safe_ratio(sentences_with_entities, sentence_count)),
         "multi_entity_sentence_fraction": float(_safe_ratio(multi_entity_sentences, sentence_count)),
         "avg_entities_per_sentence": float(avg_entities_per_sentence),
@@ -421,6 +428,7 @@ def compute_text_features(
             "relation_density": 0.0,
             "pronoun_count": 0,
             "pronoun_density": 0.0,
+            "effective_cast_size": 0.0,
             "entity_sentence_coverage": 0.0,
             "multi_entity_sentence_fraction": 0.0,
             "avg_entities_per_sentence": 0.0,
@@ -501,16 +509,22 @@ def build_rule_based_pools(
         "unique_entities_q50": _quantile(eligible.get("unique_entity_count", []), 0.50, default=float(min_entities)),
     }
     positive_unique_entities_min = max(int(min_entities), min(4, int(math.ceil(thresholds["unique_entities_q50"]))))
+    if "effective_cast_size" not in working.columns:
+        working["effective_cast_size"] = 0.0
+    working["effective_cast_size_overflow"] = (
+        working["effective_cast_size"].astype(float) - 6.0
+    ).clip(lower=0.0)
 
     working["priority_score"] = (
         _zscore(working["entity_persistence"])
         + _zscore(working["entity_recurrence"])
         + _zscore(working["relation_density"])
         + 0.25 * _zscore(working["sentence_count"])
-        + 0.25 * _zscore(working["unique_entity_count"])
+        + 0.10 * _zscore(working["unique_entity_count"])
         - 0.50 * _zscore(working["entity_churn"])
         - 0.75 * _zscore(working["repeated_3gram_ratio"])
         - 0.50 * _zscore(working["duplicate_sentence_fraction"])
+        - 0.75 * _zscore(working["effective_cast_size_overflow"])
     ).astype(float)
 
     positive_mask = (
@@ -594,9 +608,10 @@ def build_rule_based_pools(
         },
         "priority_score_formula": (
             "z(entity_persistence) + z(entity_recurrence) + z(relation_density) + "
-            "0.25*z(sentence_count) + 0.25*z(unique_entity_count) - "
+            "0.25*z(sentence_count) + 0.10*z(unique_entity_count) - "
             "0.50*z(entity_churn) - 0.75*z(repeated_3gram_ratio) - "
-            "0.50*z(duplicate_sentence_fraction)"
+            "0.50*z(duplicate_sentence_fraction) - "
+            "0.75*z(effective_cast_size_overflow)"
         ),
         "positive_fallback_rule": {
             "used": bool(fallback_positive_count > 0),
@@ -803,6 +818,7 @@ def feature_columns() -> tuple[str, ...]:
         "relation_density",
         "pronoun_count",
         "pronoun_density",
+        "effective_cast_size",
         "entity_sentence_coverage",
         "multi_entity_sentence_fraction",
         "avg_entities_per_sentence",

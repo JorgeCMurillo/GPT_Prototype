@@ -226,6 +226,60 @@ def compute_training_budget(
     )
 
 
+def _arm_budget_signature(
+    *,
+    meta: dict[str, Any],
+    budget: TrainingBudget,
+    model_config: CheckpointModelConfig,
+) -> dict[str, int]:
+    seq_len = int(meta.get("seq_len", model_config.seq_len))
+    row_tokens = int(meta.get("row_tokens", seq_len + 1))
+    num_rows = int(meta.get("num_rows", budget.num_rows))
+    return {
+        "seq_len": int(seq_len),
+        "row_tokens": int(row_tokens),
+        "num_rows": int(num_rows),
+        "total_train_tokens": int(num_rows * row_tokens),
+        "grad_accum_steps": int(budget.grad_accum_steps),
+        "effective_global_batch_seqs": int(budget.effective_global_batch_seqs),
+        "steps_per_epoch": int(budget.steps_per_epoch),
+        "max_train_steps": int(budget.max_train_steps),
+    }
+
+
+def _assert_equal_arm_budgets(arm_signatures: dict[str, dict[str, int]]) -> None:
+    if len(arm_signatures) <= 1:
+        return
+
+    ordered_arms = sorted(arm_signatures)
+    reference_arm = ordered_arms[0]
+    reference = arm_signatures[reference_arm]
+    mismatches: list[str] = []
+    for arm in ordered_arms[1:]:
+        signature = arm_signatures[arm]
+        for field in (
+            "seq_len",
+            "row_tokens",
+            "num_rows",
+            "total_train_tokens",
+            "grad_accum_steps",
+            "effective_global_batch_seqs",
+            "steps_per_epoch",
+            "max_train_steps",
+        ):
+            if int(signature[field]) != int(reference[field]):
+                mismatches.append(
+                    f"{arm}.{field}={int(signature[field])} != {reference_arm}.{field}={int(reference[field])}"
+                )
+    if mismatches:
+        mismatch_text = "; ".join(mismatches)
+        raise ValueError(
+            "Treated/control CPT ablation arms must have equal budgets for a clean quick-check comparison. "
+            f"Found mismatches: {mismatch_text}. Re-materialize matched pools with equal row/token counts, "
+            "or rerun with --allow_unequal_budgets to bypass this guard."
+        )
+
+
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -913,6 +967,7 @@ def build_ablation_run_specs(
     ewok_batch_size: int,
     num_workers: int = 0,
     warmup_iters: int | None = None,
+    enforce_equal_budgets: bool = True,
     save_final_checkpoint: bool = False,
 ) -> tuple[dict[str, Path], list[AblationRunSpec]]:
     output_root = Path(output_dir).expanduser().resolve()
@@ -925,6 +980,7 @@ def build_ablation_run_specs(
 
     model_config = load_checkpoint_model_config(base_ckpt)
     specs: list[AblationRunSpec] = []
+    arm_signatures: dict[str, dict[str, int]] = {}
     for arm, data_dir in training_views.items():
         meta = _load_json(data_dir / "meta.json")
         train_shards = _list_train_shards(data_dir)
@@ -941,6 +997,11 @@ def build_ablation_run_specs(
             raise ValueError(
                 f"{arm} dataset under {data_dir} only has {num_rows} rows, which is smaller than micro_batch_size={micro_batch_size}"
             )
+        arm_signatures[arm] = _arm_budget_signature(
+            meta=meta,
+            budget=budget,
+            model_config=model_config,
+        )
         effective_total_tokens = (
             budget.grad_accum_steps * budget.micro_batch_size * budget.seq_len * budget.num_processes
         )
@@ -997,6 +1058,8 @@ def build_ablation_run_specs(
                         command=tuple(command),
                     )
                 )
+    if bool(enforce_equal_budgets):
+        _assert_equal_arm_budgets(arm_signatures)
     return training_views, specs
 
 
