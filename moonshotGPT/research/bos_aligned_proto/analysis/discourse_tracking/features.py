@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from itertools import combinations
 import math
 import re
 from typing import Any, Iterable, Sequence
@@ -217,6 +218,7 @@ def _feature_summary_from_mentions(
     pronoun_count: int,
 ) -> dict[str, float | int]:
     sentences = [list(entities) for entities in sentence_entity_lists]
+    sentence_entity_sets_list = [set(entities) for entities in sentences]
     sentence_count = max(1, len(sentences))
     word_tokens = WORD_PATTERN.findall(text)
     entity_counts = Counter(entity for entities in sentences for entity in entities)
@@ -248,6 +250,28 @@ def _feature_summary_from_mentions(
         sum((coverage / total_sentence_coverage) ** 2 for coverage in sentence_coverages)
     ) if total_sentence_coverage > 0.0 else 0.0
     effective_cast_size = float(1.0 / coverage_hhi) if coverage_hhi > 0.0 else 0.0
+    adjacent_overlaps = [
+        _safe_ratio(len(left & right), len(left | right))
+        for left, right in zip(sentence_entity_sets_list, sentence_entity_sets_list[1:])
+        if left or right
+    ]
+    adjacent_entity_overlap = float(np.mean(adjacent_overlaps)) if adjacent_overlaps else 0.0
+    pair_sentence_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for sentence_idx, entities in enumerate(sentence_entity_sets_list):
+        if len(entities) < 2:
+            continue
+        for left, right in combinations(sorted(entities), 2):
+            pair_sentence_sets[(left, right)].add(sentence_idx)
+    pair_recurrence = _safe_ratio(
+        sum(1 for sentence_ids in pair_sentence_sets.values() if len(sentence_ids) >= 2),
+        len(pair_sentence_sets),
+    )
+    top_pair_sentence_share = (
+        max(_safe_ratio(len(sentence_ids), sentence_count) for sentence_ids in pair_sentence_sets.values())
+        if pair_sentence_sets
+        else 0.0
+    )
+    bos_contamination_penalty = float(1.0 if "[BOS]" in text else 0.0)
 
     repetition = _repetition_features(text, sentences=[_normalize_space(sentence) for sentence in _sentence_texts_from_regex(text)])
     return {
@@ -264,6 +288,10 @@ def _feature_summary_from_mentions(
         "relation_density": float(_safe_ratio(relation_count, sentence_count)),
         "pronoun_count": int(pronoun_count),
         "pronoun_density": float(_safe_ratio(pronoun_count, len(word_tokens))),
+        "adjacent_entity_overlap": float(adjacent_entity_overlap),
+        "pair_recurrence": float(pair_recurrence),
+        "top_pair_sentence_share": float(top_pair_sentence_share),
+        "bos_contamination_penalty": float(bos_contamination_penalty),
         "effective_cast_size": float(effective_cast_size),
         "entity_sentence_coverage": float(_safe_ratio(sentences_with_entities, sentence_count)),
         "multi_entity_sentence_fraction": float(_safe_ratio(multi_entity_sentences, sentence_count)),
@@ -428,6 +456,10 @@ def compute_text_features(
             "relation_density": 0.0,
             "pronoun_count": 0,
             "pronoun_density": 0.0,
+            "adjacent_entity_overlap": 0.0,
+            "pair_recurrence": 0.0,
+            "top_pair_sentence_share": 0.0,
+            "bos_contamination_penalty": 0.0,
             "effective_cast_size": 0.0,
             "entity_sentence_coverage": 0.0,
             "multi_entity_sentence_fraction": 0.0,
@@ -509,8 +541,15 @@ def build_rule_based_pools(
         "unique_entities_q50": _quantile(eligible.get("unique_entity_count", []), 0.50, default=float(min_entities)),
     }
     positive_unique_entities_min = max(int(min_entities), min(4, int(math.ceil(thresholds["unique_entities_q50"]))))
-    if "effective_cast_size" not in working.columns:
-        working["effective_cast_size"] = 0.0
+    for column_name in (
+        "adjacent_entity_overlap",
+        "pair_recurrence",
+        "top_pair_sentence_share",
+        "bos_contamination_penalty",
+        "effective_cast_size",
+    ):
+        if column_name not in working.columns:
+            working[column_name] = 0.0
     working["effective_cast_size_overflow"] = (
         working["effective_cast_size"].astype(float) - 6.0
     ).clip(lower=0.0)
@@ -519,9 +558,13 @@ def build_rule_based_pools(
         _zscore(working["entity_persistence"])
         + _zscore(working["entity_recurrence"])
         + _zscore(working["relation_density"])
+        + 0.75 * _zscore(working["adjacent_entity_overlap"])
+        + 0.75 * _zscore(working["pair_recurrence"])
+        + 0.75 * _zscore(working["top_pair_sentence_share"])
         + 0.25 * _zscore(working["sentence_count"])
         + 0.10 * _zscore(working["unique_entity_count"])
         - 0.50 * _zscore(working["entity_churn"])
+        - 0.50 * _zscore(working["bos_contamination_penalty"])
         - 0.75 * _zscore(working["repeated_3gram_ratio"])
         - 0.50 * _zscore(working["duplicate_sentence_fraction"])
         - 0.75 * _zscore(working["effective_cast_size_overflow"])
@@ -608,8 +651,11 @@ def build_rule_based_pools(
         },
         "priority_score_formula": (
             "z(entity_persistence) + z(entity_recurrence) + z(relation_density) + "
+            "0.75*z(adjacent_entity_overlap) + 0.75*z(pair_recurrence) + "
+            "0.75*z(top_pair_sentence_share) + "
             "0.25*z(sentence_count) + 0.10*z(unique_entity_count) - "
-            "0.50*z(entity_churn) - 0.75*z(repeated_3gram_ratio) - "
+            "0.50*z(entity_churn) - 0.50*z(bos_contamination_penalty) - "
+            "0.75*z(repeated_3gram_ratio) - "
             "0.50*z(duplicate_sentence_fraction) - "
             "0.75*z(effective_cast_size_overflow)"
         ),
@@ -753,6 +799,10 @@ def cluster_promising_pool(
             mean_entity_persistence=("entity_persistence", "mean"),
             mean_entity_recurrence=("entity_recurrence", "mean"),
             mean_relation_density=("relation_density", "mean"),
+            mean_adjacent_entity_overlap=("adjacent_entity_overlap", "mean"),
+            mean_pair_recurrence=("pair_recurrence", "mean"),
+            mean_top_pair_sentence_share=("top_pair_sentence_share", "mean"),
+            mean_bos_contamination_penalty=("bos_contamination_penalty", "mean"),
             mean_repeated_3gram_ratio=("repeated_3gram_ratio", "mean"),
             mean_duplicate_sentence_fraction=("duplicate_sentence_fraction", "mean"),
             mean_sentence_count=("sentence_count", "mean"),
@@ -766,6 +816,8 @@ def cluster_promising_pool(
     persistence_bar = _quantile(positive["entity_persistence"], 0.50)
     recurrence_bar = _quantile(positive["entity_recurrence"], 0.50)
     relation_bar = _quantile(positive["relation_density"], 0.50)
+    adjacent_bar = _quantile(positive["adjacent_entity_overlap"], 0.50)
+    pair_bar = _quantile(positive["pair_recurrence"], 0.50)
     repetition_bar = _quantile(positive["repeated_3gram_ratio"], 0.50)
     duplicate_bar = _quantile(positive["duplicate_sentence_fraction"], 0.50)
 
@@ -774,6 +826,8 @@ def cluster_promising_pool(
         & (summary["mean_entity_persistence"] >= persistence_bar)
         & (summary["mean_entity_recurrence"] >= recurrence_bar)
         & (summary["mean_relation_density"] >= relation_bar)
+        & (summary["mean_adjacent_entity_overlap"] >= adjacent_bar)
+        & (summary["mean_pair_recurrence"] >= pair_bar)
         & (summary["mean_repeated_3gram_ratio"] <= repetition_bar)
         & (summary["mean_duplicate_sentence_fraction"] <= duplicate_bar)
     )
@@ -789,6 +843,8 @@ def cluster_promising_pool(
             "mean_entity_persistence_gte_positive_median": float(persistence_bar),
             "mean_entity_recurrence_gte_positive_median": float(recurrence_bar),
             "mean_relation_density_gte_positive_median": float(relation_bar),
+            "mean_adjacent_entity_overlap_gte_positive_median": float(adjacent_bar),
+            "mean_pair_recurrence_gte_positive_median": float(pair_bar),
             "mean_repeated_3gram_ratio_lte_positive_median": float(repetition_bar),
             "mean_duplicate_sentence_fraction_lte_positive_median": float(duplicate_bar),
         },
@@ -818,6 +874,10 @@ def feature_columns() -> tuple[str, ...]:
         "relation_density",
         "pronoun_count",
         "pronoun_density",
+        "adjacent_entity_overlap",
+        "pair_recurrence",
+        "top_pair_sentence_share",
+        "bos_contamination_penalty",
         "effective_cast_size",
         "entity_sentence_coverage",
         "multi_entity_sentence_fraction",

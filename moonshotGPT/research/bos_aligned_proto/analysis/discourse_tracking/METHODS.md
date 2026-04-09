@@ -81,6 +81,15 @@ Core discourse features:
   Fraction of tracked entities that reappear in at least two sentences.
 - `entity_churn`
   Rate at which entities are first introduced after sentence 1.
+- `adjacent_entity_overlap`
+  Mean entity-set overlap between adjacent sentences.
+- `pair_recurrence`
+  Fraction of co-mentioned entity pairs that recur across at least two
+  sentences.
+- `top_pair_sentence_share`
+  Sentence coverage of the most persistent entity pair in the span.
+- `bos_contamination_penalty`
+  Binary penalty for decoded spans that contain an internal `[BOS]` marker.
 - `relation_density`
   `relation_count / sentence_count`.
 - `effective_cast_size`
@@ -189,9 +198,13 @@ Current formula:
 z(entity_persistence)
 + z(entity_recurrence)
 + z(relation_density)
++ 0.75*z(adjacent_entity_overlap)
++ 0.75*z(pair_recurrence)
++ 0.75*z(top_pair_sentence_share)
 + 0.25*z(sentence_count)
 + 0.10*z(unique_entity_count)
 - 0.50*z(entity_churn)
+- 0.50*z(bos_contamination_penalty)
 - 0.75*z(repeated_3gram_ratio)
 - 0.50*z(duplicate_sentence_fraction)
 - 0.75*z(effective_cast_size_overflow)
@@ -211,6 +224,31 @@ Why it happens after pool assignment:
 
 - hard rules preserve interpretability;
 - the score gives a finer ordering inside those interpretable buckets.
+
+Why this still does not solve everything:
+
+- a high-scoring example can still be expository and not truly role-binding;
+- a low-scoring example can still survive later cluster filtering if it lives
+  inside a stronger semantic subtype.
+
+In a real `40k` `fineweb_edu_10B` + `gte-small` run, for example:
+
+- `CID 4277117` scored `11.49` but was removed because its cluster failed the
+  cluster-level rule;
+- `CID 9523153` scored `0.75` but survived because it belonged to a selected
+  cluster.
+
+So `priority_score` should be read as a ranking heuristic, not as a final
+definition of identity-tracking relevance.
+
+The newer additions are meant to target two common failure modes:
+
+- `top_pair_sentence_share`
+  helps distinguish a small recurring pair from entity-dense exposition that
+  mentions many pairs only once;
+- `bos_contamination_penalty`
+  helps downweight windows that cross internal BOS boundaries and may therefore
+  look discourse-rich only because multiple documents were stitched together.
 
 ## Positive Fallback Rule
 
@@ -245,6 +283,8 @@ Current cluster-selection rules require:
 - mean persistence at or above the positive-pool median;
 - mean recurrence at or above the positive-pool median;
 - mean relation density at or above the positive-pool median;
+- mean adjacent-sentence continuity at or above the positive-pool median;
+- mean pair recurrence at or above the positive-pool median;
 - mean repetition features at or below the positive-pool medians.
 
 So clustering is used as an optional refinement step, not as the first-pass

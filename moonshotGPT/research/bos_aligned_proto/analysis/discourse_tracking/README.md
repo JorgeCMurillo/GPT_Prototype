@@ -33,6 +33,18 @@ The current first-pass features are:
   How often new entities are introduced after sentence 1.
 - `entity_recurrence`
   Fraction of tracked entities that reappear in at least two sentences.
+- `adjacent_entity_overlap`
+  Mean entity-set overlap between neighboring sentences, used to reward local
+  cast continuity rather than topic-jumpy windows.
+- `pair_recurrence`
+  Fraction of co-mentioned entity pairs that recur across at least two
+  sentences, used to reward repeated pairwise tracking pressure.
+- `top_pair_sentence_share`
+  The fraction of sentences covered by the single most persistent entity pair,
+  used to reward spans where one pair really drives the discourse.
+- `bos_contamination_penalty`
+  A binary penalty that turns on when an internal `[BOS]` marker appears in the
+  decoded text, used to downweight stitched or topic-reset windows.
 - `relation_density`
   Relation edges per sentence.
 - `effective_cast_size`
@@ -197,13 +209,66 @@ that satisfy the written threshold rule. `priority_score` is used afterward to
 rank examples within those interpretable buckets and to support fallback
 selection if the strict positive rule returns zero rows.
 
+The current `priority_score` now includes both local continuity and pairwise
+recurrence, plus a reward for dominant-pair coverage and a penalty for internal
+document resets:
+
+```text
+z(entity_persistence) + z(entity_recurrence) + z(relation_density) +
+0.75*z(adjacent_entity_overlap) + 0.75*z(pair_recurrence) +
+0.75*z(top_pair_sentence_share) +
+0.25*z(sentence_count) + 0.10*z(unique_entity_count) -
+0.50*z(entity_churn) - 0.50*z(bos_contamination_penalty) -
+0.75*z(repeated_3gram_ratio) -
+0.50*z(duplicate_sentence_fraction) -
+0.75*z(effective_cast_size_overflow)
+```
+
+The intuition behind the two newer terms is:
+
+- `top_pair_sentence_share`
+  Push the score toward spans where one entity pair keeps reappearing across
+  many sentences, rather than spans that merely mention many pairs once.
+- `bos_contamination_penalty`
+  Push the score away from windows that decode across internal BOS boundaries,
+  since those are more likely to reflect topic jumps or stitched documents than
+  true discourse continuity.
+
 Cluster selection is also fixed-rule:
 
 - only cluster the positive pool;
 - select clusters whose mean feature values stay above the positive-pool
-  medians on persistence, recurrence, and relation density;
+  medians on persistence, recurrence, relation density, adjacent continuity,
+  and pair recurrence;
 - reject clusters whose mean repetition features are above the positive-pool
   medians.
+
+## Why Score And Clusters Can Disagree
+
+`priority_score` is an example-level ranking. Cluster selection is a
+cluster-level filter. Those are intentionally different.
+
+In a real `40k` `fineweb_edu_10B` + `gte-small` run:
+
+- only about `59%` of the top `100` priority-scored positives survived cluster
+  selection;
+- `CID 4277117` scored `11.49` but was rejected because it lived in a cluster
+  whose average profile missed the cluster-level selection rule;
+- `CID 9523153` scored only `0.75` but was kept because it belonged to a
+  cluster whose average profile cleared the cluster-level rule.
+
+That example is useful because it shows:
+
+- high `priority_score` means one window looks individually strong;
+- selected-cluster membership means the window belongs to a broader subtype
+  that looks strong on average.
+
+This also exposes a current limitation. In the same run, one selected cluster
+looked like literary/mythic narrative with tight character interaction
+(`Mandalore`, `Kratos`, `Othello`, `Hamlet`), while another selected cluster
+still contained entity-dense Asia/history exposition (`Lao`, `China`, `Japan`,
+`India`). So the current miner is better than a raw entity-count heuristic, but
+it is still not a perfect role-binding detector.
 
 ## 3. Materialize CPT pools
 
