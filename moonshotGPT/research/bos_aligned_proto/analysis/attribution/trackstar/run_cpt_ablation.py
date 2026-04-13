@@ -12,6 +12,7 @@ from typing import Sequence
 from ..common.export import write_json
 from .cpt_ablation import (
     DEFAULT_EWOK_BATCH_SIZE,
+    DEFAULT_EWOK_FRAC_PER_EPOCH,
     DEFAULT_GROUP_BY,
     DEFAULT_LRS,
     DEFAULT_METRIC_NAME,
@@ -28,6 +29,7 @@ from .cpt_ablation import (
     launch_training_run,
     parse_float_list,
     parse_int_list,
+    parse_positive_fraction,
     run_ablation_aggregation,
     spec_to_record,
 )
@@ -44,13 +46,44 @@ def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool 
     return tqdm(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=leave)
 
 
+def _is_matched_pool_condition_dir(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and (path / "treated_dataset").is_dir()
+        and (path / "control_dataset").is_dir()
+    )
+
+
+def _discover_matched_pool_conditions(root: Path) -> list[tuple[str, Path]]:
+    if _is_matched_pool_condition_dir(root):
+        return [(root.name or "matched_pool", root)]
+    discovered: list[tuple[str, Path]] = []
+    for child in sorted((entry for entry in root.iterdir() if entry.is_dir()), key=lambda entry: entry.name):
+        if _is_matched_pool_condition_dir(child):
+            discovered.append((child.name, child))
+    return discovered
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run a paired TrackStar continued-pretraining ablation from one checkpoint and one matched-pool root."
+            "Run a paired TrackStar continued-pretraining ablation from one or more checkpoints and one matched-pool root."
         )
     )
-    parser.add_argument("--base_ckpt", required=True, help="Checkpoint directory used to initialize both ablation arms")
+    parser.add_argument(
+        "--base_ckpt",
+        required=False,
+        help="Checkpoint directory used to initialize both ablation arms (use --base_ckpts for multiple).",
+    )
+    parser.add_argument(
+        "--base_ckpts",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of checkpoint directories to sweep in a single invocation. "
+            "If provided, each checkpoint gets its own subdirectory under --output_dir."
+        ),
+    )
     parser.add_argument(
         "--matched_pool_dir",
         required=True,
@@ -73,6 +106,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_processes", type=int, default=DEFAULT_NUM_PROCESSES)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--ewok_batch_size", type=int, default=DEFAULT_EWOK_BATCH_SIZE)
+    parser.add_argument(
+        "--ewok_frac_per_epoch",
+        type=str,
+        default="1/2",
+        help=(
+            "How often to run EWoK within each epoch, expressed as a positive fraction of an epoch. "
+            "Examples: 1/2, 0.5, 1.0. Defaults to half an epoch."
+        ),
+    )
     parser.add_argument(
         "--save_final_checkpoint",
         action="store_true",
@@ -143,19 +185,26 @@ def _auto_plot_group_bys(primary_group_by: str) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_arg_parser()
-    args = parser.parse_args(argv)
-
+def _run_single_ablation(
+    *,
+    args: argparse.Namespace,
+    matched_pool_dir: Path,
+    output_dir: Path,
+    base_ckpt: Path,
+    condition_name: str | None = None,
+) -> dict[str, object]:
     learning_rates = parse_float_list(args.learning_rates, default=DEFAULT_LRS)
     seeds = parse_int_list(args.seeds, default=DEFAULT_SEEDS)
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    ewok_frac_per_epoch = parse_positive_fraction(
+        args.ewok_frac_per_epoch,
+        default=DEFAULT_EWOK_FRAC_PER_EPOCH,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "ablation_manifest.json"
 
     training_views, specs = build_ablation_run_specs(
-        base_ckpt=args.base_ckpt,
-        matched_pool_dir=args.matched_pool_dir,
+        base_ckpt=str(base_ckpt),
+        matched_pool_dir=str(matched_pool_dir),
         output_dir=output_dir,
         learning_rates=learning_rates,
         seeds=seeds,
@@ -164,6 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         num_epochs=int(args.num_epochs),
         num_processes=int(args.num_processes),
         ewok_batch_size=int(args.ewok_batch_size),
+        ewok_frac_per_epoch=float(ewok_frac_per_epoch),
         num_workers=int(args.num_workers),
         warmup_iters=args.warmup_iters,
         enforce_equal_budgets=bool(args.enforce_equal_budgets),
@@ -173,8 +223,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     planned_runs = [spec_to_record(spec) for spec in specs]
     manifest = {
         "created_at": datetime.now().isoformat(),
-        "base_ckpt": str(Path(args.base_ckpt).expanduser().resolve()),
-        "matched_pool_dir": str(Path(args.matched_pool_dir).expanduser().resolve()),
+        "condition_name": condition_name,
+        "base_ckpt": str(base_ckpt),
+        "matched_pool_dir": str(matched_pool_dir),
         "output_dir": str(output_dir),
         "dry_run": bool(args.dry_run),
         "metric_name": str(args.metric_name),
@@ -186,6 +237,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "num_epochs": int(args.num_epochs),
             "num_processes": int(args.num_processes),
             "ewok_batch_size": int(args.ewok_batch_size),
+            "ewok_frac_per_epoch": float(ewok_frac_per_epoch),
             "save_final_checkpoint": bool(args.save_final_checkpoint),
             "plot_group_by": str(args.plot_group_by),
             "plot_reduction": str(args.plot_reduction),
@@ -203,25 +255,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_json(manifest_path, manifest)
 
     if args.dry_run:
-        print(f"planned {len(specs)} ablation run(s)")
+        label = condition_name or matched_pool_dir.name or "matched_pool"
+        print(f"planned {len(specs)} ablation run(s) for condition {label}")
         for spec in specs:
             print(f"[{spec.arm}] lr={spec.learning_rate:.12g} seed={spec.seed}: {_render_command(spec.command)}")
         print(f"manifest: {manifest_path}")
-        return 0
+        return {
+            "condition_name": label,
+            "matched_pool_dir": str(matched_pool_dir),
+            "output_dir": str(output_dir),
+            "manifest_path": str(manifest_path),
+            "summary_path": None,
+            "plot_manifest_paths": {},
+            "dry_run": True,
+        }
 
     progress = _build_tqdm(
         enabled=bool(args.show_progress),
         total=len(specs) + 3,
-        desc="TrackStar CPT ablation",
+        desc=("TrackStar CPT ablation" if not condition_name else f"TrackStar CPT {condition_name}"),
         unit="stage",
         leave=True,
     )
+    aggregation_outputs: dict[str, Path] | None = None
+    plot_outputs: dict[str, dict[str, str]] = {}
     try:
         if progress is not None:
             progress.set_postfix_str("baseline")
         print("running baseline EWoK evaluation for the base checkpoint")
         baseline_artifacts = evaluate_checkpoint_baseline(
-            checkpoint_dir=args.base_ckpt,
+            checkpoint_dir=str(base_ckpt),
             output_dir=output_dir / "baseline",
             ewok_batch_size=int(args.ewok_batch_size),
             metric_name=str(args.metric_name),
@@ -264,7 +327,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if progress is not None:
             progress.set_postfix_str("plotting")
-        plot_outputs: dict[str, dict[str, str]] = {}
         for group_by in _auto_plot_group_bys(str(args.plot_group_by)):
             group_output_dir = (
                 output_dir / "plots"
@@ -289,11 +351,148 @@ def main(argv: Sequence[str] | None = None) -> int:
         if progress is not None:
             progress.close()
 
+    if aggregation_outputs is None:
+        raise RuntimeError("Ablation aggregation did not complete")
+
     print(f"ablation manifest: {manifest_path}")
     print(f"aggregation summary: {aggregation_outputs['summary_path']}")
     for group_by, outputs in plot_outputs.items():
         if "manifest_path" in outputs:
             print(f"{group_by} plot manifest: {outputs['manifest_path']}")
+    return {
+        "condition_name": condition_name or matched_pool_dir.name or "matched_pool",
+        "matched_pool_dir": str(matched_pool_dir),
+        "output_dir": str(output_dir),
+        "manifest_path": str(manifest_path),
+        "summary_path": str(aggregation_outputs["summary_path"]),
+        "plot_manifest_paths": {
+            group_by: outputs["manifest_path"]
+            for group_by, outputs in plot_outputs.items()
+            if "manifest_path" in outputs
+        },
+        "dry_run": False,
+    }
+
+
+def _parse_base_ckpts(args: argparse.Namespace, parser: argparse.ArgumentParser) -> list[Path]:
+    ckpts: list[str] = []
+    if args.base_ckpts:
+        ckpts.extend([entry.strip() for entry in args.base_ckpts.split(",") if entry.strip()])
+    if args.base_ckpt:
+        ckpts.append(str(args.base_ckpt))
+    if not ckpts:
+        parser.error("Provide --base_ckpt or --base_ckpts (comma-separated).")
+    return [Path(entry).expanduser().resolve() for entry in ckpts]
+
+
+def _label_ckpts(ckpts: list[Path]) -> dict[Path, str]:
+    labels: dict[Path, str] = {}
+    seen: dict[str, int] = {}
+    for ckpt in ckpts:
+        base = ckpt.name or "checkpoint"
+        count = seen.get(base, 0)
+        label = base if count == 0 else f"{base}_{count}"
+        seen[base] = count + 1
+        labels[ckpt] = label
+    return labels
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    base_ckpts = _parse_base_ckpts(args, parser)
+    ckpt_labels = _label_ckpts(base_ckpts)
+    matched_pool_dir = Path(args.matched_pool_dir).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    conditions = _discover_matched_pool_conditions(matched_pool_dir)
+    if not conditions:
+        parser.error(
+            f"--matched_pool_dir must either contain treated_dataset/control_dataset or child condition "
+            f"directories that do. Got: {matched_pool_dir}"
+        )
+
+    single_condition = len(conditions) == 1 and conditions[0][1] == matched_pool_dir
+
+    def run_conditions_for_ckpt(base_ckpt: Path, ckpt_output_dir: Path) -> list[dict[str, object]]:
+        results: list[dict[str, object]] = []
+        if single_condition:
+            result = _run_single_ablation(
+                args=args,
+                matched_pool_dir=matched_pool_dir,
+                output_dir=ckpt_output_dir,
+                base_ckpt=base_ckpt,
+                condition_name=None,
+            )
+            results.append(result)
+            return results
+
+        batch_manifest_path = ckpt_output_dir / "ablation_batch_manifest.json"
+        batch_manifest = {
+            "created_at": datetime.now().isoformat(),
+            "base_ckpt": str(base_ckpt),
+            "matched_pool_root": str(matched_pool_dir),
+            "output_dir": str(ckpt_output_dir),
+            "dry_run": bool(args.dry_run),
+            "conditions": [
+                {
+                    "condition_name": condition_name,
+                    "matched_pool_dir": str(condition_dir),
+                    "output_dir": str(ckpt_output_dir / condition_name),
+                }
+                for condition_name, condition_dir in conditions
+            ],
+            "runs": [],
+        }
+        write_json(batch_manifest_path, batch_manifest)
+        for condition_name, condition_dir in conditions:
+            print(f"running batch condition {condition_name} from {condition_dir}")
+            result = _run_single_ablation(
+                args=args,
+                matched_pool_dir=condition_dir,
+                output_dir=ckpt_output_dir / condition_name,
+                base_ckpt=base_ckpt,
+                condition_name=condition_name,
+            )
+            batch_manifest["runs"].append(result)
+            write_json(batch_manifest_path, batch_manifest)
+            results.append(result)
+
+        print(f"batch manifest: {batch_manifest_path}")
+        return results
+
+    if len(base_ckpts) == 1:
+        run_conditions_for_ckpt(base_ckpts[0], output_dir)
+        return 0
+
+    multi_manifest_path = output_dir / "ablation_multi_ckpt_manifest.json"
+    multi_manifest = {
+        "created_at": datetime.now().isoformat(),
+        "matched_pool_root": str(matched_pool_dir),
+        "output_dir": str(output_dir),
+        "dry_run": bool(args.dry_run),
+        "checkpoints": [
+            {
+                "label": ckpt_labels[ckpt],
+                "base_ckpt": str(ckpt),
+                "output_dir": str(output_dir / ckpt_labels[ckpt]),
+            }
+            for ckpt in base_ckpts
+        ],
+        "runs": [],
+    }
+    write_json(multi_manifest_path, multi_manifest)
+
+    for ckpt in base_ckpts:
+        label = ckpt_labels[ckpt]
+        ckpt_output_dir = output_dir / label
+        ckpt_output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"running checkpoint {label} from {ckpt}")
+        results = run_conditions_for_ckpt(ckpt, ckpt_output_dir)
+        multi_manifest["runs"].extend(results)
+        write_json(multi_manifest_path, multi_manifest)
+
+    print(f"multi-ckpt manifest: {multi_manifest_path}")
     return 0
 
 

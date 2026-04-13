@@ -51,6 +51,7 @@ DEFAULT_TOTAL_BATCH_TOKENS = 32 * 1024
 DEFAULT_NUM_EPOCHS = 3
 DEFAULT_NUM_PROCESSES = 1
 DEFAULT_EWOK_BATCH_SIZE = 4
+DEFAULT_EWOK_FRAC_PER_EPOCH = 0.5
 DEFAULT_LRS = (4e-5,)
 DEFAULT_SEEDS = (42,)
 RECOMMENDED_LR_SWEEP = (1e-5, 2e-5, 4e-5, 8e-5)
@@ -101,12 +102,38 @@ class AblationRunSpec:
     expected_run_dir: Path
     budget: TrainingBudget
     warmup_iters: int
+    ewok_every: int
+    ewok_frac_per_epoch: float
     ewok_batch_size: int
     command: tuple[str, ...]
 
 
 def _load_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _backfill_tokenizer_metadata(meta: dict[str, Any]) -> dict[str, Any]:
+    tokenizer = str(meta.get("tokenizer") or "").strip()
+    if tokenizer:
+        return meta
+
+    source_data_dir = str(meta.get("source_data_dir") or "").strip()
+    if not source_data_dir:
+        return meta
+
+    source_meta_path = Path(source_data_dir).expanduser().resolve() / "meta.json"
+    if not source_meta_path.is_file():
+        return meta
+
+    source_meta = _load_json(source_meta_path)
+    source_tokenizer = str(source_meta.get("tokenizer") or "").strip()
+    if not source_tokenizer:
+        return meta
+
+    meta["tokenizer"] = source_tokenizer
+    if "use_fast" in source_meta and "use_fast" not in meta:
+        meta["use_fast"] = bool(source_meta["use_fast"])
+    return meta
 
 
 def _load_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -151,6 +178,37 @@ def parse_int_list(raw: str | Sequence[int] | None, *, default: Sequence[int]) -
     if not values:
         return tuple(int(value) for value in default)
     return tuple(int(value) for value in values)
+
+
+def parse_positive_fraction(raw: str | float | int | None, *, default: float) -> float:
+    if raw is None:
+        value = float(default)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            value = float(default)
+        elif "/" in text:
+            numerator_text, denominator_text = text.split("/", 1)
+            numerator = float(numerator_text.strip())
+            denominator = float(denominator_text.strip())
+            if denominator == 0.0:
+                raise ValueError("Fraction denominator must be non-zero")
+            value = numerator / denominator
+        else:
+            value = float(text)
+    else:
+        value = float(raw)
+    if value <= 0.0 or value > 1.0:
+        raise ValueError("ewok_frac_per_epoch must be > 0 and <= 1")
+    return float(value)
+
+
+def resolve_ewok_every(*, steps_per_epoch: int, ewok_frac_per_epoch: float) -> int:
+    if int(steps_per_epoch) <= 0:
+        raise ValueError("steps_per_epoch must be > 0")
+    if float(ewok_frac_per_epoch) <= 0.0:
+        raise ValueError("ewok_frac_per_epoch must be > 0")
+    return max(1, int(math.ceil(float(ewok_frac_per_epoch) * int(steps_per_epoch))))
 
 
 def load_checkpoint_model_config(checkpoint_dir: str | Path) -> CheckpointModelConfig:
@@ -305,6 +363,7 @@ def prepare_bos_row_training_view(source_dataset_dir: str | Path, output_dir: st
     view_dir.mkdir(parents=True, exist_ok=True)
 
     meta = dict(_load_json(source_dir / "meta.json"))
+    _backfill_tokenizer_metadata(meta)
     train_shards = _list_train_shards(source_dir)
     if not train_shards:
         raise FileNotFoundError(f"No train shards found under {source_dir}")
@@ -967,6 +1026,7 @@ def build_ablation_run_specs(
     ewok_batch_size: int,
     num_workers: int = 0,
     warmup_iters: int | None = None,
+    ewok_frac_per_epoch: float = DEFAULT_EWOK_FRAC_PER_EPOCH,
     enforce_equal_budgets: bool = True,
     save_final_checkpoint: bool = False,
 ) -> tuple[dict[str, Path], list[AblationRunSpec]]:
@@ -1010,6 +1070,10 @@ def build_ablation_run_specs(
             if warmup_iters is not None
             else max(1, int(round(0.05 * budget.max_train_steps)))
         )
+        resolved_ewok_every = resolve_ewok_every(
+            steps_per_epoch=budget.steps_per_epoch,
+            ewok_frac_per_epoch=float(ewok_frac_per_epoch),
+        )
         for learning_rate in learning_rates:
             lr_tag = format_lr_tag(float(learning_rate))
             for seed in seeds:
@@ -1037,7 +1101,7 @@ def build_ablation_run_specs(
                     learning_rate=float(learning_rate),
                     warmup_iters=resolved_warmup_iters,
                     seed=int(seed),
-                    ewok_every=budget.steps_per_epoch,
+                    ewok_every=resolved_ewok_every,
                     ewok_batch_size=ewok_batch_size,
                     num_processes=num_processes,
                     num_workers=num_workers,
@@ -1054,6 +1118,8 @@ def build_ablation_run_specs(
                         expected_run_dir=experiments_dir / expected_run_name,
                         budget=budget,
                         warmup_iters=resolved_warmup_iters,
+                        ewok_every=resolved_ewok_every,
+                        ewok_frac_per_epoch=float(ewok_frac_per_epoch),
                         ewok_batch_size=int(ewok_batch_size),
                         command=tuple(command),
                     )
@@ -1095,6 +1161,8 @@ def spec_to_record(spec: AblationRunSpec) -> dict[str, Any]:
         "expected_run_dir": str(spec.expected_run_dir),
         "budget": asdict(spec.budget),
         "warmup_iters": int(spec.warmup_iters),
+        "ewok_every": int(spec.ewok_every),
+        "ewok_frac_per_epoch": float(spec.ewok_frac_per_epoch),
         "ewok_batch_size": int(spec.ewok_batch_size),
         "command": list(spec.command),
     }
@@ -1104,6 +1172,7 @@ __all__ = [
     "AblationRunSpec",
     "DEFAULT_GROUP_BY",
     "DEFAULT_EWOK_BATCH_SIZE",
+    "DEFAULT_EWOK_FRAC_PER_EPOCH",
     "DEFAULT_LRS",
     "DEFAULT_METRIC_NAME",
     "DEFAULT_MICRO_BATCH_SIZE",
@@ -1123,6 +1192,8 @@ __all__ = [
     "format_lr_tag",
     "launch_training_run",
     "load_deduped_ewok_items_frame",
+    "parse_positive_fraction",
+    "resolve_ewok_every",
     "parse_float_list",
     "parse_int_list",
     "prepare_bos_row_training_view",

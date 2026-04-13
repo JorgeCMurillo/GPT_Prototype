@@ -116,6 +116,59 @@ def _resolve_selection_metadata(ablation_dir: Path) -> tuple[str | None, dict[st
     return None, summary
 
 
+def _extract_command_arg(command: Sequence[Any], flag: str) -> str | None:
+    parts = [str(part) for part in command]
+    for index, part in enumerate(parts):
+        if part == flag and index + 1 < len(parts):
+            return parts[index + 1]
+    return None
+
+
+def _resolve_training_annotation(ablation_dir: Path) -> str | None:
+    manifest_path = ablation_dir / "ablation_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = _load_json(manifest_path)
+    except Exception:
+        return None
+
+    defaults = manifest.get("defaults", {}) if isinstance(manifest, dict) else {}
+    planned_runs = manifest.get("planned_runs", []) if isinstance(manifest, dict) else []
+    first_run = planned_runs[0] if planned_runs else {}
+    budget = first_run.get("budget", {}) if isinstance(first_run, dict) else {}
+    command = first_run.get("command", []) if isinstance(first_run, dict) else []
+
+    num_rows = budget.get("num_rows")
+    micro_batch_size = defaults.get("micro_batch_size", budget.get("micro_batch_size"))
+    effective_batch = budget.get("effective_global_batch_seqs")
+    steps_per_epoch = budget.get("steps_per_epoch")
+    ewok_every = first_run.get("ewok_every")
+    if ewok_every is None:
+        raw_ewok_every = _extract_command_arg(command, "--ewok_every")
+        if raw_ewok_every is not None:
+            try:
+                ewok_every = int(raw_ewok_every)
+            except Exception:
+                ewok_every = None
+
+    lines: list[str] = []
+    if num_rows is not None:
+        lines.append(f"samples/epoch: {int(num_rows):,}")
+    if micro_batch_size is not None:
+        lines.append(f"micro batch: {int(micro_batch_size)}")
+    if effective_batch is not None:
+        lines.append(f"effective batch: {int(effective_batch)} seqs")
+    if steps_per_epoch is not None:
+        lines.append(f"steps/epoch: {int(steps_per_epoch)}")
+    if ewok_every is not None:
+        ewok_line = f"EWoK every: {int(ewok_every)} steps"
+        if steps_per_epoch:
+            ewok_line = f"{ewok_line} ({float(ewok_every) / float(steps_per_epoch):.2f} ep)"
+        lines.append(ewok_line)
+    return "\n".join(lines) if lines else None
+
+
 def _safe_name(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value))
     return cleaned.strip("_") or "unknown"
@@ -182,6 +235,7 @@ def _plot_arm_panel(
     ax.set_xlabel("Epoch" if x_axis == "epoch" else "Optimizer Step")
     ax.set_ylabel("Average EWoK Margin")
     ax.grid(True, alpha=0.25)
+    ax.set_xlim(left=0.0)
     ax.legend()
 
 
@@ -216,6 +270,7 @@ def _plot_effect_panel(ax, frame: pd.DataFrame, *, x_axis: str, title: str) -> N
     ax.set_xlabel("Epoch" if x_axis == "epoch" else "Optimizer Step")
     ax.set_ylabel("treated - control")
     ax.grid(True, alpha=0.25)
+    ax.set_xlim(left=0.0)
     ax.legend()
 
 
@@ -224,6 +279,73 @@ def _baseline_value(frame: pd.DataFrame) -> float | None:
     if not values:
         return None
     return float(values[0])
+
+
+def _add_explicit_baseline_points(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add an explicit epoch-0 / step-0 point when curves only store a baseline line.
+
+    Existing ablation outputs already carry `baseline_value` on every curve row, but
+    older runs did not emit a true pre-training datapoint. Adding it at plot time
+    makes the trajectory visibly start before the first epoch finishes, while still
+    working with previously generated ablation directories.
+    """
+
+    if frame.empty or "baseline_value" not in frame.columns:
+        return frame
+
+    key_cols = [
+        column
+        for column in ("lr", "seed", "arm", "metric_name", "reduction", "group_by", "group_name")
+        if column in frame.columns
+    ]
+    if not key_cols:
+        return frame
+
+    candidate_cols = [column for column in (*key_cols, "run_dir", "baseline_value") if column in frame.columns]
+    candidates = (
+        frame.loc[frame["baseline_value"].notna(), candidate_cols]
+        .drop_duplicates(subset=key_cols, keep="first")
+        .to_dict("records")
+    )
+    if not candidates:
+        return frame
+
+    existing_zero_keys = {
+        tuple(record[column] for column in key_cols)
+        for record in frame.loc[frame["step"].eq(0), key_cols].drop_duplicates().to_dict("records")
+    }
+
+    baseline_rows: list[dict[str, Any]] = []
+    for record in candidates:
+        key = tuple(record[column] for column in key_cols)
+        if key in existing_zero_keys:
+            continue
+        baseline_value = record.get("baseline_value")
+        if baseline_value is None or pd.isna(baseline_value):
+            continue
+
+        row = {column: pd.NA for column in frame.columns}
+        for column in key_cols:
+            row[column] = record[column]
+        if "run_dir" in frame.columns:
+            row["run_dir"] = record.get("run_dir")
+        row["step"] = 0
+        row["epoch"] = 0.0
+        row["final"] = False
+        row["value"] = float(baseline_value)
+        row["baseline_value"] = float(baseline_value)
+        if "delta_from_baseline" in frame.columns:
+            row["delta_from_baseline"] = 0.0
+        baseline_rows.append(row)
+
+    if not baseline_rows:
+        return frame
+
+    augmented = pd.concat([frame, pd.DataFrame.from_records(baseline_rows)], ignore_index=True)
+    sort_cols = [column for column in ("lr", "seed", "arm", "group_name", "step", "epoch") if column in augmented.columns]
+    if sort_cols:
+        augmented = augmented.sort_values(sort_cols).reset_index(drop=True)
+    return augmented
 
 
 def _selection_filename_tag(selection_metadata: dict[str, Any] | None) -> str | None:
@@ -242,6 +364,27 @@ def _selection_filename_tag(selection_metadata: dict[str, Any] | None) -> str | 
         if source_kind:
             return _safe_name(f"selection_{source_kind}")
     return None
+
+
+def _annotate_figure(fig, note: str | None) -> None:
+    if not note:
+        return
+    fig.text(
+        0.995,
+        0.012,
+        str(note),
+        ha="right",
+        va="bottom",
+        fontsize=8.5,
+        family="monospace",
+        color="#343a40",
+        bbox={
+            "boxstyle": "round,pad=0.28",
+            "facecolor": "white",
+            "edgecolor": "#ced4da",
+            "alpha": 0.9,
+        },
+    )
 
 
 def _average_plot_paths(
@@ -301,6 +444,7 @@ def generate_ablation_plots(
     manifest_path = plot_dir / "plot_manifest.json"
     selection_label, selection_metadata = _resolve_selection_metadata(root)
     selection_filename_tag = _selection_filename_tag(selection_metadata)
+    training_annotation = _resolve_training_annotation(root)
 
     manifest: dict[str, Any] = {
         "generated_at": datetime.now().isoformat(),
@@ -313,6 +457,7 @@ def generate_ablation_plots(
         "selection_label": selection_label,
         "selection_metadata": selection_metadata,
         "selection_filename_tag": selection_filename_tag,
+        "training_annotation": training_annotation,
         "matplotlib_available": bool(plt is not None),
         "plots": [],
     }
@@ -340,6 +485,7 @@ def generate_ablation_plots(
     frame["epoch"] = frame["epoch"].astype(float)
     frame["value"] = frame["value"].astype(float)
     frame["group_name"] = frame["group_name"].astype(str)
+    frame = _add_explicit_baseline_points(frame)
     lr_values = sorted(frame["lr"].drop_duplicates().tolist())
 
     if group_by == "average":
@@ -377,8 +523,10 @@ def generate_ablation_plots(
             effect_title = f"{effect_title}\n{selection_label}"
         fig_arms.suptitle(arms_title, fontsize=14)
         fig_effect.suptitle(effect_title, fontsize=14)
-        fig_arms.tight_layout(rect=[0, 0, 1, 0.95])
-        fig_effect.tight_layout(rect=[0, 0, 1, 0.95])
+        _annotate_figure(fig_arms, training_annotation)
+        _annotate_figure(fig_effect, training_annotation)
+        fig_arms.tight_layout(rect=[0, 0.04, 1, 0.95])
+        fig_effect.tight_layout(rect=[0, 0.04, 1, 0.95])
         arms_path, effect_path = _average_plot_paths(
             plot_dir,
             group_by,
@@ -432,8 +580,10 @@ def generate_ablation_plots(
                 effect_title = f"{effect_title}\n{selection_label}"
             fig_arms.suptitle(arms_title, fontsize=14)
             fig_effect.suptitle(effect_title, fontsize=14)
-            fig_arms.tight_layout(rect=[0, 0, 1, 0.94])
-            fig_effect.tight_layout(rect=[0, 0, 1, 0.94])
+            _annotate_figure(fig_arms, training_annotation)
+            _annotate_figure(fig_effect, training_annotation)
+            fig_arms.tight_layout(rect=[0, 0.04, 1, 0.94])
+            fig_effect.tight_layout(rect=[0, 0.04, 1, 0.94])
             arms_path, effect_path = _group_plot_paths(
                 plot_dir,
                 group_by,

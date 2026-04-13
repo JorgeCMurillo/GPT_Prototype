@@ -307,7 +307,8 @@ pretraining setup is:
 - `total_batch_tokens = 32768`
 - effective global batch target = `32` sequences at `seq_len = 1024`
 - `num_epochs = 3`
-- `ewok_every = steps_per_epoch`
+- `ewok_frac_per_epoch = 1/2`
+- `ewok_every = ceil(0.5 * steps_per_epoch)`
 - `hellaswag_every = 0`
 - `core_every = 0`
 
@@ -321,6 +322,11 @@ Recommended first LR sweep:
 - `2e-5`
 - `4e-5`
 - `8e-5`
+
+If you want a different EWoK cadence, `run_cpt_ablation.py` accepts:
+
+- `--ewok_frac_per_epoch 1/2` for half-epoch evals
+- `--ewok_frac_per_epoch 1.0` for once-per-epoch evals
 
 ### What Gets Written
 
@@ -390,6 +396,13 @@ conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attri
   --learning_rates 1e-5,2e-5,4e-5,8e-5 \
   --seeds 42,43,44
 ```
+
+If `--matched_pool_dir` points to a batch root with child condition directories
+such as `cluster_2/`, `cluster_4/`, `cluster_5/`, and `cluster_mix/`, the
+runner now auto-discovers each child directory containing
+`treated_dataset/` and `control_dataset/`, and launches one ablation per
+condition under `--output_dir/<condition_name>/`. It also writes a root
+`ablation_batch_manifest.json` summarizing those child runs.
 
 If you want to inspect the ablation plan without launching child training runs,
 add `--dry_run`.
