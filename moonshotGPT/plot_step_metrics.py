@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 _PROJECT_DIR = Path(__file__).resolve().parent
 _DEFAULT_WORD2VEC_GLOB = _PROJECT_DIR / "runs" / "research" / "w2v_lexical_probe"
@@ -180,6 +181,50 @@ def _load_word2vec_mean_baselines(interval_metrics_path: Path) -> Dict[str, floa
 
 def _is_number(x) -> bool:
     return isinstance(x, (int, float)) and math.isfinite(float(x))
+
+
+def _format_compact_count(value, _pos=None) -> str:
+    if not _is_number(value):
+        return ""
+    value = float(value)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if value >= scale:
+            return f"{sign}{value / scale:.3g}{suffix}"
+    return f"{sign}{value:.3g}"
+
+
+def _ewok_use_token_axis(records: Iterable[Dict]) -> bool:
+    xs = [
+        record.get("tokens_seen_global_approx")
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("step"), int)
+    ]
+    return bool(xs) and all(_is_number(x) for x in xs)
+
+
+def _ewok_x_value(record: Dict, use_tokens: bool) -> float | None:
+    if use_tokens:
+        value = record.get("tokens_seen_global_approx")
+        if _is_number(value):
+            return float(value)
+    step = record.get("step")
+    if isinstance(step, int):
+        return float(step)
+    return None
+
+
+def _apply_ewok_x_axis(ax, use_tokens: bool, fontsize: int | None = None) -> None:
+    if use_tokens:
+        ax.xaxis.set_major_formatter(FuncFormatter(_format_compact_count))
+        label = "Tokens Observed"
+    else:
+        label = "Optimizer Step"
+    if fontsize is None:
+        ax.set_xlabel(label)
+    else:
+        ax.set_xlabel(label, fontsize=fontsize)
 
 
 def _moving_average(values: List[float], window: int) -> List[float]:
@@ -392,11 +437,12 @@ def plot_ewok_full(
     # For each domain in eval_full, compute average of both components:
     # avg_component = 0.5 * (component_1 + component_2)
     # Then render all 11 domains in a single 4x3 grid.
+    use_tokens = _ewok_use_token_axis(ewok_records)
     by_domain: Dict[str, List[Tuple[int, float, float]]] = defaultdict(list)
     for r in ewok_records:
-        step = r.get("step")
+        x_value = _ewok_x_value(r, use_tokens)
         _, full = get_ewok_payload(r, reduction)
-        if not isinstance(step, int) or not isinstance(full, dict):
+        if x_value is None or not isinstance(full, dict):
             continue
         for domain, value in full.items():
             if str(domain) == "average":
@@ -404,7 +450,7 @@ def plot_ewok_full(
             pair = _extract_pair(value)
             if pair is None:
                 continue
-            by_domain[str(domain)].append((step, pair[0], pair[1]))
+            by_domain[str(domain)].append((x_value, pair[0], pair[1]))
 
     created: List[Path] = []
     if not by_domain:
@@ -432,7 +478,7 @@ def plot_ewok_full(
                 label=WORD2VEC_BASELINE_LABEL,
             )
         ax.set_title(domain, fontsize=10)
-        ax.set_xlabel("Step", fontsize=9)
+        _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
         ax.set_ylabel("Acc", fontsize=9)
         ax.set_ylim(0.0, 1.0)
         ax.grid(True, alpha=0.25)
@@ -459,11 +505,12 @@ def plot_ewok_margin_domains(
     dpi: int,
 ) -> List[Path]:
     # Render all domains in a 4x3 grid with both signed and absolute mean margin.
+    use_tokens = _ewok_use_token_axis(ewok_records)
     by_domain: Dict[str, List[Tuple[int, float, float]]] = defaultdict(list)
     for r in ewok_records:
-        step = r.get("step")
+        x_value = _ewok_x_value(r, use_tokens)
         margin_payload = get_margin_payload(r, reduction)
-        if not isinstance(step, int) or not isinstance(margin_payload, dict):
+        if x_value is None or not isinstance(margin_payload, dict):
             continue
         for domain, stats in margin_payload.items():
             if str(domain) == "average" or not isinstance(stats, dict):
@@ -471,7 +518,7 @@ def plot_ewok_margin_domains(
             y_signed = stats.get("mean_signed_m")
             y_abs = stats.get("mean_abs_m")
             if _is_number(y_signed) and _is_number(y_abs):
-                by_domain[str(domain)].append((step, float(y_signed), float(y_abs)))
+                by_domain[str(domain)].append((x_value, float(y_signed), float(y_abs)))
 
     created: List[Path] = []
     if not by_domain:
@@ -501,7 +548,7 @@ def plot_ewok_margin_domains(
         )
         ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
         ax.set_title(domain, fontsize=10)
-        ax.set_xlabel("Step", fontsize=9)
+        _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
         ax.set_ylabel("Margin", fontsize=9)
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=7)
@@ -549,17 +596,18 @@ def _extract_full_average_scalar(full_payload: Dict) -> float | None:
 def _full_average_series(
     ewok_records: List[Dict],
     reduction: str,
+    use_tokens: bool = False,
 ) -> List[Tuple[int, float]]:
     out: List[Tuple[int, float]] = []
     for r in ewok_records:
-        step = r.get("step")
+        x_value = _ewok_x_value(r, use_tokens)
         _, full = get_ewok_payload(r, reduction)
-        if not isinstance(step, int) or not isinstance(full, dict):
+        if x_value is None or not isinstance(full, dict):
             continue
         y = _extract_full_average_scalar(full)
         if y is None:
             continue
-        out.append((step, y))
+        out.append((x_value, y))
     return sorted(out, key=lambda t: t[0])
 
 
@@ -586,17 +634,18 @@ def _margin_average_series(
     ewok_records: List[Dict],
     reduction: str,
     metric_key: str,
+    use_tokens: bool = False,
 ) -> List[Tuple[int, float]]:
     out: List[Tuple[int, float]] = []
     for r in ewok_records:
-        step = r.get("step")
+        x_value = _ewok_x_value(r, use_tokens)
         margin_payload = get_margin_payload(r, reduction)
-        if not isinstance(step, int) or not isinstance(margin_payload, dict):
+        if x_value is None or not isinstance(margin_payload, dict):
             continue
         y = _extract_margin_average_scalar(margin_payload, metric_key)
         if y is None:
             continue
-        out.append((step, y))
+        out.append((x_value, y))
     return sorted(out, key=lambda t: t[0])
 
 
@@ -606,8 +655,9 @@ def plot_ewok_margin_average_all_domains(
     reduction: str,
     dpi: int,
 ) -> List[Path]:
-    signed = _margin_average_series(ewok_records, reduction, "mean_signed_m")
-    abs_margin = _margin_average_series(ewok_records, reduction, "mean_abs_m")
+    use_tokens = _ewok_use_token_axis(ewok_records)
+    signed = _margin_average_series(ewok_records, reduction, "mean_signed_m", use_tokens=use_tokens)
+    abs_margin = _margin_average_series(ewok_records, reduction, "mean_abs_m", use_tokens=use_tokens)
     if not signed and not abs_margin:
         return []
 
@@ -636,7 +686,7 @@ def plot_ewok_margin_average_all_domains(
 
     ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
     ax.set_title(f"EWOK Mean Margins Across Domains ({reduction})")
-    ax.set_xlabel("Optimizer Step")
+    _apply_ewok_x_axis(ax, use_tokens)
     ax.set_ylabel("Margin")
     ax.grid(True, alpha=0.25)
     ax.legend()
@@ -681,9 +731,10 @@ def plot_ewok_full_average_all_domains(
     output_dir: Path,
     dpi: int,
 ) -> List[Path]:
+    use_tokens = _ewok_use_token_axis(ewok_records)
     series: Dict[str, List[Tuple[int, float]]] = {
-        "sum": _full_average_series(ewok_records, "sum"),
-        "mean": _full_average_series(ewok_records, "mean"),
+        "sum": _full_average_series(ewok_records, "sum", use_tokens=use_tokens),
+        "mean": _full_average_series(ewok_records, "mean", use_tokens=use_tokens),
     }
 
     if not series["sum"] and not series["mean"]:
@@ -713,7 +764,7 @@ def plot_ewok_full_average_all_domains(
 
     ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
     ax.set_title("EWOK Full Average Across Domains")
-    ax.set_xlabel("Optimizer Step")
+    _apply_ewok_x_axis(ax, use_tokens)
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0.0, 1.0)
     ax.grid(True, alpha=0.25)
@@ -736,8 +787,9 @@ def plot_ewok_full_mean_average_compare(
     smooth_window: int = 1,
     show_markers: bool = True,
 ) -> List[Path]:
-    primary = _full_average_series(primary_ewok_records, "mean")
-    compare = _full_average_series(compare_ewok_records, "mean")
+    use_tokens = _ewok_use_token_axis(primary_ewok_records) and _ewok_use_token_axis(compare_ewok_records)
+    primary = _full_average_series(primary_ewok_records, "mean", use_tokens=use_tokens)
+    compare = _full_average_series(compare_ewok_records, "mean", use_tokens=use_tokens)
     if not primary and not compare:
         return []
 
@@ -760,7 +812,7 @@ def plot_ewok_full_mean_average_compare(
 
     ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
     ax.set_title("EWOK Full Mean Average Across Domains: Run Comparison")
-    ax.set_xlabel("Optimizer Step")
+    _apply_ewok_x_axis(ax, use_tokens)
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0.0, 1.0)
     ax.grid(True, alpha=0.25)
@@ -773,12 +825,15 @@ def plot_ewok_full_mean_average_compare(
     return [out]
 
 
-def _full_mean_domain_series(ewok_records: List[Dict]) -> Dict[str, List[Tuple[int, float]]]:
+def _full_mean_domain_series(
+    ewok_records: List[Dict],
+    use_tokens: bool = False,
+) -> Dict[str, List[Tuple[int, float]]]:
     by_domain: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
     for r in ewok_records:
-        step = r.get("step")
+        x_value = _ewok_x_value(r, use_tokens)
         full = r.get("eval_babylm_completion_choice_full_mean", r.get("eval_full_mean"))
-        if not isinstance(step, int) or not isinstance(full, dict):
+        if x_value is None or not isinstance(full, dict):
             continue
         for domain, value in full.items():
             if str(domain) == "average":
@@ -786,7 +841,7 @@ def _full_mean_domain_series(ewok_records: List[Dict]) -> Dict[str, List[Tuple[i
             y = _pair_to_scalar(value)
             if y is None:
                 continue
-            by_domain[str(domain)].append((step, y))
+            by_domain[str(domain)].append((x_value, y))
     for domain in list(by_domain.keys()):
         by_domain[domain] = sorted(by_domain[domain], key=lambda t: t[0])
     return by_domain
@@ -804,8 +859,9 @@ def plot_ewok_full_mean_domains_compare(
     smooth_window: int = 1,
     show_markers: bool = True,
 ) -> List[Path]:
-    primary_by_domain = _full_mean_domain_series(primary_ewok_records)
-    compare_by_domain = _full_mean_domain_series(compare_ewok_records)
+    use_tokens = _ewok_use_token_axis(primary_ewok_records) and _ewok_use_token_axis(compare_ewok_records)
+    primary_by_domain = _full_mean_domain_series(primary_ewok_records, use_tokens=use_tokens)
+    compare_by_domain = _full_mean_domain_series(compare_ewok_records, use_tokens=use_tokens)
     domains = set(primary_by_domain.keys()) | set(compare_by_domain.keys())
     if word2vec_baselines:
         domains |= set(word2vec_baselines.keys())
@@ -864,10 +920,10 @@ def plot_ewok_full_mean_domains_compare(
         ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="random chance = 50%")
 
         ax.set_title(domain, fontsize=10)
-        ax.set_xlabel("Step", fontsize=9)
+        _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
         ax.set_ylabel("Acc", fontsize=9)
         ax.set_ylim(0.0, 1.0)
-        if isinstance(max_step, int):
+        if isinstance(max_step, int) and not use_tokens:
             ax.set_xlim(0, max_step)
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=7)
@@ -889,12 +945,13 @@ def _category_column_series(
     ewok_records: List[Dict],
     reduction: str,
     column: str,
+    use_tokens: bool = False,
 ) -> Dict[str, List[Tuple[int, float]]]:
     by_category: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
     for rec in ewok_records:
-        step = rec.get("step")
+        x_value = _ewok_x_value(rec, use_tokens)
         by_col = get_category_payload(rec, reduction)
-        if not isinstance(step, int) or not isinstance(by_col, dict):
+        if x_value is None or not isinstance(by_col, dict):
             continue
         col_map = by_col.get(column)
         if not isinstance(col_map, dict):
@@ -905,7 +962,7 @@ def _category_column_series(
             y = _pair_to_scalar(value)
             if y is None:
                 continue
-            by_category[str(category)].append((step, y))
+            by_category[str(category)].append((x_value, y))
     for category in list(by_category.keys()):
         by_category[category] = sorted(by_category[category], key=lambda t: t[0])
     return by_category
@@ -957,8 +1014,9 @@ def plot_ewok_category_column_mean_compare(
     smooth_window: int = 1,
     show_markers: bool = True,
 ) -> List[Path]:
-    primary_by_category = _category_column_series(primary_ewok_records, "mean", column)
-    compare_by_category = _category_column_series(compare_ewok_records, "mean", column)
+    use_tokens = _ewok_use_token_axis(primary_ewok_records) and _ewok_use_token_axis(compare_ewok_records)
+    primary_by_category = _category_column_series(primary_ewok_records, "mean", column, use_tokens=use_tokens)
+    compare_by_category = _category_column_series(compare_ewok_records, "mean", column, use_tokens=use_tokens)
     categories = sorted(set(primary_by_category.keys()) | set(compare_by_category.keys()))
     if not categories:
         return []
@@ -1011,10 +1069,10 @@ def plot_ewok_category_column_mean_compare(
 
         ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
         ax.set_title(category, fontsize=10)
-        ax.set_xlabel("Optimizer Step", fontsize=9)
+        _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
         ax.set_ylabel("Acc", fontsize=9)
         ax.set_ylim(0.0, 1.0)
-        if isinstance(max_step, int):
+        if isinstance(max_step, int) and not use_tokens:
             ax.set_xlim(0, max_step)
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=7)
@@ -1044,6 +1102,7 @@ def plot_ewok_category_subplots(
     ]
     if not category_records:
         return []
+    use_tokens = _ewok_use_token_axis(category_records)
 
     last_by_col = get_category_payload(category_records[-1], reduction) or {}
     if not isinstance(last_by_col, dict) or not last_by_col:
@@ -1076,7 +1135,10 @@ def plot_ewok_category_subplots(
             y_avg = _pair_to_scalar(col_map.get("average"))
             if y_avg is None:
                 continue
-            avg_epochs.append(rec["step"])
+            x_value = _ewok_x_value(rec, use_tokens)
+            if x_value is None:
+                continue
+            avg_epochs.append(x_value)
             avg_vals.append(y_avg)
 
         for category in categories:
@@ -1092,7 +1154,10 @@ def plot_ewok_category_subplots(
                 y = _pair_to_scalar(col_map.get(category))
                 if y is None:
                     continue
-                xs.append(rec["step"])
+                x_value = _ewok_x_value(rec, use_tokens)
+                if x_value is None:
+                    continue
+                xs.append(x_value)
                 ys.append(y)
             if xs:
                 category_series[str(category)] = (xs, ys)
@@ -1131,7 +1196,7 @@ def plot_ewok_category_subplots(
 
             ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
             ax.set_title(category, fontsize=10)
-            ax.set_xlabel("Optimizer Step", fontsize=9)
+            _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
             ax.set_ylabel("Acc", fontsize=9)
             ax.set_ylim(0.0, 1.0)
             ax.grid(True, alpha=0.25)

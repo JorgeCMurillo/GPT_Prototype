@@ -7,8 +7,10 @@ import numpy as np
 
 try:
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import FuncFormatter
 except Exception:
     plt = None
+    FuncFormatter = None
 
 
 def _canonicalize_category_value(value) -> str:
@@ -37,6 +39,50 @@ def _pair_to_scalar(value):
     if isinstance(value, (float, int)):
         return float(value)
     return None
+
+
+def _is_finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(float(value))
+
+
+def _format_compact_count(value, _pos=None) -> str:
+    if not _is_finite_number(value):
+        return ""
+    value = float(value)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if value >= scale:
+            return f"{sign}{value / scale:.3g}{suffix}"
+    return f"{sign}{value:.3g}"
+
+
+def _ewok_use_token_axis(records) -> bool:
+    xs = [
+        rec.get("tokens_seen_global_approx")
+        for rec in records
+        if isinstance(rec, dict) and isinstance(rec.get("step"), int)
+    ]
+    return bool(xs) and all(_is_finite_number(x) for x in xs)
+
+
+def _ewok_x_value(record, use_tokens: bool):
+    if use_tokens:
+        value = record.get("tokens_seen_global_approx")
+        if _is_finite_number(value):
+            return float(value)
+    step = record.get("step")
+    if isinstance(step, int):
+        return float(step)
+    return None
+
+
+def _apply_ewok_x_axis(ax, use_tokens: bool, fontsize: int = 9) -> None:
+    if use_tokens and FuncFormatter is not None:
+        ax.xaxis.set_major_formatter(FuncFormatter(_format_compact_count))
+        ax.set_xlabel("Tokens Observed", fontsize=fontsize)
+        return
+    ax.set_xlabel("Optimizer Step", fontsize=fontsize)
 
 
 def build_ewok_row_category_lookup(
@@ -118,6 +164,7 @@ def plot_ewok_category_subplots(step_metrics, out_dir, metric_key="eval_by_categ
     ]
     if not ewok_records:
         return
+    use_tokens = _ewok_use_token_axis(ewok_records)
 
     last_by_col = ewok_records[-1].get(metric_key, {})
     if not isinstance(last_by_col, dict) or not last_by_col:
@@ -149,7 +196,10 @@ def plot_ewok_category_subplots(step_metrics, out_dir, metric_key="eval_by_categ
 
             y_avg = _pair_to_scalar(c.get("average"))
             if y_avg is not None:
-                avg_epochs.append(rec["step"])
+                x_value = _ewok_x_value(rec, use_tokens)
+                if x_value is None:
+                    continue
+                avg_epochs.append(x_value)
                 avg_vals.append(y_avg)
                 y_top = max(y_top, y_avg)
 
@@ -165,7 +215,10 @@ def plot_ewok_category_subplots(step_metrics, out_dir, metric_key="eval_by_categ
                 y = _pair_to_scalar(c.get(category))
                 if y is None:
                     continue
-                xs.append(rec["step"])
+                x_value = _ewok_x_value(rec, use_tokens)
+                if x_value is None:
+                    continue
+                xs.append(x_value)
                 ys.append(y)
             if xs:
                 category_series[category] = (xs, ys)
@@ -199,7 +252,7 @@ def plot_ewok_category_subplots(step_metrics, out_dir, metric_key="eval_by_categ
 
             ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
             ax.set_title(str(category), fontsize=10)
-            ax.set_xlabel("Optimizer Step", fontsize=9)
+            _apply_ewok_x_axis(ax, use_tokens, fontsize=9)
             ax.set_ylabel("avg_eval2_acc", fontsize=9)
             ax.set_ylim(0.0, 1.0)
             ax.grid(True, alpha=0.25)

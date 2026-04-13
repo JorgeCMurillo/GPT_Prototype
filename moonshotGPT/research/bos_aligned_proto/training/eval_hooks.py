@@ -10,8 +10,10 @@ import torch
 
 try:
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import FuncFormatter
 except Exception:
     plt = None
+    FuncFormatter = None
 
 try:
     from research.bos_aligned_proto.evaluation.ewok import (
@@ -144,26 +146,73 @@ def extract_full_average_scalar(full_payload):
     return float(sum(vals) / len(vals))
 
 
+def format_compact_count(value, _pos=None) -> str:
+    if not is_finite_number(value):
+        return ""
+    value = float(value)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if value >= scale:
+            return f"{sign}{value / scale:.3g}{suffix}"
+    return f"{sign}{value:.3g}"
+
+
+def ewok_use_token_axis(records) -> bool:
+    xs = [
+        record.get("tokens_seen_global_approx")
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("step"), int)
+    ]
+    return bool(xs) and all(is_finite_number(x) for x in xs)
+
+
+def ewok_x_value(record, use_tokens: bool):
+    if use_tokens:
+        value = record.get("tokens_seen_global_approx")
+        if is_finite_number(value):
+            return float(value)
+    step = record.get("step")
+    if isinstance(step, int):
+        return float(step)
+    return None
+
+
+def apply_ewok_x_axis(ax, use_tokens: bool, fontsize: int | None = None) -> None:
+    if use_tokens and FuncFormatter is not None:
+        ax.xaxis.set_major_formatter(FuncFormatter(format_compact_count))
+        if fontsize is None:
+            ax.set_xlabel("Tokens Observed")
+        else:
+            ax.set_xlabel("Tokens Observed", fontsize=fontsize)
+        return
+    if fontsize is None:
+        ax.set_xlabel("Optimizer Step")
+    else:
+        ax.set_xlabel("Optimizer Step", fontsize=fontsize)
+
+
 def plot_ewok_full_mean_average(step_metrics, out_dir: str) -> None:
-    """Plot EWOK full-mean average across optimizer steps from in-memory step_metrics."""
+    """Plot EWOK full-mean average from in-memory step_metrics."""
     if plt is None or not step_metrics:
         return
 
-    by_step = {}
+    use_tokens = ewok_use_token_axis(step_metrics)
+    by_x = {}
     for record in step_metrics:
-        step = record.get("step")
+        x_value = ewok_x_value(record, use_tokens)
         full_mean = record.get("eval_full_mean")
-        if not isinstance(step, int) or not isinstance(full_mean, dict):
+        if x_value is None or not isinstance(full_mean, dict):
             continue
         scalar = extract_full_average_scalar(full_mean)
         if scalar is None:
             continue
-        by_step[step] = float(scalar)
+        by_x[x_value] = float(scalar)
 
-    if not by_step:
+    if not by_x:
         return
 
-    points = sorted(by_step.items(), key=lambda item: item[0])
+    points = sorted(by_x.items(), key=lambda item: item[0])
     xs = [x for x, _ in points]
     ys = [y for _, y in points]
 
@@ -171,8 +220,8 @@ def plot_ewok_full_mean_average(step_metrics, out_dir: str) -> None:
     ax = fig.add_subplot(1, 1, 1)
     ax.plot(xs, ys, marker="o", linewidth=1.8, markersize=3.5, color="#2a6f97", label="full_mean_average")
     ax.axhline(0.5, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.1, label="random chance = 50%")
-    ax.set_title("EWOK Full Mean Average Across Steps")
-    ax.set_xlabel("Optimizer Step")
+    ax.set_title("EWOK Full Mean Average")
+    apply_ewok_x_axis(ax, use_tokens)
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0.0, 1.0)
     ax.grid(True, alpha=0.25)
@@ -213,6 +262,7 @@ def plot_ewok_margin_domains(step_metrics, out_dir: str, metric_key: str = "eval
     ]
     if not ewok_records:
         return
+    use_tokens = ewok_use_token_axis(ewok_records)
 
     reduction_suffix = metric_key.replace("eval_margin_stats_", "").strip("_") or "unknown"
     by_domain = {}
@@ -224,8 +274,11 @@ def plot_ewok_margin_domains(step_metrics, out_dir: str, metric_key: str = "eval
             y_signed = stats.get("mean_signed_m")
             y_abs = stats.get("mean_abs_m")
             if is_finite_number(y_signed) and is_finite_number(y_abs):
+                x_value = ewok_x_value(record, use_tokens)
+                if x_value is None:
+                    continue
                 by_domain.setdefault(str(domain), []).append(
-                    (record["step"], float(y_signed), float(y_abs))
+                    (x_value, float(y_signed), float(y_abs))
                 )
 
     if not by_domain:
@@ -261,7 +314,7 @@ def plot_ewok_margin_domains(step_metrics, out_dir: str, metric_key: str = "eval
         )
         ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
         ax.set_title(domain, fontsize=10)
-        ax.set_xlabel("Step", fontsize=9)
+        apply_ewok_x_axis(ax, use_tokens, fontsize=9)
         ax.set_ylabel("Margin", fontsize=9)
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=7)
@@ -285,19 +338,20 @@ def plot_ewok_margin_average_all_domains(
         return
 
     reduction_suffix = metric_key.replace("eval_margin_stats_", "").strip("_") or "unknown"
+    use_tokens = ewok_use_token_axis(step_metrics)
     signed = []
     abs_margin = []
     for record in step_metrics:
-        step = record.get("step")
         margin_payload = record.get(metric_key)
-        if not isinstance(step, int) or not isinstance(margin_payload, dict):
+        x_value = ewok_x_value(record, use_tokens)
+        if x_value is None or not isinstance(margin_payload, dict):
             continue
         y_signed = extract_margin_average_scalar(margin_payload, "mean_signed_m")
         y_abs = extract_margin_average_scalar(margin_payload, "mean_abs_m")
         if y_signed is not None:
-            signed.append((step, float(y_signed)))
+            signed.append((x_value, float(y_signed)))
         if y_abs is not None:
-            abs_margin.append((step, float(y_abs)))
+            abs_margin.append((x_value, float(y_abs)))
 
     if not signed and not abs_margin:
         return
@@ -327,7 +381,7 @@ def plot_ewok_margin_average_all_domains(
 
     ax.axhline(0.0, color="#d62728", linestyle=(0, (8, 2, 2, 2)), linewidth=1.0, label="zero margin")
     ax.set_title(f"EWOK Mean Margins Across Domains ({reduction_suffix})")
-    ax.set_xlabel("Optimizer Step")
+    apply_ewok_x_axis(ax, use_tokens)
     ax.set_ylabel("Margin")
     ax.grid(True, alpha=0.25)
     ax.legend()
