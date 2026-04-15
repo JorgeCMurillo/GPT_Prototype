@@ -133,6 +133,45 @@ Setup:
 
 The most interpretable numbers below are **final EWoK `eval2_acc` accuracies**. I also checked the margin summaries in the ablation outputs; they tell the same qualitative story.
 
+## What exactly were the matched controls?
+
+The controls were not arbitrary random windows sampled from the whole corpus. They were drawn from the mined `random_control` pool and then **matched one-by-one** to the treated windows during materialization.
+
+The matching procedure for each treated example was:
+
+1. match on `candidate_kind`
+2. match on exact `token_count`
+3. prefer the **same shard**
+4. within that matched set, choose the control with the smallest absolute difference in `local_example_idx`
+5. when there is still a tie, choose the lower `selection_score` and then lower `candidate_id`
+
+For this specific `top1000_vs_random` run:
+
+- treated pool: `positive`
+- control pool: `random_control`
+- number of treated examples: `1000`
+- number of control examples: `1000`
+- same-shard pair fraction: `1.0`
+- token-count balance: exact
+- treated total tokens: `1,025,000`
+- control total tokens: `1,025,000`
+- mean within-shard position distance: `2274.26`
+- mean treated-control score gap: `9.53`
+
+So "matched control" here means: windows with the same broad structural format and the same token budget, usually taken from the same source shard and nearby position, but drawn from a different pool that was not selected for the discourse-binding properties we were targeting.
+
+## Baseline checkpoint scores
+
+Because the treated-vs-control comparison does not by itself tell us whether the CPT intervention is globally helpful, it is useful to keep the unmodified base checkpoints in view.
+
+The baseline `eval2_acc` scores for the three checkpoints were:
+
+| Checkpoint | Baseline overall | Baseline TargetDiff variable swap | Baseline ContextDiff variable swap |
+|---|---:|---:|---:|
+| `8k` | `0.5489` | `0.5220` | `0.5154` |
+| `12k` | `0.5586` | `0.5176` | `0.4917` |
+| `16k` | `0.5739` | `0.5330` | `0.5403` |
+
 ## How to interpret treated vs control
 
 There are two different comparisons in this experiment, and they answer different questions:
@@ -173,6 +212,14 @@ Interpretation:
 
 So `8k` does not look like a strong success for the role-binding hypothesis. It looks more like a mild generic improvement regime with only weak specialization on the target behavior.
 
+Relative to the base checkpoint:
+
+- the `8k` treated model at `8e-5` is slightly above baseline overall (`0.5508` vs `0.5489`)
+- TargetDiff variable swap is also slightly above baseline (`0.5242` vs `0.5220`)
+- ContextDiff variable swap is noticeably above baseline (`0.5253` vs `0.5154`)
+
+So `8k` is the one checkpoint where the treated arm looks modestly better than both control and baseline, but the effect remains small enough that it is hard to call it a clean role-binding win.
+
 ### 12k checkpoint
 
 At `12k`, the picture changes substantially. This is the checkpoint where the role-binding hypothesis is best supported.
@@ -200,6 +247,14 @@ The 6-seed confidence intervals strengthen this interpretation. At `12k`, `8e-5`
 
 So by the time we aggregate across six seeds, the `12k` role-binding effect no longer looks like a single lucky run. It still looks checkpoint-specific and somewhat narrow, but it is much harder to dismiss as noise.
 
+Relative to the base checkpoint:
+
+- overall baseline is still higher than either arm (`0.5586` baseline vs `0.5484` treated at `8e-5`)
+- TargetDiff variable swap is higher for treated than baseline (`0.5352` vs `0.5176`)
+- ContextDiff variable swap is also higher for treated than baseline (`0.5288` vs `0.4917`)
+
+That makes `12k` especially interesting. It suggests the intervention is not merely helping relative to control; on the targeted variable-swap behavior, it is also improving over the base checkpoint itself, even while broader overall accuracy does not improve.
+
 ### 16k checkpoint
 
 At `16k`, the selected text still helps on some variable-swap measures, but the broader model looks less happy with the intervention.
@@ -222,6 +277,14 @@ At `16k`, `8e-5`:
 - ContextDiff variable swap lift: `+0.79` points, 95% CI `[-0.45, +2.03]`
 
 So `16k` is not a null result. But it is a more ambiguous one than `12k`. The text still appears to help the target behavior, especially TargetDiff variable swap, but it does so in a regime where overall accuracy degrades more clearly.
+
+Relative to the base checkpoint:
+
+- overall baseline remains clearly better than either arm (`0.5739` baseline vs `0.5547` treated at `8e-5`)
+- TargetDiff variable swap is roughly flat relative to baseline (`0.5323` treated vs `0.5330` baseline`)
+- ContextDiff variable swap is below baseline (`0.5276` treated vs `0.5403` baseline`)
+
+So at `16k`, the intervention still seems capable of shifting the model in a variable-swap-friendly direction relative to control, but it no longer looks like a clean improvement over the base checkpoint. That is one reason `16k` feels less attractive than `12k`.
 
 ## Comparison across checkpoints
 
