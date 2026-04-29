@@ -416,6 +416,37 @@ with `materialize_sentence_snippet_pools.py`; the materializer now prefers
 `is_control_<selector>` when present and falls back to the legacy shared
 `is_random_control_pool` column otherwise.
 
+## Cached Sentence Snippet Reranking
+
+For selector iteration, use the cached reranker instead of rerunning the full
+streaming miner. It consumes an existing `snippet_features.csv` plus
+`snippet_text.jsonl`, applies the current selector gates/scores, rebuilds
+non-overlapping treated/control pools, and writes the same review and
+diagnostic artifacts.
+
+Example:
+
+```bash
+python -m research.bos_aligned_proto.analysis.discourse_tracking.rerank_sentence_snippet_cache \
+  --input_dir /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/outputs/discourse_tracking_selector_top10k_100k_seed42/ckpt_periodic_step0016000 \
+  --output_dir /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/outputs/discourse_tracking_selector_top10k_100k_seed42_cache_rerank_v2/ckpt_periodic_step0016000 \
+  --selectors all \
+  --top_k 10000 \
+  --num_control_snippets 10000 \
+  --max_snippets_per_parent_per_selector 3 \
+  --length_balance proportional
+```
+
+By default, `--parser_backend cache` reuses the cached scalar features and only
+recomputes layout-noise features from the saved text. Use `--parser_backend
+regex` or `--parser_backend spacy` when feature extraction logic itself changed
+and you want to recompute all snippet features from cached text.
+
+The limitation is deliberate: cached reranking can only select from snippets
+that were written into the original cache. It cannot recover sentence windows
+discarded by the original streaming frontier. Once the recipes look right, run
+the streaming miner again for the final full candidate universe.
+
 ## Practical Recommendations
 
 - Start with the feature rules first. They are easier to debug than embeddings.
