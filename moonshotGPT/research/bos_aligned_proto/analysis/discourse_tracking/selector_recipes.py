@@ -125,11 +125,11 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         - 2.0 * noise_penalty
     )
     state_update_score = float(
-        min(_record_float(record, "change_verb_density"), 5.0)
-        + 0.50 * _record_float(record, "same_entity_event_chain_count")
-        + 0.25 * _record_float(record, "temporal_marker_density")
-        + 0.25 * _record_float(record, "result_state_pattern_count")
-        - 2.0 * noise_penalty
+        0.85 * min(_record_float(record, "change_verb_density"), 5.0)
+        + 0.65 * _record_float(record, "same_entity_event_chain_count")
+        + 0.35 * _record_float(record, "temporal_marker_density")
+        + 0.35 * _record_float(record, "result_state_pattern_count")
+        - 2.10 * noise_penalty
     )
     internal_state_score = float(
         min(_record_float(record, "mental_state_density"), 5.0)

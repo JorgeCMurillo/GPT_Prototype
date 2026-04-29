@@ -60,11 +60,11 @@ def assign_selector_pools(
         - 2.0 * noise_penalty
     )
     working["state_update_score"] = (
-        working["change_verb_density"].astype(float).clip(upper=5.0)
-        + 0.50 * working["same_entity_event_chain_count"].astype(float)
-        + 0.25 * working["temporal_marker_density"].astype(float)
-        + 0.25 * working["result_state_pattern_count"].astype(float)
-        - 2.0 * noise_penalty
+        0.85 * working["change_verb_density"].astype(float).clip(upper=5.0)
+        + 0.65 * working["same_entity_event_chain_count"].astype(float)
+        + 0.35 * working["temporal_marker_density"].astype(float)
+        + 0.35 * working["result_state_pattern_count"].astype(float)
+        - 2.10 * noise_penalty
     )
     working["internal_state_score"] = (
         working["mental_state_density"].astype(float).clip(upper=5.0)
