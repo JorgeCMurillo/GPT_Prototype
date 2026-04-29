@@ -416,6 +416,89 @@ with `materialize_sentence_snippet_pools.py`; the materializer now prefers
 `is_control_<selector>` when present and falls back to the legacy shared
 `is_random_control_pool` column otherwise.
 
+## State Update Selector Rationale
+
+The `state_update` selector is meant to test whether training on spans with
+explicit entity-state changes improves variable-swap behavior. The target text
+is not just "many change verbs"; it is text where an entity, group, institution,
+object, or process changes state across a short local context.
+
+Examples of the intended pressure include:
+
+- historical/institutional transitions, such as an organization moving,
+  expanding, merging, closing, or changing role;
+- narrative state transitions, such as a person falling out of favor, becoming
+  responsible for something, or being displaced by another actor;
+- process/mechanism transitions, such as a biological, physical, or procedural
+  system changing over time.
+
+The early recipe over-relied on `change_verb_density` and
+`same_entity_event_chain_count`. That produced some good examples, but the top
+ranks also exposed two important failure modes:
+
+- bibliography/citation blocks can repeat author names across citation
+  sentences and contain phrases like "changes in weight", which inflated the
+  same-entity chain signal without creating a useful local discourse update;
+- outline, slide, and list-heavy text can contain many verbs like "increase",
+  "change", and "reduce" while mostly testing formatting or topical density
+  rather than entity-state tracking.
+
+The current `state_update` score is therefore still simple, but more guarded:
+
+```text
+0.85 * min(change_verb_density, 5.0) +
+0.65 * min(same_entity_event_chain_count, 3.0) +
+0.35 * temporal_marker_density +
+0.35 * result_state_pattern_count -
+2.10 * noise_penalty -
+1.50 * bibliography_noise_score
+```
+
+The gate also requires:
+
+- the snippet to pass the general validity, repetition, and layout-noise checks;
+- `change_verb_density > 0`;
+- `state_update_score > 0`;
+- `bibliography_noise_score <= 0.85`;
+- at least one stronger state-update anchor:
+  `same_entity_event_chain_count > 0`, `result_state_pattern_count > 0`, or
+  `temporal_marker_count > 0`.
+
+The cap on `same_entity_event_chain_count` is especially important. It keeps one
+pathological source, such as a bibliography with many repeated names, from
+dominating the ranking just because the same title-cased strings recur. The cap
+does not remove that signal; it just says that beyond three chained entities, the
+extra count is no longer strong evidence of better state-update pressure.
+
+The bibliography and inline-list features are candidate-quality guardrails, not
+outcome-tuned filters. They were added after inspecting top-ranked examples from
+the cached selector previews, before running any EWoK intervention comparison
+with those examples. On the `100k` parent-window cache, the conservative
+`state_update` rerank changed the pool but did not make it sparse:
+
+- gate-passing cached snippets went from `45,322` to `33,802`;
+- locally non-overlapping snippets went from `39,058` to `29,242`;
+- the top-10k still filled completely;
+- top-10k overlap with the previous recipe was `8,766 / 10,000`;
+- in the top-200 preview, bibliography-like examples went from `4` to `0`,
+  inline-bullet examples went from `2` to `1`, outline-like examples went from
+  `10` to `5`, and `layout_noise_score > 0.5` went from `10` to `6`.
+
+Known costs of the change:
+
+- some legitimate scientific or biomedical process text can be demoted if it is
+  citation-heavy;
+- some useful structured educational text can be demoted if it is formatted like
+  slides or notes;
+- simple state changes with only a change verb and no temporal/result/entity
+  anchor can be excluded;
+- cached reranking cannot recover sentence windows that were never written into
+  the original streaming cache.
+
+If future results are sensitive to `state_update`, these guardrails should be
+reported as prespecified text-quality filters for aligning the selector with the
+hypothesis, not as model-performance filters.
+
 ## Cached Sentence Snippet Reranking
 
 For selector iteration, use the cached reranker instead of rerunning the full
