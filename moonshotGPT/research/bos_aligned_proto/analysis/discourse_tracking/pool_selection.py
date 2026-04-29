@@ -10,6 +10,7 @@ import pandas as pd
 from .features import build_text_embeddings
 from .selector_recipes import SELECTOR_NAMES, _ensure_selector_columns, selector_sort_columns
 from .snippet_features import (
+    BIBLIOGRAPHY_NOISE_GATE_MAX,
     DUPLICATE_SENTENCE_GATE_MAX,
     HEAVY_LIST_NOISE_GATE_MAX,
     LIST_NOISE_GATE_MAX,
@@ -59,12 +60,14 @@ def assign_selector_pools(
         + working["same_pair_multi_relation_count"].astype(float).clip(upper=12.0)
         - 2.0 * noise_penalty
     )
+    capped_event_chain_count = working["same_entity_event_chain_count"].astype(float).clip(upper=3.0)
     working["state_update_score"] = (
         0.85 * working["change_verb_density"].astype(float).clip(upper=5.0)
-        + 0.65 * working["same_entity_event_chain_count"].astype(float)
+        + 0.65 * capped_event_chain_count
         + 0.35 * working["temporal_marker_density"].astype(float)
         + 0.35 * working["result_state_pattern_count"].astype(float)
         - 2.10 * noise_penalty
+        - 1.50 * working["bibliography_noise_score"].astype(float)
     )
     working["internal_state_score"] = (
         working["mental_state_density"].astype(float).clip(upper=5.0)
@@ -79,6 +82,12 @@ def assign_selector_pools(
     )
     list_ok = working["layout_noise_score"].astype(float).le(LIST_NOISE_GATE_MAX)
     heavy_list_ok = working["layout_noise_score"].astype(float).le(HEAVY_LIST_NOISE_GATE_MAX)
+    bibliography_ok = working["bibliography_noise_score"].astype(float).le(BIBLIOGRAPHY_NOISE_GATE_MAX)
+    state_update_anchor = (
+        (working["same_entity_event_chain_count"].astype(int) > 0)
+        | (working["result_state_pattern_count"].astype(int) > 0)
+        | (working["temporal_marker_count"].astype(int) > 0)
+    )
 
     gate_masks = {
         "relation_role": (
@@ -112,6 +121,8 @@ def assign_selector_pools(
             working["is_valid_snippet"]
             & repeat_ok
             & list_ok
+            & bibliography_ok
+            & state_update_anchor
             & (working["change_verb_density"].astype(float) > 0.0)
             & working["state_update_score"].astype(float).gt(0.0)
         ),

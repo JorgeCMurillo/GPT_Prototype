@@ -418,8 +418,14 @@ STATE_COMPLEMENT_RE = re.compile(
 )
 LIST_MARKER_RE = re.compile(r"^\s*(?:[-*]|\d{1,3}[.)]|[A-Za-z][.)])\s+")
 DENSE_LIST_SEPARATOR_RE = re.compile(r"[\u2012\u2013\u2014;]\s*")
+INLINE_LIST_GLYPH_RE = re.compile(r"[\u2022\u2023\u25E6\u2043\u2219\u25AA\u25AB\u25CF\u25CB\u25A0\u25A1]")
+DOI_RE = re.compile(r"\b(?:doi:?\s*)?10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
+ET_AL_RE = re.compile(r"\bet\s+al\.?", re.IGNORECASE)
+AUTHOR_INITIAL_RE = re.compile(r"\b[A-Z][a-zA-Z'\u00C0-\u024F-]+(?:\s+[A-Z]){1,3}\b")
+CITATION_YEAR_VOLUME_RE = re.compile(r"\b(?:19|20)\d{2},\s*\d{1,4}\s*:")
 LIST_NOISE_GATE_MAX = 0.85
 HEAVY_LIST_NOISE_GATE_MAX = 0.95
+BIBLIOGRAPHY_NOISE_GATE_MAX = 0.85
 REPEATED_3GRAM_GATE_MAX = 0.20
 DUPLICATE_SENTENCE_GATE_MAX = 0.25
 
@@ -538,6 +544,11 @@ def _layout_noise_features(text: str, sentence_count: int) -> dict[str, float | 
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     line_count = len(lines)
     list_marker_count = sum(1 for line in lines if LIST_MARKER_RE.match(line))
+    inline_list_glyph_count = len(INLINE_LIST_GLYPH_RE.findall(raw))
+    doi_count = len(DOI_RE.findall(raw))
+    et_al_count = len(ET_AL_RE.findall(raw))
+    author_initial_count = len(AUTHOR_INITIAL_RE.findall(raw))
+    citation_year_volume_count = len(CITATION_YEAR_VOLUME_RE.findall(raw))
     short_structured_line_count = sum(
         1
         for line in lines
@@ -549,23 +560,42 @@ def _layout_noise_features(text: str, sentence_count: int) -> dict[str, float | 
     short_line_fraction = float(short_structured_line_count / max(1, line_count)) if line_count >= 6 else 0.0
     newline_density = float(newline_count / max(1, sentence_count))
     dense_separator_density = float(dense_separator_count / max(1, sentence_count))
+    inline_list_glyph_density = float(inline_list_glyph_count / max(1, sentence_count))
+    bibliography_noise_score = min(
+        1.0,
+        max(
+            float(doi_count > 0),
+            float(et_al_count > 0),
+            min(1.0, citation_year_volume_count / 2.0),
+            min(1.0, author_initial_count / 12.0),
+        ),
+    )
     layout_noise_score = min(
         1.0,
         max(
             bullet_line_fraction,
             min(1.0, list_marker_count / 4.0),
+            min(1.0, inline_list_glyph_count / 8.0),
             short_line_fraction,
             min(1.0, newline_density / 4.0),
             min(1.0, dense_separator_density / 10.0),
+            min(1.0, inline_list_glyph_density / 4.0),
         ),
     )
     return {
         "line_count": int(line_count),
         "list_marker_count": int(list_marker_count),
+        "inline_list_glyph_count": int(inline_list_glyph_count),
         "short_structured_line_count": int(short_structured_line_count),
+        "doi_count": int(doi_count),
+        "et_al_count": int(et_al_count),
+        "author_initial_count": int(author_initial_count),
+        "citation_year_volume_count": int(citation_year_volume_count),
         "bullet_line_fraction": float(bullet_line_fraction),
         "newline_density": float(newline_density),
         "dense_separator_density": float(dense_separator_density),
+        "inline_list_glyph_density": float(inline_list_glyph_density),
+        "bibliography_noise_score": float(bibliography_noise_score),
         "layout_noise_score": float(layout_noise_score),
     }
 

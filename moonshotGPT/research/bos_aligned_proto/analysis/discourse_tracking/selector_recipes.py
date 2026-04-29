@@ -8,6 +8,7 @@ import pandas as pd
 
 from .snippet_features import (
     DUPLICATE_SENTENCE_GATE_MAX,
+    BIBLIOGRAPHY_NOISE_GATE_MAX,
     HEAVY_LIST_NOISE_GATE_MAX,
     LIST_NOISE_GATE_MAX,
     REPEATED_3GRAM_GATE_MAX,
@@ -55,6 +56,7 @@ SELECTOR_DEFAULT_COLUMNS = (
     "two_entity_relation_sentence_fraction",
     "change_verb_density",
     "change_verb_count",
+    "temporal_marker_count",
     "temporal_marker_density",
     "result_state_pattern_count",
     "same_entity_event_chain_count",
@@ -65,6 +67,8 @@ SELECTOR_DEFAULT_COLUMNS = (
     "preference_goal_intent_count",
     "unique_attribute_count",
     "layout_noise_score",
+    "bibliography_noise_score",
+    "inline_list_glyph_count",
     "repeated_3gram_ratio",
     "duplicate_sentence_fraction",
     "bos_contamination_penalty",
@@ -124,12 +128,14 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         + min(_record_float(record, "same_pair_multi_relation_count"), 12.0)
         - 2.0 * noise_penalty
     )
+    capped_event_chain_count = min(_record_float(record, "same_entity_event_chain_count"), 3.0)
     state_update_score = float(
         0.85 * min(_record_float(record, "change_verb_density"), 5.0)
-        + 0.65 * _record_float(record, "same_entity_event_chain_count")
+        + 0.65 * capped_event_chain_count
         + 0.35 * _record_float(record, "temporal_marker_density")
         + 0.35 * _record_float(record, "result_state_pattern_count")
         - 2.10 * noise_penalty
+        - 1.50 * _record_float(record, "bibliography_noise_score")
     )
     internal_state_score = float(
         min(_record_float(record, "mental_state_density"), 5.0)
@@ -172,6 +178,12 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
     list_noise = _record_float(record, "layout_noise_score")
     list_ok = list_noise <= LIST_NOISE_GATE_MAX
     heavy_list_ok = list_noise <= HEAVY_LIST_NOISE_GATE_MAX
+    bibliography_ok = _record_float(record, "bibliography_noise_score") <= BIBLIOGRAPHY_NOISE_GATE_MAX
+    state_update_anchor = (
+        _record_int(record, "same_entity_event_chain_count", 0) > 0
+        or _record_int(record, "result_state_pattern_count", 0) > 0
+        or _record_int(record, "temporal_marker_count", 0) > 0
+    )
     gates = {
         "relation_role": (
             valid
@@ -204,6 +216,8 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
             valid
             and repeat_ok
             and list_ok
+            and bibliography_ok
+            and state_update_anchor
             and _record_float(record, "change_verb_density") > 0.0
             and scores["state_update_score"] > 0.0
         ),
@@ -349,8 +363,15 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "preference_goal_intent_count",
         "layout_noise_score",
         "list_marker_count",
+        "inline_list_glyph_count",
         "bullet_line_fraction",
         "dense_separator_density",
+        "inline_list_glyph_density",
+        "bibliography_noise_score",
+        "doi_count",
+        "et_al_count",
+        "author_initial_count",
+        "citation_year_volume_count",
         "relation_role_score",
         "attribute_rich_score",
         "role_alternation_score",

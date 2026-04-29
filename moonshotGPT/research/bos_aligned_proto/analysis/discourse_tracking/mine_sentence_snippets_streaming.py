@@ -77,7 +77,10 @@ JSON_PREVIEW_FEATURES = {
         "change_verb_density",
         "change_verb_count",
         "temporal_marker_count",
+        "result_state_pattern_count",
         "same_entity_event_chain_count",
+        "bibliography_noise_score",
+        "inline_list_glyph_count",
         "layout_noise_score",
     ),
     "internal_state": (
