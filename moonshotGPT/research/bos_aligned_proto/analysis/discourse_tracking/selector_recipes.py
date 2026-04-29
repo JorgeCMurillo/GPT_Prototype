@@ -25,6 +25,8 @@ SELECTOR_NAMES = (
     "mixed_structural",
 )
 
+RELATION_ROLE_DIRECTED_COUNT_CAP = 16.0
+
 
 def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
     if selector == "relation_role":
@@ -112,7 +114,7 @@ def _selector_noise_penalty(record: dict[str, Any]) -> float:
 def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
     noise_penalty = _selector_noise_penalty(record)
     relation_role_score = float(
-        2.0 * _record_float(record, "directed_relation_count")
+        2.0 * min(_record_float(record, "directed_relation_count"), RELATION_ROLE_DIRECTED_COUNT_CAP)
         + 3.0 * _record_float(record, "two_entity_relation_sentence_fraction")
         + 0.25 * min(_record_float(record, "relation_density"), 6.0)
         - 2.0 * noise_penalty

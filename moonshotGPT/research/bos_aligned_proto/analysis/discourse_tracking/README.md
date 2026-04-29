@@ -510,6 +510,61 @@ process remains active across the snippet. That would test the sharper
 hypothesis that variable-swap improvements come from persistent entities whose
 states change, rather than from change/process language in general.
 
+## Relation Role Selector Rationale
+
+The `relation_role` selector is the main asymmetric role-binding selector. It is
+meant to find snippets where multiple entities are connected by directional
+relations: who helped whom, who defeated whom, who led which group, who founded
+or commanded what, who replaced whom, and similar role-bearing events. This is
+the closest selector to the variable-swap hypothesis that models fail when they
+do not bind the right entity to the right role.
+
+`directed_relation_count` is a heuristic count of relation edges. In each
+sentence, the extractor looks for at least two entity-like spans plus a relation
+cue verb, then creates ordered entity-pair edges. The cue list includes social
+relations such as `asked`, `gave`, `helped`, `led`, `met`, `told`, and
+`warned`, plus institutional/history verbs such as `founded`, `commanded`,
+`appointed`, `recruited`, `trained`, `attacked`, `captured`, `arrested`,
+`supported`, `opposed`, `replaced`, `succeeded`, `joined`, `created`, and
+`built`.
+
+The first relation-role recipe ranked too heavily by raw
+`directed_relation_count`. That let tables, references, product/catalog text,
+and name-dense lists dominate the very top because a single formatted block
+could create tens or hundreds of shallow entity-pair edges. The score now caps
+the relation-count contribution:
+
+```text
+2.0 * min(directed_relation_count, 16.0) +
+3.0 * two_entity_relation_sentence_fraction +
+0.25 * min(relation_density, 6.0) -
+2.0 * noise_penalty
+```
+
+The cap preserves the high-count signal for normal prose while preventing
+extreme formatted examples from receiving arbitrary extra credit. On the `100k`
+parent-window cache, the cap plus cue expansion kept the selector non-sparse and
+substantially changed the pool:
+
+- gate-passing cached snippets went from `23,524` to `34,294`;
+- locally non-overlapping snippets went from `18,901` to `28,170`;
+- the top-10k still filled completely;
+- top-10k overlap with the previous recipe was `6,512 / 10,000`;
+- in the top-200 preview, pipe-table examples went from `21` to `1`, inline
+  bullets went from `5` to `0`, reference/catalog-like examples went from `8`
+  to `2`, and `layout_noise_score > 0.5` went from `43` to `2`.
+
+Known costs of the change:
+
+- the cue expansion makes the selector broader, especially for historical and
+  institutional prose;
+- some high-count but genuinely relational examples no longer outrank lower
+  count examples once the cap is reached;
+- the regex fallback still approximates direction from entity order and cue
+  co-occurrence, so it can misread long or syntactically complex sentences;
+- remaining table/catalog artifacts may still require a future explicit
+  table-or-catalog noise score if they reappear in larger runs.
+
 ## Cached Sentence Snippet Reranking
 
 For selector iteration, use the cached reranker instead of rerunning the full

@@ -8,7 +8,12 @@ import numpy as np
 import pandas as pd
 
 from .features import build_text_embeddings
-from .selector_recipes import SELECTOR_NAMES, _ensure_selector_columns, selector_sort_columns
+from .selector_recipes import (
+    RELATION_ROLE_DIRECTED_COUNT_CAP,
+    SELECTOR_NAMES,
+    _ensure_selector_columns,
+    selector_sort_columns,
+)
 from .snippet_features import (
     BIBLIOGRAPHY_NOISE_GATE_MAX,
     DUPLICATE_SENTENCE_GATE_MAX,
@@ -44,7 +49,7 @@ def assign_selector_pools(
         + 2.0 * working["duplicate_sentence_fraction"].astype(float)
     )
     working["relation_role_score"] = (
-        2.0 * working["directed_relation_count"].astype(float)
+        2.0 * working["directed_relation_count"].astype(float).clip(upper=RELATION_ROLE_DIRECTED_COUNT_CAP)
         + 3.0 * working["two_entity_relation_sentence_fraction"].astype(float)
         + 0.25 * working["relation_density"].astype(float).clip(upper=6.0)
         - 2.0 * noise_penalty
