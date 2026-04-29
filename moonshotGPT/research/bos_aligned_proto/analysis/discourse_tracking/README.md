@@ -23,6 +23,22 @@ Does the text itself look like discourse that should teach identity tracking?
 For an explicit methods-style description of the current package behavior, see
 [METHODS.md](./METHODS.md).
 
+## Code Layout
+
+The sentence-snippet miner is split by responsibility:
+
+- `sentence_windows.py`
+  Sentence splitting and contiguous sentence-window generation.
+- `snippet_features.py`
+  Text/span feature extraction, including discourse cues and layout-noise
+  guardrails.
+- `selector_recipes.py`
+  Selector gates, scalar ranking scores, sort keys, and non-overlap helpers.
+- `pool_selection.py`
+  DataFrame-level treated/control assignment and optional clustering.
+- `sentence_snippets.py`
+  Compatibility exports for older imports.
+
 ## Feature Set
 
 The current first-pass features are:
@@ -285,6 +301,41 @@ python -m research.bos_aligned_proto.analysis.discourse_tracking.materialize_poo
   --num_treated 1024
 ```
 
+By default, if `num_treated` is smaller than the treated pool, the materializer
+keeps the highest-`priority_score` rows. To draw a reproducible random treated
+subset instead, add:
+
+```bash
+  --selection_score random \
+  --selection_seed 42
+```
+
+You can also materialize a cluster ablation batch from `cluster_assignments.csv`.
+This writes one matched-pool directory per listed cluster, plus a balanced
+mixed-cluster condition that tries to split `--cluster_mix_num_treated` evenly
+across the requested clusters and redistributes any leftover quota if some
+clusters are too small:
+
+```bash
+python -m research.bos_aligned_proto.analysis.discourse_tracking.materialize_pools \
+  --features_csv /tmp/fineweb10b_seed42_mined_gte/candidate_features.csv \
+  --cluster_assignments_csv /tmp/fineweb10b_seed42_mined_gte/cluster_assignments.csv \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --output_dir /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/outputs/fineweb10b_seed42_clusters_2_4_5 \
+  --treated_pool positive \
+  --control_pool random_control \
+  --cluster_ids 2,4,5 \
+  --cluster_mix_num_treated 1000
+```
+
+That batch root will contain:
+
+- `cluster_2/`
+- `cluster_4/`
+- `cluster_5/`
+- `cluster_mix/`
+- `summary.json`
+
 This writes:
 
 - `treated_dataset/`
@@ -315,6 +366,55 @@ Then compare:
 - margin changes;
 - tie rates;
 - treated-minus-control deltas.
+
+## Streaming Top-K Sentence Snippet Mining
+
+For larger selector ablations, use the streaming sentence-snippet miner instead
+of the eager `mine_sentence_snippets.py` path. It streams parent candidates
+twice:
+
+1. pass 1 keeps bounded top-K frontiers per selector;
+2. pass 2 samples selector-specific controls while excluding snippets that
+   overlap treated intervals from the same parent candidate.
+
+Example for a first 100k-parent-window run:
+
+```bash
+python -m research.bos_aligned_proto.analysis.discourse_tracking.mine_sentence_snippets_streaming \
+  --candidate_csv /path/to/candidates.csv \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --checkpoint_dir /path/to/base_checkpoint \
+  --output_dir /path/to/selector_top10k_streaming \
+  --max_candidates 100000 \
+  --top_k 10000 \
+  --selectors all \
+  --min_sentences 3 \
+  --max_sentences 6 \
+  --max_snippets_per_parent_per_selector 3 \
+  --length_balance proportional \
+  --parser_backend regex \
+  --rerank_backend spacy \
+  --frontier_multiplier 3
+```
+
+The default control matching is approximate and selector-specific:
+
+- same parent-shard basename;
+- same snippet sentence count;
+- same `token_count_text` bucket.
+
+The miner also writes human inspection artifacts:
+
+- `review/<selector>_topN.md`
+- `review/<selector>_stratified.md`
+- `review/<selector>_control_sampleN.md`
+- matching JSONL previews under `previews/`
+- compact diagnostics under `diagnostics/`
+
+The output `snippet_features.csv` and `snippet_text.jsonl` remain compatible
+with `materialize_sentence_snippet_pools.py`; the materializer now prefers
+`is_control_<selector>` when present and falls back to the legacy shared
+`is_random_control_pool` column otherwise.
 
 ## Practical Recommendations
 
