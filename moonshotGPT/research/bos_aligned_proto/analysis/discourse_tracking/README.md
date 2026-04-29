@@ -499,6 +499,17 @@ If future results are sensitive to `state_update`, these guardrails should be
 reported as prespecified text-quality filters for aligning the selector with the
 hypothesis, not as model-performance filters.
 
+A remaining limitation is that the current recipe still tests broad
+state/change discourse, not a pure persistent-entity state-update construct. It
+can rank etymology, definition, survey, or process-description text when the
+change-word signal is strong, even if the snippet does not require tracking one
+stable discourse object through multiple updates. A future follow-up selector
+could explicitly hybridize `state_update` with `entity_persistence`, rewarding
+state-change cues only when the same entity, institution, person, object, or
+process remains active across the snippet. That would test the sharper
+hypothesis that variable-swap improvements come from persistent entities whose
+states change, rather than from change/process language in general.
+
 ## Cached Sentence Snippet Reranking
 
 For selector iteration, use the cached reranker instead of rerunning the full
