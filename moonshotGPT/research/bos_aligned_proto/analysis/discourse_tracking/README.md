@@ -23,6 +23,23 @@ Does the text itself look like discourse that should teach identity tracking?
 For an explicit methods-style description of the current package behavior, see
 [METHODS.md](./METHODS.md).
 
+## Selector Hypotheses
+
+Each selector defines one treated/control intervention hypothesis. The primary
+readout is whether short continued-pretraining on the selected snippets improves
+EWoK behavior, especially variable-swap margins and accuracy, more than the
+selector's matched control snippets.
+
+| Selector | Hypothesis | Current status |
+| --- | --- | --- |
+| `relation_role` | Directional relation prose should improve asymmetric role-binding: the model should better preserve who acted on whom, who held which role, and which entity belongs in which argument position. | Primary selector for variable-swap and asymmetric role-binding. |
+| `entity_persistence` | Text where the same entity or entity pair remains active across nearby sentences should improve discourse identity tracking, giving the model more practice maintaining referents across context. | Broad identity-continuity baseline; useful but less specific than relation-role binding. |
+| `attribute_rich` | Entity-linked descriptive text should improve entity-property binding: the model should better keep attributes attached to the correct object or agent. | Secondary binding baseline; intentionally distinct from directional relation binding. |
+| `state_update` | Spans with explicit state changes should help the model track how entities, institutions, objects, or processes change over local discourse. | Useful but broad; current recipe is not yet a pure persistent-entity state-update selector. |
+| `internal_state` | Spans with explicit goals, intentions, desires, preferences, or mental-state complements should improve agent-property style tracking, especially where EWoK requires binding an internal state to the right agent. | Primary-ish selector for agent-property / belief-desire-intent behavior; stronger anchors now downweight weak-only perception/affect text. |
+| `mixed_structural` | Snippets combining multiple discourse pressures should test whether broad multi-signal discourse complexity improves EWoK more than a matched control. | Secondary stress test; interpretable as "mixed discourse pressure" rather than one clean mechanism. |
+| `role_alternation` | Recurrent entity pairs with changed or reversed roles should be a sharper test of distinguishing `A acted on B` from `B acted on A`. | Deferred follow-up; current pool is sparse/noisy and should not be a primary intervention yet. |
+
 ## Code Layout
 
 The sentence-snippet miner is split by responsibility:
@@ -565,6 +582,84 @@ Known costs of the change:
 - remaining table/catalog artifacts may still require a future explicit
   table-or-catalog noise score if they reappear in larger runs.
 
+## Role Alternation Status
+
+`role_alternation` is intended to be the sharper asymmetric stress test: snippets
+where the same entity pair recurs with changed or reversed roles. In principle,
+this is very close to the variable-swap hypothesis because it asks whether the
+model can distinguish `A acted on B` from `B acted on A`, rather than merely
+tracking that `A` and `B` co-occur.
+
+In the current `100k` parent-window cache, this selector is both sparse and
+noisy:
+
+- gate-passing cached snippets: `6,132`;
+- locally non-overlapping snippets: `4,074`;
+- requested top-k: `10,000`, so the treated pool does not fill;
+- exact stratified controls are limited, requiring substantial fallback
+  matching;
+- top previews include some genuinely asymmetric examples, but also
+  concordance/index pages, tables, medical/process exposition, and other
+  repeated-titlecase artifacts.
+
+For now, treat `role_alternation` as a later follow-up rather than a primary
+intervention condition. It likely needs stricter table/reference filtering,
+caps on repeated-pair counts, and perhaps a definition built on top of the
+cleaner capped `relation_role` features before it can cleanly test the intended
+hypothesis.
+
+## Attribute Rich Selector Status
+
+`attribute_rich` is meant to test entity-property binding: whether training on
+snippets where entities are described by properties improves the model's ability
+to keep attributes attached to the correct discourse object. This is a different
+binding hypothesis from `relation_role`: it is about which entity is hot, cold,
+large, small, opaque, open, closed, heavy, light, etc., rather than who acted on
+whom.
+
+The initial recipe leaned strongly on raw attribute-word density and property
+word count. That found many genuine descriptive snippets, but also ranked some
+entity-free adjective density, recipes, symptom lists, and catalog/spec text.
+The current recipe lightly shifts the score toward entity-linked attributes:
+
+```text
+0.85 * min(attribute_density, 5.0) +
+0.65 * min(entity_attribute_edge_count, 8.0) +
+0.55 * min(property_word_count, 8.0) +
+0.45 * min(unique_attribute_count, 6.0) -
+2.25 * noise_penalty -
+1.0 * bibliography_noise_score -
+0.25 * min(inline_list_glyph_count, 4.0) -
+0.80 * table_catalog_symptom_noise_score
+```
+
+The gate now also requires at least one detected entity. On the `100k`
+parent-window cache, this kept the selector non-sparse while moving the top
+preview toward entity-linked attributes:
+
+- gate-passing cached snippets went from `41,454` to `38,913`;
+- locally non-overlapping snippets went from `34,704` to `32,566`;
+- the top-10k still filled completely;
+- top-10k overlap with the previous recipe was `6,878 / 10,000`;
+- in the top-200 preview, snippets with zero detected entities went from `19`
+  to `0`, snippets with zero entity-attribute edges went from `9` to `0`, and
+  median `entity_attribute_edge_count` went from `7` to `14.5`.
+- relative to the entity-linked rerank before the mild table/catalog/symptom
+  penalty, top-200 table/list-ish examples went from `17` to `11`, catalog-term
+  examples went from `19` to `13`, and keyword-stuff-ish examples went from
+  `26` to `22`.
+
+Known costs and remaining issues:
+
+- exact stratified controls changed slightly, from `9,847` in the original
+  recipe to `9,747` in this recipe;
+- property-word count is less dominant, so some common-noun descriptive process
+  text may move down if it lacks detected titlecase entities;
+- recipe, symptom-list, product/spec, and catalog-like snippets can still rank
+  highly when they contain many entity-like tokens plus property words;
+- the table/catalog/symptom-list penalty is intentionally mild, so it demotes
+  but does not exclude such examples.
+
 ## Cached Sentence Snippet Reranking
 
 For selector iteration, use the cached reranker instead of rerunning the full
@@ -595,6 +690,51 @@ The limitation is deliberate: cached reranking can only select from snippets
 that were written into the original cache. It cannot recover sentence windows
 discarded by the original streaming frontier. Once the recipes look right, run
 the streaming miner again for the final full candidate universe.
+
+## Batch Sentence Snippet Pool Materialization
+
+Once the selector outputs live in separate tuned rerank directories, use the
+batch materializer to pack all selected treated/control snippet pools with one
+command. The output root is intentionally a directory of selector child
+conditions, which lets `run_cpt_ablation.py` auto-discover them.
+
+The manifest can be a simple selector-to-directory mapping:
+
+```json
+{
+  "relation_role": "/path/to/relation_role_rerank/ckpt_periodic_step0016000",
+  "internal_state": "/path/to/internal_state_rerank/ckpt_periodic_step0016000",
+  "attribute_rich": "/path/to/attribute_rich_rerank/ckpt_periodic_step0016000",
+  "state_update": "/path/to/state_update_rerank/ckpt_periodic_step0016000",
+  "entity_persistence": "/path/to/entity_persistence_rerank/ckpt_periodic_step0016000",
+  "mixed_structural": "/path/to/mixed_structural_rerank/ckpt_periodic_step0016000"
+}
+```
+
+Each directory must contain `snippet_features.csv` and `snippet_text.jsonl`.
+For unusual layouts, a selector entry can instead provide explicit
+`snippet_features_csv` and `snippet_text_jsonl` fields.
+
+Example:
+
+```bash
+python -m research.bos_aligned_proto.analysis.discourse_tracking.materialize_sentence_snippet_pools_batch \
+  --manifest /path/to/selector_manifest.json \
+  --checkpoint_dir /path/to/base_checkpoint_for_tokenizer \
+  --output_dir /path/to/selector_cpt_pools \
+  --num_treated_snippets 10000 \
+  --num_control_snippets 10000
+```
+
+The command writes one child directory per selector:
+
+- `relation_role/`
+- `internal_state/`
+- `attribute_rich/`
+- `state_update/`
+- `entity_persistence/`
+- `mixed_structural/`
+- `batch_summary.json`
 
 ## Practical Recommendations
 

@@ -26,6 +26,18 @@ SELECTOR_NAMES = (
 )
 
 RELATION_ROLE_DIRECTED_COUNT_CAP = 16.0
+ATTRIBUTE_RICH_ENTITY_MIN = 1
+ATTRIBUTE_RICH_EDGE_COUNT_CAP = 8.0
+MIXED_RELATION_DENSITY_CAP = 4.0
+MIXED_ENTITY_RECURRENCE_CAP = 1.0
+MIXED_ATTRIBUTE_DENSITY_CAP = 3.0
+MIXED_CHANGE_DENSITY_CAP = 2.0
+MIXED_INTERNAL_STATE_DENSITY_CAP = 2.0
+MIXED_ACTIVE_SELECTOR_WEIGHT = 1.5
+MIXED_CORE_SELECTOR_WEIGHT = 1.0
+MIXED_NOISE_PENALTY_WEIGHT = 2.75
+MIXED_TABLE_CATALOG_PENALTY_WEIGHT = 1.25
+MIXED_BIBLIOGRAPHY_PENALTY_WEIGHT = 1.0
 
 
 def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
@@ -40,9 +52,21 @@ def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
     if selector == "state_update":
         return ["state_update_score", "change_verb_density", "change_verb_count", "window_id"], [False, False, False, True]
     if selector == "internal_state":
-        return ["internal_state_score", "mental_state_density", "agent_state_edge_count", "window_id"], [False, False, False, True]
+        return [
+            "internal_state_score",
+            "strong_internal_state_count",
+            "state_complement_count",
+            "strong_agent_state_edge_count",
+            "window_id",
+        ], [False, False, False, False, True]
     if selector == "mixed_structural":
-        return ["mixed_structural_score", "active_selector_type_count", "mixed_primary_signal", "window_id"], [False, False, False, True]
+        return [
+            "active_selector_type_count",
+            "mixed_core_selector_count",
+            "mixed_structural_score",
+            "mixed_primary_signal",
+            "window_id",
+        ], [False, False, False, False, True]
     raise ValueError(f"Unknown selector {selector!r}; expected one of {SELECTOR_NAMES!r}")
 
 
@@ -53,6 +77,7 @@ SELECTOR_DEFAULT_COLUMNS = (
     "entity_persistence",
     "attribute_density",
     "property_word_count",
+    "entity_attribute_edge_count",
     "role_alternating_pair_count",
     "same_pair_multi_relation_count",
     "two_entity_relation_sentence_fraction",
@@ -64,18 +89,32 @@ SELECTOR_DEFAULT_COLUMNS = (
     "same_entity_event_chain_count",
     "mental_state_density",
     "mental_verb_count",
+    "strong_internal_state_count",
+    "strong_internal_state_density",
+    "weak_internal_state_count",
+    "weak_internal_state_density",
     "agent_state_edge_count",
+    "strong_agent_state_edge_count",
+    "weak_agent_state_edge_count",
     "state_complement_count",
     "preference_goal_intent_count",
+    "instructional_second_person_count",
+    "tutorial_marker_count",
+    "patent_intent_marker_count",
+    "internal_state_instructional_noise_score",
+    "patent_intent_noise_score",
+    "internal_state_false_positive_noise_score",
     "unique_attribute_count",
     "layout_noise_score",
     "bibliography_noise_score",
     "inline_list_glyph_count",
+    "table_catalog_symptom_noise_score",
     "repeated_3gram_ratio",
     "duplicate_sentence_fraction",
     "bos_contamination_penalty",
     "token_count_text",
     "active_selector_type_count",
+    "mixed_core_selector_count",
     "mixed_primary_signal",
     "relation_role_score",
     "attribute_rich_score",
@@ -111,6 +150,31 @@ def _selector_noise_penalty(record: dict[str, Any]) -> float:
     )
 
 
+def _mixed_internal_state_density(record: dict[str, Any]) -> float:
+    return float(
+        _record_float(record, "strong_internal_state_density")
+        + 0.25 * _record_float(record, "weak_internal_state_density")
+    )
+
+
+def _mixed_primary_signal(record: dict[str, Any]) -> float:
+    return float(
+        min(_record_float(record, "relation_density"), MIXED_RELATION_DENSITY_CAP)
+        + min(_record_float(record, "entity_recurrence"), MIXED_ENTITY_RECURRENCE_CAP)
+        + min(_record_float(record, "attribute_density"), MIXED_ATTRIBUTE_DENSITY_CAP)
+        + min(_record_float(record, "change_verb_density"), MIXED_CHANGE_DENSITY_CAP)
+        + min(_mixed_internal_state_density(record), MIXED_INTERNAL_STATE_DENSITY_CAP)
+    )
+
+
+def _mixed_noise_penalty(record: dict[str, Any]) -> float:
+    return float(
+        MIXED_NOISE_PENALTY_WEIGHT * _selector_noise_penalty(record)
+        + MIXED_TABLE_CATALOG_PENALTY_WEIGHT * _record_float(record, "table_catalog_symptom_noise_score")
+        + MIXED_BIBLIOGRAPHY_PENALTY_WEIGHT * _record_float(record, "bibliography_noise_score")
+    )
+
+
 def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
     noise_penalty = _selector_noise_penalty(record)
     relation_role_score = float(
@@ -120,10 +184,14 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         - 2.0 * noise_penalty
     )
     attribute_rich_score = float(
-        min(_record_float(record, "attribute_density"), 5.0)
-        + 0.75 * min(_record_float(record, "property_word_count"), 8.0)
-        + 0.50 * min(_record_float(record, "unique_attribute_count"), 6.0)
-        - 2.0 * noise_penalty
+        0.85 * min(_record_float(record, "attribute_density"), 5.0)
+        + 0.65 * min(_record_float(record, "entity_attribute_edge_count"), ATTRIBUTE_RICH_EDGE_COUNT_CAP)
+        + 0.55 * min(_record_float(record, "property_word_count"), 8.0)
+        + 0.45 * min(_record_float(record, "unique_attribute_count"), 6.0)
+        - 2.25 * noise_penalty
+        - 1.0 * _record_float(record, "bibliography_noise_score")
+        - 0.25 * min(_record_float(record, "inline_list_glyph_count"), 4.0)
+        - 0.80 * _record_float(record, "table_catalog_symptom_noise_score")
     )
     role_alternation_score = float(
         2.0 * _record_float(record, "role_alternating_pair_count")
@@ -140,16 +208,21 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         - 1.50 * _record_float(record, "bibliography_noise_score")
     )
     internal_state_score = float(
-        min(_record_float(record, "mental_state_density"), 5.0)
-        + 0.75 * _record_float(record, "agent_state_edge_count")
-        + 0.50 * _record_float(record, "state_complement_count")
-        + 0.25 * _record_float(record, "preference_goal_intent_count")
+        min(_record_float(record, "strong_internal_state_density"), 5.0)
+        + min(_record_float(record, "strong_agent_state_edge_count"), 4.0)
+        + min(_record_float(record, "state_complement_count"), 4.0)
+        + min(_record_float(record, "preference_goal_intent_count"), 4.0)
+        + 0.25 * min(_record_float(record, "weak_internal_state_density"), 2.0)
+        + 0.25 * min(_record_float(record, "weak_agent_state_edge_count"), 2.0)
         - 1.5 * noise_penalty
+        - 1.50 * _record_float(record, "internal_state_instructional_noise_score")
+        - 1.75 * _record_float(record, "patent_intent_noise_score")
     )
     mixed_structural_score = float(
-        _record_float(record, "active_selector_type_count")
-        + min(_record_float(record, "mixed_primary_signal"), 10.0)
-        - 2.0 * noise_penalty
+        MIXED_ACTIVE_SELECTOR_WEIGHT * _record_float(record, "active_selector_type_count")
+        + MIXED_CORE_SELECTOR_WEIGHT * _record_float(record, "mixed_core_selector_count")
+        + _mixed_primary_signal(record)
+        - _mixed_noise_penalty(record)
     )
     return {
         "relation_role_score": relation_role_score,
@@ -186,6 +259,11 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
         or _record_int(record, "result_state_pattern_count", 0) > 0
         or _record_int(record, "temporal_marker_count", 0) > 0
     )
+    internal_state_anchor = (
+        _record_int(record, "strong_internal_state_count", 0) > 0
+        or _record_int(record, "state_complement_count", 0) > 0
+        or _record_int(record, "preference_goal_intent_count", 0) > 0
+    )
     gates = {
         "relation_role": (
             valid
@@ -204,6 +282,7 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
             valid
             and repeat_ok
             and list_ok
+            and _record_int(record, "unique_entity_count", 0) >= ATTRIBUTE_RICH_ENTITY_MIN
             and _record_float(record, "attribute_density") > 0.0
             and scores["attribute_rich_score"] > 0.0
         ),
@@ -228,6 +307,7 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
             and repeat_ok
             and list_ok
             and _record_float(record, "mental_state_density") > 0.0
+            and internal_state_anchor
             and (
                 _record_int(record, "agent_state_edge_count", 0) > 0
                 or _record_int(record, "state_complement_count", 0) > 0
@@ -237,20 +317,28 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
         ),
     }
     active_selector_type_count = int(sum(1 for passed in gates.values() if passed))
-    mixed_primary_signal = float(
-        _record_float(record, "relation_density")
-        + _record_float(record, "entity_recurrence")
-        + _record_float(record, "attribute_density")
-        + _record_float(record, "change_verb_density")
-        + _record_float(record, "mental_state_density")
+    mixed_core_selector_count = int(
+        sum(1 for selector in ("relation_role", "entity_persistence", "internal_state") if gates[selector])
     )
+    mixed_primary_signal = _mixed_primary_signal(record)
     scores["mixed_structural_score"] = float(
-        active_selector_type_count + min(mixed_primary_signal, 10.0) - 2.0 * _selector_noise_penalty(record)
+        MIXED_ACTIVE_SELECTOR_WEIGHT * active_selector_type_count
+        + MIXED_CORE_SELECTOR_WEIGHT * mixed_core_selector_count
+        + mixed_primary_signal
+        - _mixed_noise_penalty(record)
     )
-    gates["mixed_structural"] = valid and repeat_ok and heavy_list_ok and active_selector_type_count >= 2 and scores["mixed_structural_score"] > 0.0
+    gates["mixed_structural"] = (
+        valid
+        and repeat_ok
+        and heavy_list_ok
+        and active_selector_type_count >= 2
+        and mixed_core_selector_count >= 1
+        and scores["mixed_structural_score"] > 0.0
+    )
     return {
         "is_valid_snippet": bool(valid),
         "active_selector_type_count": int(active_selector_type_count),
+        "mixed_core_selector_count": int(mixed_core_selector_count),
         "mixed_primary_signal": float(mixed_primary_signal),
         **scores,
         **{f"passes_{selector}_gate": bool(passed) for selector, passed in gates.items()},
@@ -359,10 +447,24 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "same_entity_event_chain_count",
         "mental_state_density",
         "mental_verb_count",
+        "strong_internal_state_count",
+        "strong_internal_state_density",
+        "weak_internal_state_count",
+        "weak_internal_state_density",
         "agent_state_edge_count",
         "agent_state_edge_density",
+        "strong_agent_state_edge_count",
+        "strong_agent_state_edge_density",
+        "weak_agent_state_edge_count",
+        "weak_agent_state_edge_density",
         "state_complement_count",
         "preference_goal_intent_count",
+        "instructional_second_person_count",
+        "tutorial_marker_count",
+        "patent_intent_marker_count",
+        "internal_state_instructional_noise_score",
+        "patent_intent_noise_score",
+        "internal_state_false_positive_noise_score",
         "layout_noise_score",
         "list_marker_count",
         "inline_list_glyph_count",
@@ -370,6 +472,16 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "dense_separator_density",
         "inline_list_glyph_density",
         "bibliography_noise_score",
+        "pipe_table_noise_score",
+        "catalog_noise_score",
+        "symptom_list_noise_score",
+        "table_catalog_symptom_noise_score",
+        "pipe_char_count",
+        "pipe_table_line_count",
+        "catalog_marker_count",
+        "field_label_count",
+        "symptom_marker_count",
+        "symptom_separator_count",
         "doi_count",
         "et_al_count",
         "author_initial_count",
@@ -379,6 +491,9 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "role_alternation_score",
         "state_update_score",
         "internal_state_score",
+        "active_selector_type_count",
+        "mixed_core_selector_count",
+        "mixed_primary_signal",
         "mixed_structural_score",
         "repeated_3gram_ratio",
         "duplicate_sentence_fraction",

@@ -261,39 +261,59 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
-    output_dir = Path(args.output_dir).expanduser().resolve()
+def materialize_selector_snippet_pool(
+    *,
+    snippet_features_csv: str | Path,
+    snippet_text_jsonl: str | Path,
+    selector: str,
+    checkpoint_dir: str | Path,
+    output_dir: str | Path,
+    seq_len: int | None = None,
+    rows_per_shard: int = 50_000,
+    num_treated_snippets: int | None = None,
+    num_control_snippets: int | None = None,
+    selection_seed: int = 42,
+    tokenizer: Any | None = None,
+) -> dict[str, Any]:
+    if selector not in SELECTOR_NAMES:
+        raise ValueError(f"Unknown selector {selector!r}; expected one of {SELECTOR_NAMES!r}")
+    output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_dir = Path(args.checkpoint_dir).expanduser().resolve()
+    checkpoint_dir = Path(checkpoint_dir).expanduser().resolve()
+    snippet_features_csv = Path(snippet_features_csv).expanduser().resolve()
+    snippet_text_jsonl = Path(snippet_text_jsonl).expanduser().resolve()
 
-    model_config = load_checkpoint_model_config(checkpoint_dir)
-    seq_len = int(args.seq_len or model_config.seq_len)
-    if seq_len <= 0:
+    if seq_len is None:
+        model_config = load_checkpoint_model_config(checkpoint_dir)
+        resolved_seq_len = int(model_config.seq_len)
+    else:
+        resolved_seq_len = int(seq_len)
+    if resolved_seq_len <= 0:
         raise ValueError("--seq_len must be > 0")
-    tokenizer = load_tokenizer_from_checkpoint(checkpoint_dir)
-    text_lookup = _load_text_lookup(args.snippet_text_jsonl)
-    frame = pd.read_csv(args.snippet_features_csv)
+    if tokenizer is None:
+        tokenizer = load_tokenizer_from_checkpoint(checkpoint_dir)
+    text_lookup = _load_text_lookup(snippet_text_jsonl)
+    frame = pd.read_csv(snippet_features_csv)
 
     treated, control = _select_pools(
         frame,
-        selector=str(args.selector),
-        num_treated_snippets=args.num_treated_snippets,
-        num_control_snippets=args.num_control_snippets,
-        seed=int(args.selection_seed),
+        selector=str(selector),
+        num_treated_snippets=num_treated_snippets,
+        num_control_snippets=num_control_snippets,
+        seed=int(selection_seed),
     )
 
     treated_rows, treated_row_records, treated_stats = pack_snippets_to_rows(
         treated,
         text_lookup=text_lookup,
         tokenizer=tokenizer,
-        seq_len=seq_len,
+        seq_len=resolved_seq_len,
     )
     control_rows, control_row_records, control_stats = pack_snippets_to_rows(
         control,
         text_lookup=text_lookup,
         tokenizer=tokenizer,
-        seq_len=seq_len,
+        seq_len=resolved_seq_len,
     )
 
     equal_rows = min(len(treated_rows), len(control_rows))
@@ -309,23 +329,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     base_meta = {
         "format": "sentence_snippet_row_packed",
-        "seq_len": int(seq_len),
-        "row_tokens": int(seq_len) + 1,
+        "seq_len": int(resolved_seq_len),
+        "row_tokens": int(resolved_seq_len) + 1,
         "num_rows": int(equal_rows),
-        "rows_per_shard": int(args.rows_per_shard),
+        "rows_per_shard": int(rows_per_shard),
         "row_semantics": "packed_sentence_snippets",
         "packing_strategy": "bos_separated_token_stream_drop_tail",
         "tokenizer": str(checkpoint_dir),
         "use_fast": True,
-        "source_snippet_features_csv": str(Path(args.snippet_features_csv).expanduser().resolve()),
-        "source_snippet_text_jsonl": str(Path(args.snippet_text_jsonl).expanduser().resolve()),
-        "selector": str(args.selector),
+        "source_snippet_features_csv": str(snippet_features_csv),
+        "source_snippet_text_jsonl": str(snippet_text_jsonl),
+        "selector": str(selector),
     }
     treated_artifacts = _write_row_shards(
         rows=treated_rows,
         row_records=treated_row_records,
         output_dir=output_dir / "treated_dataset",
-        rows_per_shard=int(args.rows_per_shard),
+        rows_per_shard=int(rows_per_shard),
         pool_role="treated",
         meta={**base_meta, "pool_role": "treated", "packing_stats": treated_stats},
     )
@@ -333,7 +353,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows=control_rows,
         row_records=control_row_records,
         output_dir=output_dir / "control_dataset",
-        rows_per_shard=int(args.rows_per_shard),
+        rows_per_shard=int(rows_per_shard),
         pool_role="control",
         meta={**base_meta, "pool_role": "control", "packing_stats": control_stats},
     )
@@ -342,10 +362,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     control.to_csv(output_dir / "control_snippets.csv", index=False)
 
     summary = {
-        "selector": str(args.selector),
+        "selector": str(selector),
         "checkpoint_dir": str(checkpoint_dir),
-        "seq_len": int(seq_len),
-        "row_tokens": int(seq_len) + 1,
+        "seq_len": int(resolved_seq_len),
+        "row_tokens": int(resolved_seq_len) + 1,
         "num_rows": int(equal_rows),
         "treated_input_snippets": int(len(treated)),
         "control_input_snippets": int(len(control)),
@@ -364,6 +384,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
     }
     _write_json(output_dir / "summary.json", summary)
+    return summary
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    summary = materialize_selector_snippet_pool(
+        snippet_features_csv=args.snippet_features_csv,
+        snippet_text_jsonl=args.snippet_text_jsonl,
+        selector=str(args.selector),
+        checkpoint_dir=args.checkpoint_dir,
+        output_dir=args.output_dir,
+        seq_len=args.seq_len,
+        rows_per_shard=int(args.rows_per_shard),
+        num_treated_snippets=args.num_treated_snippets,
+        num_control_snippets=args.num_control_snippets,
+        selection_seed=int(args.selection_seed),
+    )
     print(json.dumps(summary, indent=2))
     return 0
 

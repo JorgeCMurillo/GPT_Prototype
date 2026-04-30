@@ -353,6 +353,33 @@ PREFERENCE_GOAL_INTENT_LEMMAS = {
     "prefer",
     "want",
 }
+WEAK_INTERNAL_STATE_WORDS = {
+    "feel",
+    "felt",
+    "feels",
+    "hate",
+    "hated",
+    "hates",
+    "hear",
+    "heard",
+    "like",
+    "liked",
+    "likes",
+    "see",
+    "saw",
+    "sees",
+}
+WEAK_INTERNAL_STATE_LEMMAS = {
+    "feel",
+    "hate",
+    "hear",
+    "like",
+    "see",
+}
+STRONG_INTERNAL_STATE_WORDS = (MENTAL_STATE_WORDS - WEAK_INTERNAL_STATE_WORDS) | PREFERENCE_GOAL_INTENT_WORDS
+STRONG_INTERNAL_STATE_LEMMAS = (
+    MENTAL_STATE_LEMMAS - WEAK_INTERNAL_STATE_LEMMAS
+) | PREFERENCE_GOAL_INTENT_LEMMAS
 
 RELATION_CUE_WORDS = {
     "accused",
@@ -476,6 +503,19 @@ STATE_COMPLEMENT_RE = re.compile(
     r"want(?:ed|s)?|intend(?:ed|s)?|hope(?:d|s)?|decide(?:d|s)?)\s+(?:that|to)\b",
     re.IGNORECASE,
 )
+SECOND_PERSON_INSTRUCTION_RE = re.compile(
+    r"\b(?:if|when|once|after)?\s*you\s+(?:just\s+|really\s+)?"
+    r"(?:can|could|should|must|want|need|choose|decide|prefer|intend)\b",
+    re.IGNORECASE,
+)
+TUTORIAL_MARKER_RE = re.compile(r"\b(?:step\s*\d+|guide|tutorial|instructions?)\b", re.IGNORECASE)
+PATENT_INTENT_RE = re.compile(
+    r"\b(?:preferred embodiments?|embodiments? of the invention|some embodiments?|"
+    r"intended to (?:encompass|include|cover|be used|be limiting|limit)|"
+    r"not intended to(?: be)? (?:limiting|limit)|"
+    r"within the scope of (?:some embodiments?|the invention))\b",
+    re.IGNORECASE,
+)
 LIST_MARKER_RE = re.compile(r"^\s*(?:[-*]|\d{1,3}[.)]|[A-Za-z][.)])\s+")
 DENSE_LIST_SEPARATOR_RE = re.compile(r"[\u2012\u2013\u2014;]\s*")
 INLINE_LIST_GLYPH_RE = re.compile(r"[\u2022\u2023\u25E6\u2043\u2219\u25AA\u25AB\u25CF\u25CB\u25A0\u25A1]")
@@ -483,6 +523,24 @@ DOI_RE = re.compile(r"\b(?:doi:?\s*)?10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNOR
 ET_AL_RE = re.compile(r"\bet\s+al\.?", re.IGNORECASE)
 AUTHOR_INITIAL_RE = re.compile(r"\b[A-Z][a-zA-Z'\u00C0-\u024F-]+(?:\s+[A-Z]){1,3}\b")
 CITATION_YEAR_VOLUME_RE = re.compile(r"\b(?:19|20)\d{2},\s*\d{1,4}\s*:")
+CATALOG_MARKER_RE = re.compile(
+    r"\b(?:manufacturer|exporter|supplier|price|products?|services?|specifications?|"
+    r"overview|contact supplier|get price|see all results for this question|"
+    r"schematic diagram|model|itemtrade|crusher|mill|pdf)\b",
+    re.IGNORECASE,
+)
+FIELD_LABEL_RE = re.compile(
+    r"\b(?:advantages?|disadvantages?|features?|supplies|instructions?|overview|"
+    r"keywords?|results?|materials?|tools?|chapter|figure|table|step\s*\d+)\s*:",
+    re.IGNORECASE,
+)
+SYMPTOM_MARKER_RE = re.compile(
+    r"\b(?:symptoms?|painful?|pains?|swelling|redness|dryness|sensation|burning|"
+    r"stinging|thirst|appetite|nausea|vomiting|fever|headache|cough|mucus|"
+    r"ulcers?|inflammation|tonsils?|throat|stomach|salivation|deglutition|"
+    r"spasmodic|suffocation)\b",
+    re.IGNORECASE,
+)
 LIST_NOISE_GATE_MAX = 0.85
 HEAVY_LIST_NOISE_GATE_MAX = 0.95
 BIBLIOGRAPHY_NOISE_GATE_MAX = 0.85
@@ -499,6 +557,22 @@ def _word_counts(text: str) -> tuple[list[str], dict[str, int]]:
 
 def _count_lexicon(words: Sequence[str], lexicon: set[str]) -> int:
     return int(sum(1 for word in words if word in lexicon))
+
+
+def _count_internal_state_lexicon(text: str, lexicon: set[str]) -> int:
+    count = 0
+    for token in WORD_PATTERN.findall(str(text)):
+        lower = token.lower()
+        if lower not in lexicon:
+            continue
+        if lower in {"hope", "hopes"} and token[:1].isupper():
+            continue
+        count += 1
+    return int(count)
+
+
+def _contains_internal_state_word(text: str, lexicon: set[str]) -> bool:
+    return _count_internal_state_lexicon(text, lexicon) > 0
 
 
 def _entity_spans(sentence: str) -> list[tuple[str, int, int]]:
@@ -609,6 +683,12 @@ def _layout_noise_features(text: str, sentence_count: int) -> dict[str, float | 
     et_al_count = len(ET_AL_RE.findall(raw))
     author_initial_count = len(AUTHOR_INITIAL_RE.findall(raw))
     citation_year_volume_count = len(CITATION_YEAR_VOLUME_RE.findall(raw))
+    pipe_char_count = raw.count("|")
+    pipe_table_line_count = sum(1 for line in lines if line.count("|") >= 2)
+    catalog_marker_count = len(CATALOG_MARKER_RE.findall(raw))
+    field_label_count = len(FIELD_LABEL_RE.findall(raw))
+    symptom_marker_count = len(SYMPTOM_MARKER_RE.findall(raw))
+    symptom_separator_count = raw.count(".-") + raw.count(";")
     short_structured_line_count = sum(
         1
         for line in lines
@@ -621,6 +701,28 @@ def _layout_noise_features(text: str, sentence_count: int) -> dict[str, float | 
     newline_density = float(newline_count / max(1, sentence_count))
     dense_separator_density = float(dense_separator_count / max(1, sentence_count))
     inline_list_glyph_density = float(inline_list_glyph_count / max(1, sentence_count))
+    pipe_table_noise_score = min(
+        1.0,
+        max(
+            pipe_table_line_count / 4.0,
+            pipe_char_count / max(20.0, float(sentence_count * 12)),
+        ),
+    )
+    catalog_noise_score = min(1.0, (catalog_marker_count + field_label_count) / 6.0)
+    symptom_list_context_score = min(
+        1.0,
+        max(
+            symptom_separator_count / 8.0,
+            list_marker_count / 4.0,
+            inline_list_glyph_count / 8.0,
+            short_line_fraction,
+        ),
+    )
+    symptom_list_noise_score = min(1.0, symptom_marker_count / 10.0) * symptom_list_context_score
+    table_catalog_symptom_noise_score = min(
+        1.0,
+        max(pipe_table_noise_score, catalog_noise_score, symptom_list_noise_score),
+    )
     bibliography_noise_score = min(
         1.0,
         max(
@@ -651,10 +753,20 @@ def _layout_noise_features(text: str, sentence_count: int) -> dict[str, float | 
         "et_al_count": int(et_al_count),
         "author_initial_count": int(author_initial_count),
         "citation_year_volume_count": int(citation_year_volume_count),
+        "pipe_char_count": int(pipe_char_count),
+        "pipe_table_line_count": int(pipe_table_line_count),
+        "catalog_marker_count": int(catalog_marker_count),
+        "field_label_count": int(field_label_count),
+        "symptom_marker_count": int(symptom_marker_count),
+        "symptom_separator_count": int(symptom_separator_count),
         "bullet_line_fraction": float(bullet_line_fraction),
         "newline_density": float(newline_density),
         "dense_separator_density": float(dense_separator_density),
         "inline_list_glyph_density": float(inline_list_glyph_density),
+        "pipe_table_noise_score": float(pipe_table_noise_score),
+        "catalog_noise_score": float(catalog_noise_score),
+        "symptom_list_noise_score": float(symptom_list_noise_score),
+        "table_catalog_symptom_noise_score": float(table_catalog_symptom_noise_score),
         "bibliography_noise_score": float(bibliography_noise_score),
         "layout_noise_score": float(layout_noise_score),
     }
@@ -731,33 +843,90 @@ def _state_update_features_spacy(doc: Any, text: str, sentence_count: int) -> di
     }
 
 
+def _internal_state_noise_features(text: str) -> dict[str, float | int]:
+    instructional_second_person_count = len(SECOND_PERSON_INSTRUCTION_RE.findall(text))
+    tutorial_marker_count = len(TUTORIAL_MARKER_RE.findall(text))
+    patent_intent_marker_count = len(PATENT_INTENT_RE.findall(text))
+    internal_state_instructional_noise_score = min(
+        1.0,
+        max(
+            instructional_second_person_count / 3.0,
+            min(1.0, tutorial_marker_count / 4.0) if instructional_second_person_count > 0 else 0.0,
+        ),
+    )
+    patent_intent_noise_score = min(1.0, patent_intent_marker_count / 3.0)
+    return {
+        "instructional_second_person_count": int(instructional_second_person_count),
+        "tutorial_marker_count": int(tutorial_marker_count),
+        "patent_intent_marker_count": int(patent_intent_marker_count),
+        "internal_state_instructional_noise_score": float(internal_state_instructional_noise_score),
+        "patent_intent_noise_score": float(patent_intent_noise_score),
+        "internal_state_false_positive_noise_score": float(
+            max(internal_state_instructional_noise_score, patent_intent_noise_score)
+        ),
+    }
+
+
 def _internal_state_features(text: str, sentences: Sequence[str], sentence_count: int) -> dict[str, float | int]:
-    words, _ = _word_counts(text)
-    mental_verb_count = _count_lexicon(words, MENTAL_STATE_WORDS)
-    preference_goal_intent_count = _count_lexicon(words, PREFERENCE_GOAL_INTENT_WORDS)
+    strong_internal_state_count = _count_internal_state_lexicon(text, STRONG_INTERNAL_STATE_WORDS)
+    weak_internal_state_count = _count_internal_state_lexicon(text, WEAK_INTERNAL_STATE_WORDS)
+    mental_verb_count = strong_internal_state_count + weak_internal_state_count
+    preference_goal_intent_count = _count_internal_state_lexicon(text, PREFERENCE_GOAL_INTENT_WORDS)
     agent_state_edge_count = 0
+    strong_agent_state_edge_count = 0
+    weak_agent_state_edge_count = 0
     for sentence in sentences:
-        if _entity_spans(sentence) and _contains_any_word(sentence, MENTAL_STATE_WORDS):
+        if not _entity_spans(sentence):
+            continue
+        has_strong_state = _contains_internal_state_word(sentence, STRONG_INTERNAL_STATE_WORDS)
+        has_weak_state = _contains_internal_state_word(sentence, WEAK_INTERNAL_STATE_WORDS)
+        if has_strong_state or has_weak_state:
             agent_state_edge_count += 1
+        if has_strong_state:
+            strong_agent_state_edge_count += 1
+        if has_weak_state and not has_strong_state:
+            weak_agent_state_edge_count += 1
     state_complement_count = len(STATE_COMPLEMENT_RE.findall(text))
     return {
         "mental_verb_count": int(mental_verb_count),
         "mental_state_density": float(mental_verb_count / max(1, sentence_count)),
+        "strong_internal_state_count": int(strong_internal_state_count),
+        "strong_internal_state_density": float(strong_internal_state_count / max(1, sentence_count)),
+        "weak_internal_state_count": int(weak_internal_state_count),
+        "weak_internal_state_density": float(weak_internal_state_count / max(1, sentence_count)),
         "preference_goal_intent_count": int(preference_goal_intent_count),
         "preference_goal_intent_density": float(preference_goal_intent_count / max(1, sentence_count)),
         "agent_state_edge_count": int(agent_state_edge_count),
         "agent_state_edge_density": float(agent_state_edge_count / max(1, sentence_count)),
+        "strong_agent_state_edge_count": int(strong_agent_state_edge_count),
+        "strong_agent_state_edge_density": float(strong_agent_state_edge_count / max(1, sentence_count)),
+        "weak_agent_state_edge_count": int(weak_agent_state_edge_count),
+        "weak_agent_state_edge_density": float(weak_agent_state_edge_count / max(1, sentence_count)),
         "state_complement_count": int(state_complement_count),
+        **_internal_state_noise_features(text),
     }
 
 
 def _internal_state_features_spacy(doc: Any, text: str, sentence_count: int) -> dict[str, float | int]:
-    mental_verb_count = sum(
+    strong_internal_state_count = sum(
         1
         for token in doc
         if token.pos_ in {"VERB", "AUX"}
-        and (token.lemma_.lower() in MENTAL_STATE_LEMMAS or token.text.lower() in MENTAL_STATE_WORDS)
+        and (
+            token.lemma_.lower() in STRONG_INTERNAL_STATE_LEMMAS
+            or token.text.lower() in STRONG_INTERNAL_STATE_WORDS
+        )
     )
+    weak_internal_state_count = sum(
+        1
+        for token in doc
+        if token.pos_ in {"VERB", "AUX"}
+        and (
+            token.lemma_.lower() in WEAK_INTERNAL_STATE_LEMMAS
+            or token.text.lower() in WEAK_INTERNAL_STATE_WORDS
+        )
+    )
+    mental_verb_count = strong_internal_state_count + weak_internal_state_count
     preference_goal_intent_count = sum(
         1
         for token in doc
@@ -768,27 +937,55 @@ def _internal_state_features_spacy(doc: Any, text: str, sentence_count: int) -> 
         )
     )
     agent_state_edge_count = 0
+    strong_agent_state_edge_count = 0
+    weak_agent_state_edge_count = 0
     try:
         doc_sentences = list(doc.sents)
     except ValueError:
         doc_sentences = []
     for sentence in doc_sentences:
-        has_mental_state = any(
+        has_strong_state = any(
             token.pos_ in {"VERB", "AUX"}
-            and (token.lemma_.lower() in MENTAL_STATE_LEMMAS or token.text.lower() in MENTAL_STATE_WORDS)
+            and (
+                token.lemma_.lower() in STRONG_INTERNAL_STATE_LEMMAS
+                or token.text.lower() in STRONG_INTERNAL_STATE_WORDS
+            )
             for token in sentence
         )
-        if has_mental_state and _entity_spans(sentence.text):
+        has_weak_state = any(
+            token.pos_ in {"VERB", "AUX"}
+            and (
+                token.lemma_.lower() in WEAK_INTERNAL_STATE_LEMMAS
+                or token.text.lower() in WEAK_INTERNAL_STATE_WORDS
+            )
+            for token in sentence
+        )
+        if not _entity_spans(sentence.text):
+            continue
+        if has_strong_state or has_weak_state:
             agent_state_edge_count += 1
+        if has_strong_state:
+            strong_agent_state_edge_count += 1
+        if has_weak_state and not has_strong_state:
+            weak_agent_state_edge_count += 1
     state_complement_count = len(STATE_COMPLEMENT_RE.findall(text))
     return {
         "mental_verb_count": int(mental_verb_count),
         "mental_state_density": float(mental_verb_count / max(1, sentence_count)),
+        "strong_internal_state_count": int(strong_internal_state_count),
+        "strong_internal_state_density": float(strong_internal_state_count / max(1, sentence_count)),
+        "weak_internal_state_count": int(weak_internal_state_count),
+        "weak_internal_state_density": float(weak_internal_state_count / max(1, sentence_count)),
         "preference_goal_intent_count": int(preference_goal_intent_count),
         "preference_goal_intent_density": float(preference_goal_intent_count / max(1, sentence_count)),
         "agent_state_edge_count": int(agent_state_edge_count),
         "agent_state_edge_density": float(agent_state_edge_count / max(1, sentence_count)),
+        "strong_agent_state_edge_count": int(strong_agent_state_edge_count),
+        "strong_agent_state_edge_density": float(strong_agent_state_edge_count / max(1, sentence_count)),
+        "weak_agent_state_edge_count": int(weak_agent_state_edge_count),
+        "weak_agent_state_edge_density": float(weak_agent_state_edge_count / max(1, sentence_count)),
         "state_complement_count": int(state_complement_count),
+        **_internal_state_noise_features(text),
     }
 
 

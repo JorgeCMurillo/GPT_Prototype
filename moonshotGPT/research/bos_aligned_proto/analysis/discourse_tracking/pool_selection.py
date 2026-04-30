@@ -9,6 +9,18 @@ import pandas as pd
 
 from .features import build_text_embeddings
 from .selector_recipes import (
+    ATTRIBUTE_RICH_EDGE_COUNT_CAP,
+    ATTRIBUTE_RICH_ENTITY_MIN,
+    MIXED_ACTIVE_SELECTOR_WEIGHT,
+    MIXED_ATTRIBUTE_DENSITY_CAP,
+    MIXED_BIBLIOGRAPHY_PENALTY_WEIGHT,
+    MIXED_CHANGE_DENSITY_CAP,
+    MIXED_CORE_SELECTOR_WEIGHT,
+    MIXED_ENTITY_RECURRENCE_CAP,
+    MIXED_INTERNAL_STATE_DENSITY_CAP,
+    MIXED_NOISE_PENALTY_WEIGHT,
+    MIXED_RELATION_DENSITY_CAP,
+    MIXED_TABLE_CATALOG_PENALTY_WEIGHT,
     RELATION_ROLE_DIRECTED_COUNT_CAP,
     SELECTOR_NAMES,
     _ensure_selector_columns,
@@ -55,10 +67,14 @@ def assign_selector_pools(
         - 2.0 * noise_penalty
     )
     working["attribute_rich_score"] = (
-        working["attribute_density"].astype(float).clip(upper=5.0)
-        + 0.75 * working["property_word_count"].astype(float).clip(upper=8.0)
-        + 0.50 * working["unique_attribute_count"].astype(float).clip(upper=6.0)
-        - 2.0 * noise_penalty
+        0.85 * working["attribute_density"].astype(float).clip(upper=5.0)
+        + 0.65 * working["entity_attribute_edge_count"].astype(float).clip(upper=ATTRIBUTE_RICH_EDGE_COUNT_CAP)
+        + 0.55 * working["property_word_count"].astype(float).clip(upper=8.0)
+        + 0.45 * working["unique_attribute_count"].astype(float).clip(upper=6.0)
+        - 2.25 * noise_penalty
+        - 1.0 * working["bibliography_noise_score"].astype(float)
+        - 0.25 * working["inline_list_glyph_count"].astype(float).clip(upper=4.0)
+        - 0.80 * working["table_catalog_symptom_noise_score"].astype(float)
     )
     working["role_alternation_score"] = (
         2.0 * working["role_alternating_pair_count"].astype(float)
@@ -75,11 +91,15 @@ def assign_selector_pools(
         - 1.50 * working["bibliography_noise_score"].astype(float)
     )
     working["internal_state_score"] = (
-        working["mental_state_density"].astype(float).clip(upper=5.0)
-        + 0.75 * working["agent_state_edge_count"].astype(float)
-        + 0.50 * working["state_complement_count"].astype(float)
-        + 0.25 * working["preference_goal_intent_count"].astype(float)
+        working["strong_internal_state_density"].astype(float).clip(upper=5.0)
+        + working["strong_agent_state_edge_count"].astype(float).clip(upper=4.0)
+        + working["state_complement_count"].astype(float).clip(upper=4.0)
+        + working["preference_goal_intent_count"].astype(float).clip(upper=4.0)
+        + 0.25 * working["weak_internal_state_density"].astype(float).clip(upper=2.0)
+        + 0.25 * working["weak_agent_state_edge_count"].astype(float).clip(upper=2.0)
         - 1.5 * noise_penalty
+        - 1.50 * working["internal_state_instructional_noise_score"].astype(float)
+        - 1.75 * working["patent_intent_noise_score"].astype(float)
     )
     repeat_ok = (
         working["repeated_3gram_ratio"].astype(float).le(REPEATED_3GRAM_GATE_MAX)
@@ -92,6 +112,11 @@ def assign_selector_pools(
         (working["same_entity_event_chain_count"].astype(int) > 0)
         | (working["result_state_pattern_count"].astype(int) > 0)
         | (working["temporal_marker_count"].astype(int) > 0)
+    )
+    internal_state_anchor = (
+        (working["strong_internal_state_count"].astype(int) > 0)
+        | (working["state_complement_count"].astype(int) > 0)
+        | (working["preference_goal_intent_count"].astype(int) > 0)
     )
 
     gate_masks = {
@@ -112,6 +137,7 @@ def assign_selector_pools(
             working["is_valid_snippet"]
             & repeat_ok
             & list_ok
+            & (working["unique_entity_count"].astype(int) >= ATTRIBUTE_RICH_ENTITY_MIN)
             & (working["attribute_density"].astype(float) > 0.0)
             & working["attribute_rich_score"].astype(float).gt(0.0)
         ),
@@ -136,6 +162,7 @@ def assign_selector_pools(
             & repeat_ok
             & list_ok
             & (working["mental_state_density"].astype(float) > 0.0)
+            & internal_state_anchor
             & (
                 (working["agent_state_edge_count"].astype(int) > 0)
                 | (working["state_complement_count"].astype(int) > 0)
@@ -158,23 +185,38 @@ def assign_selector_pools(
     ):
         active_counts += working[f"passes_{selector_name}_gate"].astype(bool).to_numpy(dtype=np.int64)
     working["active_selector_type_count"] = active_counts
+    core_counts = np.zeros(len(working), dtype=np.int64)
+    for selector_name in ("relation_role", "entity_persistence", "internal_state"):
+        core_counts += working[f"passes_{selector_name}_gate"].astype(bool).to_numpy(dtype=np.int64)
+    working["mixed_core_selector_count"] = core_counts
+    mixed_internal_state_density = (
+        working["strong_internal_state_density"].astype(float)
+        + 0.25 * working["weak_internal_state_density"].astype(float)
+    )
     working["mixed_primary_signal"] = (
-        working["relation_density"].astype(float)
-        + working["entity_recurrence"].astype(float)
-        + working["attribute_density"].astype(float)
-        + working["change_verb_density"].astype(float)
-        + working["mental_state_density"].astype(float)
+        working["relation_density"].astype(float).clip(upper=MIXED_RELATION_DENSITY_CAP)
+        + working["entity_recurrence"].astype(float).clip(upper=MIXED_ENTITY_RECURRENCE_CAP)
+        + working["attribute_density"].astype(float).clip(upper=MIXED_ATTRIBUTE_DENSITY_CAP)
+        + working["change_verb_density"].astype(float).clip(upper=MIXED_CHANGE_DENSITY_CAP)
+        + mixed_internal_state_density.clip(upper=MIXED_INTERNAL_STATE_DENSITY_CAP)
+    )
+    mixed_noise_penalty = (
+        MIXED_NOISE_PENALTY_WEIGHT * noise_penalty
+        + MIXED_TABLE_CATALOG_PENALTY_WEIGHT * working["table_catalog_symptom_noise_score"].astype(float)
+        + MIXED_BIBLIOGRAPHY_PENALTY_WEIGHT * working["bibliography_noise_score"].astype(float)
     )
     working["mixed_structural_score"] = (
-        working["active_selector_type_count"].astype(float)
-        + working["mixed_primary_signal"].astype(float).clip(upper=10.0)
-        - 2.0 * noise_penalty
+        MIXED_ACTIVE_SELECTOR_WEIGHT * working["active_selector_type_count"].astype(float)
+        + MIXED_CORE_SELECTOR_WEIGHT * working["mixed_core_selector_count"].astype(float)
+        + working["mixed_primary_signal"].astype(float)
+        - mixed_noise_penalty
     )
     working["passes_mixed_structural_gate"] = (
         working["is_valid_snippet"]
         & repeat_ok
         & heavy_list_ok
         & (working["active_selector_type_count"].astype(int) >= 2)
+        & (working["mixed_core_selector_count"].astype(int) >= 1)
         & working["mixed_structural_score"].astype(float).gt(0.0)
     )
 
