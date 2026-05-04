@@ -53,7 +53,63 @@ rows, per-run plots, and multi-run summary plots when more than one checkpoint
 or learning rate is provided. Final model saving is off by default; pass
 `--save-final` when you want to keep the fine-tuned checkpoint.
 
+## Synthetic Spatial Eval Mode
+
+Use `--synthetic-spatial-eval three_tier` to add a held-out EWoK-style
+synthetic spatial eval at the same cadence as `--epoch-eval`. This diagnostic
+does not replace EWoK; it checks whether the model can answer our own spatial
+formats and whether failures look like concept failure or format transfer
+failure.
+
+The default smoke eval uses `--synthetic-spatial-eval-n-per-tier 300`, with
+balanced items for `in_format`, `paraphrase`, and `composition` tiers. The
+concept buckets are left/right, front/behind, north/south, east/west,
+above/below, and close/far. It writes:
+
+- `synthetic_spatial_eval_dataset.jsonl`: the fixed held-out eval rows
+- `synthetic_spatial_items.jsonl`: per-item scores at each eval step
+- extra plots for synthetic tier accuracy/margin, concept accuracy/margin, and
+  the synthetic-vs-EWoK spatial transfer gap
+
+For the bash runners:
+
+```bash
+SYNTHETIC_SPATIAL_EVAL=three_tier \
+SYNTHETIC_SPATIAL_EVAL_N_PER_TIER=300 \
+bash research/bos_aligned_proto/spatial_synth/run_8k_12k_16k_fast_eval.sh
+```
+
+Interpretation guide: high `in_format` with low EWoK points toward a transfer
+problem; low `in_format` and low EWoK points toward the synthetic curriculum
+itself; high `in_format` but low `paraphrase` suggests template memorization.
+
 ## Current Hypothesis Notes
+
+### Ablation Ledger
+
+Unless otherwise noted, completed rows summarize the fast EWoK one-epoch sweeps
+averaged over the 8k/12k/16k checkpoints and learning rates `4e-5`/`8e-5`.
+The shorthand `spatial acc/margin` refers to EWoK BabyLM completion full-mean
+spatial-relations accuracy and signed margin at the final eval.
+
+| Version | Hypothesis / change | Status | Observed result | Working conclusion |
+| --- | --- | --- | --- | --- |
+| `v6` | Reference recipe with left/right contrast plus turn-left/right from front/back examples. | Done | Spatial acc/margin `0.548`/`0.037`; spatial still drops from the starting checkpoints. | Useful comparison point, but not enough to stabilize EWoK spatial transfer. |
+| `v7` | Add generic implicit distance/reachability contrasts. | Done | Spatial acc/margin `0.522`/`0.014`, worse than v6 on spatial. | Broad distance examples seem too noisy or too weakly targeted. |
+| `v8` | Add compact reciprocal close/far examples. | Done | Spatial acc/margin `0.549`/`0.058`; strongest margin among v6-v12. | Best data-content intervention so far; close/far benefits more from explicit reciprocity than generic distance exposure. |
+| `v9` | Same generic distance family as v7, but lower weight. | Done | Spatial acc/margin `0.522`/`0.033`, still below v8. | Lowering the generic-distance weight did not fix the issue. |
+| `v10` | Add direct turn-around left/right side flips. | Done | Spatial acc/margin `0.515`/`0.030`; local turn-around gains did not translate overall. | Helpful conceptually, but not enough as a standalone branch from v6. |
+| `v11` | Add cardinal direction guardrails. | Done | Spatial acc/margin `0.513`/`0.022`, weakest of v8-v12. | Cardinal guardrails mostly failed as an EWoK spatial intervention. |
+| `v12` | Add symmetric-vs-inverse relation-type contrasts. | Done | Spatial acc/margin `0.545`/`0.036`, mixed and close to v6. | Reasonable idea, but no clear improvement over v8. |
+| `v13` | v8 + order variants for turn-left/right from front/back. | Done | Spatial acc/margin `0.541`/`0.045`. | Order variation alone did not beat v8; may still be useful as a diagnostic. |
+| `v14` | v8 + direct turn-around left/right flips. | Done | Spatial acc/margin `0.540`/`0.041`. | Chosen as a simple keeper/base because it adds a clean left/right idea without adding much complexity. |
+| `v15` | v8 + both order variants and turn-around flips. | Done | Spatial acc/margin `0.542`/`0.041`. | Combining v13 and v14 did not clearly help; extra complexity was not rewarded. |
+| `v16` | v14 with `N=10000`, effective-batch sweep `8/16/32`. | Done | Best spatial accuracy came from effective batch 16 (`0.549`), while effective batch 8 had stronger spatial margin than 16/32. | Batch size changes matter, but they do not solve the transfer problem by themselves. |
+| `v17` | v14 with `N=15000`, effective batch 32. | Pending / not run | No completed result folder found. | Dataset-size hypothesis still untested. |
+| `v18` | v14 with `N=15000`, effective-batch sweep `8/16/32`. | Pending / not run | No completed result folder found. | Dataset-size plus batch-size interaction still untested. |
+| `v19` | v14 + matched left/right paired contrasts at normal weight. | Done | Best setting was effective batch 8: spatial acc/margin `0.553`/`0.047`; modestly improved left/right and cardinal slices, but close/far got worse. | Keep as current base: it is the best recent tradeoff, though left/right remains far below baseline. |
+| `v20` | v14 + matched left/right paired contrasts at medium weight. | Pending / not run | No completed result folder found. | Tests whether stronger left/right density helps or overfits. |
+| `v21` | v14 + matched left/right paired contrasts at high weight. | Pending / not run | No completed result folder found. | Tests the upper limit of paired left/right emphasis. |
 
 The v8-v12 fast-eval one-epoch sweeps branch from v6 to test one targeted
 intervention at a time:
