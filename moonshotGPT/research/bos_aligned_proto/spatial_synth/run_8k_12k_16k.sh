@@ -75,6 +75,11 @@ PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-8}"
 EWOK_BATCH_SIZE="${EWOK_BATCH_SIZE:-8}"
 EWOK_VARIANT="${EWOK_VARIANT:-full}"
+SYNTHETIC_SPATIAL_EVAL="${SYNTHETIC_SPATIAL_EVAL:-off}"
+SYNTHETIC_SPATIAL_EVAL_N_PER_TIER="${SYNTHETIC_SPATIAL_EVAL_N_PER_TIER:-300}"
+SYNTHETIC_SPATIAL_EVAL_SEED="${SYNTHETIC_SPATIAL_EVAL_SEED:-}"
+SYNTHETIC_SPATIAL_EVAL_TEMPLATE_PRESET="${SYNTHETIC_SPATIAL_EVAL_TEMPLATE_PRESET:-$TEMPLATE_PRESET}"
+SYNTHETIC_SPATIAL_EVAL_BATCH_SIZE="${SYNTHETIC_SPATIAL_EVAL_BATCH_SIZE:-}"
 MAX_TRAIN_EXAMPLES="${MAX_TRAIN_EXAMPLES:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 
@@ -101,6 +106,18 @@ if [[ -n "$MAX_TRAIN_EXAMPLES" ]]; then
   max_examples_args=(--max-train-examples "$MAX_TRAIN_EXAMPLES")
 fi
 
+synthetic_eval_args=(
+  --synthetic-spatial-eval "$SYNTHETIC_SPATIAL_EVAL"
+  --synthetic-spatial-eval-n-per-tier "$SYNTHETIC_SPATIAL_EVAL_N_PER_TIER"
+  --synthetic-spatial-eval-template-preset "$SYNTHETIC_SPATIAL_EVAL_TEMPLATE_PRESET"
+)
+if [[ -n "$SYNTHETIC_SPATIAL_EVAL_SEED" ]]; then
+  synthetic_eval_args+=(--synthetic-spatial-eval-seed "$SYNTHETIC_SPATIAL_EVAL_SEED")
+fi
+if [[ -n "$SYNTHETIC_SPATIAL_EVAL_BATCH_SIZE" ]]; then
+  synthetic_eval_args+=(--synthetic-spatial-eval-batch-size "$SYNTHETIC_SPATIAL_EVAL_BATCH_SIZE")
+fi
+
 # shellcheck disable=SC2086
 python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_lm.py \
   --data "$DATA_PATH" \
@@ -119,5 +136,6 @@ python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_l
   --per-device-batch-size "$PER_DEVICE_BATCH_SIZE" \
   --grad-accum-steps "$GRAD_ACCUM_STEPS" \
   --ewok-batch-size "$EWOK_BATCH_SIZE" \
+  "${synthetic_eval_args[@]}" \
   --ewok-variant "$EWOK_VARIANT" \
   $EXTRA_TRAIN_ARGS

@@ -21,6 +21,8 @@ from .selector_recipes import (
     MIXED_NOISE_PENALTY_WEIGHT,
     MIXED_RELATION_DENSITY_CAP,
     MIXED_TABLE_CATALOG_PENALTY_WEIGHT,
+    PERSISTENT_RELATION_ROLE_CAST_SIZE_SOFT_CAP,
+    PERSISTENT_RELATION_ROLE_DIRECTED_COUNT_CAP,
     RELATION_ROLE_DIRECTED_COUNT_CAP,
     SELECTOR_NAMES,
     _ensure_selector_columns,
@@ -66,6 +68,28 @@ def assign_selector_pools(
         + 0.25 * working["relation_density"].astype(float).clip(upper=6.0)
         - 2.0 * noise_penalty
     )
+    working["persistent_relation_role_score"] = (
+        1.5 * working["directed_relation_count"].astype(float).clip(upper=12.0)
+        + 2.0 * working["two_entity_relation_sentence_fraction"].astype(float)
+        + 5.0 * working["mean_entity_persistence"].astype(float)
+        + 3.0 * working["entity_sentence_coverage"].astype(float)
+        + 1.5 * working["entity_recurrence"].astype(float)
+        + 4.0 * working["pair_recurrence"].astype(float)
+        + 3.0 * working["adjacent_entity_overlap"].astype(float)
+        + 0.75 * working["same_pair_multi_relation_count"].astype(float).clip(upper=6.0)
+        - 0.75
+        * (
+            working["directed_relation_count"].astype(float) - PERSISTENT_RELATION_ROLE_DIRECTED_COUNT_CAP
+        ).clip(lower=0.0)
+        - 0.50
+        * (working["effective_cast_size"].astype(float) - PERSISTENT_RELATION_ROLE_CAST_SIZE_SOFT_CAP).clip(
+            lower=0.0
+        )
+        - 2.5 * noise_penalty
+        - 1.5 * working["bibliography_noise_score"].astype(float)
+        - 1.5 * working["table_catalog_symptom_noise_score"].astype(float)
+        - 0.75 * working["dense_separator_density"].astype(float)
+    )
     working["attribute_rich_score"] = (
         0.85 * working["attribute_density"].astype(float).clip(upper=5.0)
         + 0.65 * working["entity_attribute_edge_count"].astype(float).clip(upper=ATTRIBUTE_RICH_EDGE_COUNT_CAP)
@@ -89,6 +113,42 @@ def assign_selector_pools(
         + 0.35 * working["result_state_pattern_count"].astype(float)
         - 2.10 * noise_penalty
         - 1.50 * working["bibliography_noise_score"].astype(float)
+    )
+    working["persistent_state_update_score"] = (
+        working["change_verb_count"].astype(float).clip(upper=6.0)
+        + working["change_verb_density"].astype(float).clip(upper=3.0)
+        + 3.0 * working["mean_entity_persistence"].astype(float)
+        + 2.0 * working["entity_sentence_coverage"].astype(float)
+        + 1.5 * working["entity_recurrence"].astype(float)
+        + 2.0 * working["same_entity_event_chain_count"].astype(float).clip(upper=3.0)
+        + 0.75 * working["result_state_pattern_count"].astype(float).clip(upper=3.0)
+        + 0.50 * working["temporal_marker_count"].astype(float).clip(upper=4.0)
+        + 0.50 * working["before_after_marker_count"].astype(float).clip(upper=2.0)
+        - 2.25 * noise_penalty
+        - 1.50 * working["bibliography_noise_score"].astype(float)
+        - 1.25 * working["table_catalog_symptom_noise_score"].astype(float)
+        - 0.50 * working["dense_separator_density"].astype(float)
+    )
+    working["persistent_relation_state_update_score"] = (
+        2.5 * working["mean_entity_persistence"].astype(float)
+        + 2.0 * working["entity_sentence_coverage"].astype(float)
+        + working["entity_recurrence"].astype(float)
+        + working["directed_relation_count"].astype(float).clip(upper=8.0)
+        + 1.25 * working["two_entity_relation_sentence_fraction"].astype(float).clip(upper=0.75)
+        + 0.75 * working["same_pair_multi_relation_count"].astype(float).clip(upper=3.0)
+        + 0.75 * working["pair_recurrence"].astype(float).clip(upper=1.0)
+        + 0.75 * working["adjacent_entity_overlap"].astype(float).clip(upper=1.0)
+        + working["change_verb_count"].astype(float).clip(upper=4.0)
+        + 0.75 * working["change_verb_density"].astype(float).clip(upper=2.0)
+        + 1.50 * working["same_entity_event_chain_count"].astype(float).clip(upper=3.0)
+        + 0.50 * working["result_state_pattern_count"].astype(float).clip(upper=3.0)
+        + 0.50 * working["temporal_marker_count"].astype(float).clip(upper=4.0)
+        + 0.25 * working["before_after_marker_count"].astype(float).clip(upper=2.0)
+        - 0.35 * (working["effective_cast_size"].astype(float) - 12.0).clip(lower=0.0)
+        - 2.25 * noise_penalty
+        - 1.25 * working["bibliography_noise_score"].astype(float)
+        - 1.25 * working["table_catalog_symptom_noise_score"].astype(float)
+        - 0.50 * working["dense_separator_density"].astype(float)
     )
     working["internal_state_score"] = (
         working["strong_internal_state_density"].astype(float).clip(upper=5.0)
@@ -133,6 +193,27 @@ def assign_selector_pools(
             & (working["unique_entity_count"].astype(int) >= 2)
             & (working["entity_recurrence"].astype(float) > 0.0)
         ),
+        "persistent_relation_role": (
+            working["is_valid_snippet"]
+            & repeat_ok
+            & heavy_list_ok
+            & bibliography_ok
+            & (working["dense_separator_density"].astype(float) <= 1.00)
+            & (working["table_catalog_symptom_noise_score"].astype(float) <= 0.25)
+            & (working["snippet_sentence_count"].astype(int) >= 2)
+            & (working["unique_entity_count"].astype(int) >= 2)
+            & (working["entity_sentence_coverage"].astype(float) >= 0.60)
+            & (working["mean_entity_persistence"].astype(float) >= 0.25)
+            & (working["entity_recurrence"].astype(float) > 0.0)
+            & (working["directed_relation_count"].astype(int) >= 2)
+            & (working["two_entity_relation_sentence_fraction"].astype(float) >= 0.20)
+            & (
+                (working["pair_recurrence"].astype(float) > 0.0)
+                | (working["adjacent_entity_overlap"].astype(float) > 0.0)
+                | (working["same_pair_multi_relation_count"].astype(int) > 0)
+            )
+            & working["persistent_relation_role_score"].astype(float).gt(0.0)
+        ),
         "attribute_rich": (
             working["is_valid_snippet"]
             & repeat_ok
@@ -157,6 +238,40 @@ def assign_selector_pools(
             & (working["change_verb_density"].astype(float) > 0.0)
             & working["state_update_score"].astype(float).gt(0.0)
         ),
+        "persistent_state_update": (
+            working["is_valid_snippet"]
+            & repeat_ok
+            & list_ok
+            & bibliography_ok
+            & (working["dense_separator_density"].astype(float) <= 1.00)
+            & (working["table_catalog_symptom_noise_score"].astype(float) <= 0.25)
+            & (working["snippet_sentence_count"].astype(int) >= 2)
+            & (working["unique_entity_count"].astype(int) >= 1)
+            & (working["entity_sentence_coverage"].astype(float) >= 0.60)
+            & (working["mean_entity_persistence"].astype(float) >= 0.25)
+            & (working["entity_recurrence"].astype(float) > 0.0)
+            & (working["change_verb_count"].astype(int) >= 1)
+            & state_update_anchor
+            & working["persistent_state_update_score"].astype(float).gt(0.0)
+        ),
+        "persistent_relation_state_update": (
+            working["is_valid_snippet"]
+            & repeat_ok
+            & list_ok
+            & bibliography_ok
+            & (working["dense_separator_density"].astype(float) <= 1.00)
+            & (working["table_catalog_symptom_noise_score"].astype(float) <= 0.25)
+            & (working["snippet_sentence_count"].astype(int) >= 2)
+            & (working["unique_entity_count"].astype(int) >= 2)
+            & (working["entity_sentence_coverage"].astype(float) >= 0.60)
+            & (working["mean_entity_persistence"].astype(float) >= 0.25)
+            & (working["entity_recurrence"].astype(float) > 0.0)
+            & (working["directed_relation_count"].astype(int) >= 2)
+            & (working["two_entity_relation_sentence_fraction"].astype(float) >= 0.20)
+            & (working["change_verb_count"].astype(int) >= 1)
+            & state_update_anchor
+            & working["persistent_relation_state_update_score"].astype(float).gt(0.0)
+        ),
         "internal_state": (
             working["is_valid_snippet"]
             & repeat_ok
@@ -177,16 +292,25 @@ def assign_selector_pools(
     active_counts = np.zeros(len(working), dtype=np.int64)
     for selector_name in (
         "relation_role",
+        "persistent_relation_role",
         "entity_persistence",
         "attribute_rich",
         "role_alternation",
         "state_update",
+        "persistent_state_update",
+        "persistent_relation_state_update",
         "internal_state",
     ):
         active_counts += working[f"passes_{selector_name}_gate"].astype(bool).to_numpy(dtype=np.int64)
     working["active_selector_type_count"] = active_counts
     core_counts = np.zeros(len(working), dtype=np.int64)
-    for selector_name in ("relation_role", "entity_persistence", "internal_state"):
+    for selector_name in (
+        "relation_role",
+        "persistent_relation_role",
+        "persistent_relation_state_update",
+        "entity_persistence",
+        "internal_state",
+    ):
         core_counts += working[f"passes_{selector_name}_gate"].astype(bool).to_numpy(dtype=np.int64)
     working["mixed_core_selector_count"] = core_counts
     mixed_internal_state_density = (

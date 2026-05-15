@@ -53,6 +53,47 @@ rows, per-run plots, and multi-run summary plots when more than one checkpoint
 or learning rate is provided. Final model saving is off by default; pass
 `--save-final` when you want to keep the fine-tuned checkpoint.
 
+## EWoK Metric Conventions
+
+Unless explicitly stated otherwise, this project reports **EWoK BabyLM
+completion full-mean** scores with `score_reduction=mean`. For each EWoK item,
+the scorer compares both directions of the paired completion task:
+
+```text
+m1 = logp(Target1 | Context1) - logp(Target2 | Context1)
+m2 = logp(Target2 | Context2) - logp(Target1 | Context2)
+m  = 0.5 * (m1 + m2)
+```
+
+The reported EWoK accuracy in the training plots is the **combined completion
+accuracy**:
+
+```text
+combined_acc = 0.5 * (1[m1 > 0] + 1[m2 > 0])
+```
+
+So an item can contribute `1.0`, `0.5`, or `0.0`. This is pair-aware, but it is
+not strict both-right accuracy. Strict both-right would require `m1 > 0` and
+`m2 > 0` simultaneously, and is usually lower.
+
+Naming conventions in the saved files:
+
+- `eval_babylm_completion_choice_official_mean`: only the `m1` side.
+- `eval_babylm_completion_choice_full_mean`: the `(m1_acc, m2_acc)` pair; plots
+  average the two sides into combined accuracy.
+- `eval_babylm_completion_choice_margin_stats_mean`: includes `mean_signed_m`,
+  the mean of `m = 0.5 * (m1 + m2)`.
+- `ewok_items.jsonl`: per-item rows include `correct_official`,
+  `correct_symmetric`, `correct_combined`, `margin_official_m1`,
+  `margin_symmetric_m2`, and `margin_combined`.
+
+Do not compare an official-side number directly to a combined/full-mean number.
+For example, a left/right slice can look like `0.75` or higher on one side while
+the combined paired score is much lower if the model only gets one direction of
+the pair right. Older analysis tables may also use concept-mapped unique EWoK
+items, while quick row-level slices can use a different denominator; always
+check the slice definition and metric field before comparing numbers.
+
 ## Synthetic Spatial Eval Mode
 
 Use `--synthetic-spatial-eval three_tier` to add a held-out EWoK-style
@@ -216,3 +257,42 @@ Each version sweeps effective batches `8/16/32` by default:
 ```bash
 bash research/bos_aligned_proto/spatial_synth/run_v19_to_v21_left_right_paired_batch_sweep.sh
 ```
+
+## Natural-Mix and GPT-5.2 Cardinal Takeaways
+
+`v19` is the broad algorithmic spatial curriculum used as the strongest
+hand-coded base before the natural-mix tests. It combines v14 with matched
+left/right contrast pairs, role/reference inversions, turn contrasts, movement
+updates, and other spatial families.
+
+`v22` is the natural/synthetic dose sweep built from v19. It mixes FineWeb-style
+natural text with v19 synthetic rows at `0%`, `5%`, `10%`, `20%`, and `40%`
+synthetic token ratios. The main lesson was dose sensitivity: small doses were
+least harmful, while larger doses often increased margins but reduced EWoK
+spatial accuracy.
+
+At `lr=4e-5`, the 8k checkpoint did not benefit much from v22. Natural-only
+went `0.590 -> 0.575` spatial accuracy, `5%` synthetic mostly preserved
+accuracy (`0.590 -> 0.585`), and `20-40%` synthetic hurt (`0.535` and `0.525`
+final spatial accuracy). The 12k checkpoint was more receptive: `10%` synthetic
+improved the cardinal slices (`north/south: 0.607 -> 0.714`,
+`east/west: 0.583 -> 0.708`) but hurt `left/right` (`0.682 -> 0.515`). This
+suggested that broad algorithmic synthetic data can help targeted concepts, but
+with substantial collateral damage.
+
+The GPT-5.2 cardinal mix was a narrower follow-up. It used about `9.8%`
+GPT-5.2-generated cardinal text mixed with natural data, targeting only
+`north/south` and `east/west`, and trained best at `lr=1e-5`.
+
+| Checkpoint | Spatial accuracy | Spatial margin | Main concept effect |
+| --- | --- | --- | --- |
+| 8k | `0.590 -> 0.685` | `+0.052 -> +0.141` | `north/south: 0.464 -> 0.786`, `east/west: 0.583 -> 0.833`; `left/right` also held up (`0.621 -> 0.667`). |
+| 12k | `0.625 -> 0.660` | `+0.064 -> +0.153` | `north/south: 0.607 -> 0.786`, `east/west: 0.583 -> 0.833`; `left/right` roughly stable with a small drop (`0.682 -> 0.667`). |
+| 16k | `0.625 -> 0.690` | `+0.068 -> +0.164` | `north/south: 0.429 -> 0.786`, `east/west: 0.542 -> 0.833`; `left/right` dropped (`0.697 -> 0.621`). |
+
+Higher GPT-5.2 cardinal learning rates (`4e-5`, `8e-5`) pushed cardinal margins
+much higher, but they also damaged unrelated spatial concepts more strongly.
+The current interpretation is that synthetic data works better as targeted
+concept repair than as broad replacement training: narrow scope, low synthetic
+dose, natural-data mixing, and low learning rate produced the cleanest transfer
+so far.

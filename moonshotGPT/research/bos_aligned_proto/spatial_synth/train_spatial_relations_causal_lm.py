@@ -37,6 +37,14 @@ try:
 except Exception:
     plt = None
 
+from research.bos_aligned_proto.spatial_synth.synthetic_spatial_eval import (
+    CONCEPTS as SYNTHETIC_SPATIAL_CONCEPTS,
+    TIERS as SYNTHETIC_SPATIAL_TIERS,
+    evaluate_synthetic_spatial,
+    generate_synthetic_spatial_eval_items,
+    write_synthetic_spatial_eval_dataset,
+)
+
 
 BABYLM_COMPLETION_CHOICE = "babylm_completion_choice"
 EWOK_CONTEXT_SENSITIVITY = "ewok_context_sensitivity"
@@ -727,6 +735,91 @@ def run_ewok_eval_record(
     return record
 
 
+def run_synthetic_spatial_eval_record(
+    *,
+    model,
+    tokenizer,
+    synthetic_items,
+    batch_size: int,
+    step: int,
+    epoch: float,
+    run_label: str,
+    items_path: Path,
+) -> Dict:
+    if not synthetic_items:
+        return {}
+
+    model.eval()
+    summary, per_item = evaluate_synthetic_spatial(
+        model=model,
+        tokenizer=tokenizer,
+        items=synthetic_items,
+        batch_size=batch_size,
+        score_reduction="mean",
+    )
+    timestamp = datetime.now().isoformat()
+    for rec in per_item:
+        item_record = dict(rec)
+        item_record.update(
+            {
+                "type": "synthetic_spatial_item_mean",
+                "step": int(step),
+                "epoch": float(epoch),
+                "timestamp": timestamp,
+                "run_label": run_label,
+            }
+        )
+        append_jsonl(items_path, item_record)
+
+    overall = summary.get("overall", {})
+    by_tier = summary.get("by_tier", {})
+    in_format = by_tier.get("in_format", {})
+    paraphrase = by_tier.get("paraphrase", {})
+    composition = by_tier.get("composition", {})
+    print(
+        f"Synthetic spatial @ epoch {epoch:.3f}, step {step}: "
+        f"overall={float(overall.get('acc_combined', float('nan'))):.4f}, "
+        f"in_format={float(in_format.get('acc_combined', float('nan'))):.4f}, "
+        f"paraphrase={float(paraphrase.get('acc_combined', float('nan'))):.4f}, "
+        f"composition={float(composition.get('acc_combined', float('nan'))):.4f}"
+    )
+    return {
+        "eval_synthetic_spatial_overall": summary.get("overall"),
+        "eval_synthetic_spatial_by_tier": summary.get("by_tier"),
+        "eval_synthetic_spatial_by_concept": summary.get("by_concept"),
+        "eval_synthetic_spatial_by_template_family": summary.get("by_template_family"),
+        "eval_synthetic_spatial_by_contrast_type": summary.get("by_contrast_type"),
+    }
+
+
+def maybe_add_synthetic_spatial_eval(
+    *,
+    record: Dict,
+    model,
+    tokenizer,
+    synthetic_items,
+    batch_size: int,
+    step: int,
+    epoch: float,
+    run_label: str,
+    items_path: Path,
+) -> Dict:
+    if not synthetic_items:
+        return record
+    synthetic_record = run_synthetic_spatial_eval_record(
+        model=model,
+        tokenizer=tokenizer,
+        synthetic_items=synthetic_items,
+        batch_size=batch_size,
+        step=step,
+        epoch=epoch,
+        run_label=run_label,
+        items_path=items_path,
+    )
+    record.update(synthetic_record)
+    return record
+
+
 def pair_to_scalar(value) -> float | None:
     if isinstance(value, (list, tuple)) and len(value) >= 2:
         try:
@@ -788,6 +881,231 @@ def extract_margin_series(records: Sequence[Dict], domain: str) -> List[Tuple[fl
         if isinstance(y, (int, float)) and isinstance(x, (int, float)):
             out.append((float(x), float(y)))
     return sorted(out, key=lambda item: item[0])
+
+
+def extract_synthetic_spatial_series(
+    records: Sequence[Dict],
+    *,
+    group_key: str,
+    group_name: str,
+    metric: str,
+) -> List[Tuple[float, float]]:
+    out = []
+    for record in records:
+        groups = record.get(group_key)
+        if not isinstance(groups, dict):
+            continue
+        stats = groups.get(group_name)
+        if not isinstance(stats, dict):
+            continue
+        y = stats.get("acc_combined" if metric == "accuracy" else "mean_signed_m")
+        x = record.get("epoch", record.get("step"))
+        if isinstance(y, (int, float)) and isinstance(x, (int, float)):
+            out.append((float(x), float(y)))
+    return sorted(out, key=lambda item: item[0])
+
+
+def _plot_series_by_groups(
+    run_records: Sequence[Tuple[str, List[Dict]]],
+    out_path: Path,
+    *,
+    group_key: str,
+    groups: Sequence[str],
+    metric: str,
+    title: str,
+    ylabel: str,
+    dpi: int,
+) -> Path | None:
+    if plt is None:
+        return None
+    fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+    colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    line_styles = ["-", "--", "-.", ":"]
+    plotted = 0
+    for run_idx, (label, records) in enumerate(run_records):
+        color = colors[run_idx % len(colors)] if colors else None
+        for group_idx, group in enumerate(groups):
+            series = extract_synthetic_spatial_series(
+                records,
+                group_key=group_key,
+                group_name=group,
+                metric=metric,
+            )
+            if not series:
+                continue
+            ax.plot(
+                [x for x, _ in series],
+                [y for _, y in series],
+                marker="o",
+                markersize=3,
+                linewidth=1.5,
+                linestyle=line_styles[group_idx % len(line_styles)],
+                color=color,
+                label=f"{label} / {group}",
+            )
+            plotted += 1
+    if not plotted:
+        plt.close(fig)
+        return None
+    if metric == "accuracy":
+        ax.axhline(0.5, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+        ax.set_ylim(0.0, 1.0)
+    else:
+        ax.axhline(0.0, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+    ax.set_title(title)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=7)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def plot_synthetic_spatial_concept_grid(
+    run_records: Sequence[Tuple[str, List[Dict]]],
+    out_path: Path,
+    *,
+    metric: str,
+    dpi: int,
+) -> Path | None:
+    if plt is None:
+        return None
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), constrained_layout=True)
+    flat_axes = axes.flatten()
+    colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    plotted_any = False
+    for idx, concept in enumerate(SYNTHETIC_SPATIAL_CONCEPTS):
+        ax = flat_axes[idx]
+        for run_idx, (label, records) in enumerate(run_records):
+            series = extract_synthetic_spatial_series(
+                records,
+                group_key="eval_synthetic_spatial_by_concept",
+                group_name=concept,
+                metric=metric,
+            )
+            if not series:
+                continue
+            plotted_any = True
+            ax.plot(
+                [x for x, _ in series],
+                [y for _, y in series],
+                marker="o",
+                markersize=3,
+                linewidth=1.5,
+                color=colors[run_idx % len(colors)] if colors else None,
+                label=label,
+            )
+        if metric == "accuracy":
+            ax.axhline(0.5, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+            ax.set_ylim(0.0, 1.0)
+            ax.set_ylabel("Acc")
+        else:
+            ax.axhline(0.0, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+            ax.set_ylabel("Margin")
+        ax.set_title(concept)
+        ax.set_xlabel("Epoch")
+        ax.grid(True, alpha=0.25)
+        if idx == 0:
+            ax.legend(fontsize=7)
+    if not plotted_any:
+        plt.close(fig)
+        return None
+    title = "Synthetic Spatial Concept Accuracy" if metric == "accuracy" else "Synthetic Spatial Concept Margin"
+    fig.suptitle(title, fontsize=14)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def plot_synthetic_spatial_transfer_gap(
+    run_records: Sequence[Tuple[str, List[Dict]]],
+    out_path: Path,
+    *,
+    dpi: int,
+) -> Path | None:
+    if plt is None:
+        return None
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, constrained_layout=True)
+    colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    plotted = 0
+    for run_idx, (label, records) in enumerate(run_records):
+        color = colors[run_idx % len(colors)] if colors else None
+        ewok = dict(extract_accuracy_series(records, SPATIAL_DOMAIN))
+        in_format = dict(
+            extract_synthetic_spatial_series(
+                records,
+                group_key="eval_synthetic_spatial_by_tier",
+                group_name="in_format",
+                metric="accuracy",
+            )
+        )
+        paraphrase = dict(
+            extract_synthetic_spatial_series(
+                records,
+                group_key="eval_synthetic_spatial_by_tier",
+                group_name="paraphrase",
+                metric="accuracy",
+            )
+        )
+        xs = sorted(set(ewok).intersection(in_format).intersection(paraphrase))
+        if not xs:
+            continue
+        axes[0].plot(xs, [ewok[x] for x in xs], color=color, linewidth=1.6, linestyle="-", label=f"{label} / EWoK")
+        axes[0].plot(
+            xs,
+            [in_format[x] for x in xs],
+            color=color,
+            linewidth=1.4,
+            linestyle="--",
+            label=f"{label} / in_format",
+        )
+        axes[0].plot(
+            xs,
+            [paraphrase[x] for x in xs],
+            color=color,
+            linewidth=1.4,
+            linestyle=":",
+            label=f"{label} / paraphrase",
+        )
+        axes[1].plot(
+            xs,
+            [in_format[x] - ewok[x] for x in xs],
+            color=color,
+            linewidth=1.4,
+            linestyle="--",
+            label=f"{label} / in_format-EWoK",
+        )
+        axes[1].plot(
+            xs,
+            [paraphrase[x] - ewok[x] for x in xs],
+            color=color,
+            linewidth=1.4,
+            linestyle=":",
+            label=f"{label} / paraphrase-EWoK",
+        )
+        plotted += 1
+    if not plotted:
+        plt.close(fig)
+        return None
+    axes[0].axhline(0.5, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+    axes[0].set_ylim(0.0, 1.0)
+    axes[0].set_ylabel("Accuracy")
+    axes[0].set_title("Synthetic vs EWoK Spatial Accuracy")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend(fontsize=7)
+    axes[1].axhline(0.0, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Synthetic - EWoK")
+    axes[1].set_title("Transfer Gap")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend(fontsize=7)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
 
 
 def plot_domain_grid(
@@ -919,6 +1237,36 @@ def write_plots(run_infos: Sequence[Tuple[str, Path]], output_dir: Path, *, dpi:
     path = plot_spatial_main(run_records, output_dir / "spatial_relations_main_by_epoch.png", dpi=dpi)
     if path is not None:
         created.append(path)
+    for metric, filename, ylabel in (
+        ("accuracy", "synthetic_spatial_accuracy_by_tier.png", "Synthetic acc"),
+        ("margin", "synthetic_spatial_margin_by_tier.png", "Synthetic margin"),
+    ):
+        path = _plot_series_by_groups(
+            run_records,
+            output_dir / filename,
+            group_key="eval_synthetic_spatial_by_tier",
+            groups=SYNTHETIC_SPATIAL_TIERS,
+            metric=metric,
+            title=f"Synthetic Spatial {metric.title()} by Tier",
+            ylabel=ylabel,
+            dpi=dpi,
+        )
+        if path is not None:
+            created.append(path)
+    for metric, filename in (
+        ("accuracy", "synthetic_spatial_accuracy_by_concept.png"),
+        ("margin", "synthetic_spatial_margin_by_concept.png"),
+    ):
+        path = plot_synthetic_spatial_concept_grid(run_records, output_dir / filename, metric=metric, dpi=dpi)
+        if path is not None:
+            created.append(path)
+    path = plot_synthetic_spatial_transfer_gap(
+        run_records,
+        output_dir / "synthetic_spatial_transfer_gap.png",
+        dpi=dpi,
+    )
+    if path is not None:
+        created.append(path)
     return created
 
 
@@ -936,6 +1284,14 @@ def save_selected_rows(rows: Sequence[TextRow], path: Path) -> None:
                     "difficulty": row.difficulty or "",
                 }
             )
+
+
+def infer_template_preset_from_data_path(path: Path) -> str:
+    name = str(path)
+    for preset in ("v21", "v20", "v19", "v15", "v14", "v13", "v12", "v11", "v10", "v9", "v8", "v7", "v6", "v5", "v4", "v3"):
+        if preset in name:
+            return preset
+    return "v4"
 
 
 def train_one_run(
@@ -1009,7 +1365,31 @@ def train_one_run(
     metrics_path = run_dir / "step_metrics.json"
     scalars_path = run_dir / "scalars.jsonl"
     ewok_items_path = run_dir / "ewok_items.jsonl"
+    synthetic_spatial_items_path = run_dir / "synthetic_spatial_items.jsonl"
     step_metrics: List[Dict] = []
+
+    synthetic_spatial_items = []
+    synthetic_spatial_batch_size = args.synthetic_spatial_eval_batch_size or args.ewok_batch_size
+    if args.synthetic_spatial_eval != "off":
+        synthetic_seed = (
+            args.seed + 100000
+            if args.synthetic_spatial_eval_seed is None
+            else int(args.synthetic_spatial_eval_seed)
+        )
+        synthetic_template_preset = (
+            args.synthetic_spatial_eval_template_preset
+            or infer_template_preset_from_data_path(args.data)
+        )
+        synthetic_spatial_items = generate_synthetic_spatial_eval_items(
+            n_per_tier=args.synthetic_spatial_eval_n_per_tier,
+            seed=synthetic_seed,
+            template_preset=synthetic_template_preset,
+        )
+        write_synthetic_spatial_eval_dataset(
+            synthetic_spatial_items,
+            run_dir / "synthetic_spatial_eval_dataset.jsonl",
+        )
+
     atomic_write_json(
         run_dir / "run_config.json",
         {
@@ -1020,6 +1400,8 @@ def train_one_run(
             "args": vars(args),
             "train_pack_stats": train_pack_stats.__dict__,
             "val_pack_stats": None if val_pack_stats is None else val_pack_stats.__dict__,
+            "synthetic_spatial_eval_items": len(synthetic_spatial_items),
+            "synthetic_spatial_eval_batch_size": synthetic_spatial_batch_size,
         },
     )
 
@@ -1083,6 +1465,17 @@ def train_one_run(
             loss_weight_seen=loss_weight_seen,
             ewok_items_path=ewok_items_path,
             show_progress=args.ewok_progress,
+        )
+        record = maybe_add_synthetic_spatial_eval(
+            record=record,
+            model=model,
+            tokenizer=tokenizer,
+            synthetic_items=synthetic_spatial_items,
+            batch_size=synthetic_spatial_batch_size,
+            step=0,
+            epoch=0.0,
+            run_label=label,
+            items_path=synthetic_spatial_items_path,
         )
         step_metrics.append(record)
         atomic_write_json(metrics_path, step_metrics)
@@ -1159,6 +1552,17 @@ def train_one_run(
                     ewok_items_path=ewok_items_path,
                     show_progress=args.ewok_progress,
                 )
+                record = maybe_add_synthetic_spatial_eval(
+                    record=record,
+                    model=model,
+                    tokenizer=tokenizer,
+                    synthetic_items=synthetic_spatial_items,
+                    batch_size=synthetic_spatial_batch_size,
+                    step=update_step,
+                    epoch=epoch_float,
+                    run_label=label,
+                    items_path=synthetic_spatial_items_path,
+                )
                 step_metrics.append(record)
                 atomic_write_json(metrics_path, step_metrics)
                 append_jsonl(scalars_path, {"type": "ewok", **record})
@@ -1193,6 +1597,17 @@ def train_one_run(
             loss_weight_seen=loss_weight_seen,
             ewok_items_path=ewok_items_path,
             show_progress=args.ewok_progress,
+        )
+        record = maybe_add_synthetic_spatial_eval(
+            record=record,
+            model=model,
+            tokenizer=tokenizer,
+            synthetic_items=synthetic_spatial_items,
+            batch_size=synthetic_spatial_batch_size,
+            step=update_step,
+            epoch=epoch_float,
+            run_label=label,
+            items_path=synthetic_spatial_items_path,
         )
         step_metrics.append(record)
         atomic_write_json(metrics_path, step_metrics)
@@ -1274,6 +1689,35 @@ def parse_args() -> argparse.Namespace:
         help="Dataset variant; scoring is BabyLM completion full mean.",
     )
     parser.add_argument("--ewok-progress", action="store_true")
+    parser.add_argument(
+        "--synthetic-spatial-eval",
+        choices=("off", "three_tier"),
+        default="off",
+        help="Optional held-out synthetic EWoK-style spatial eval run at each EWoK eval step.",
+    )
+    parser.add_argument(
+        "--synthetic-spatial-eval-n-per-tier",
+        type=int,
+        default=300,
+        help="Number of held-out synthetic spatial eval items per tier.",
+    )
+    parser.add_argument(
+        "--synthetic-spatial-eval-seed",
+        type=int,
+        default=None,
+        help="Held-out synthetic spatial eval seed; defaults to --seed + 100000.",
+    )
+    parser.add_argument(
+        "--synthetic-spatial-eval-template-preset",
+        default=None,
+        help="Preset recorded for eval provenance; defaults to inferring from the data path.",
+    )
+    parser.add_argument(
+        "--synthetic-spatial-eval-batch-size",
+        type=int,
+        default=None,
+        help="Batch size for synthetic spatial eval; defaults to --ewok-batch-size.",
+    )
     parser.add_argument("--eval-at-start", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-every-eval", action="store_true")
     parser.add_argument("--save-final", action=argparse.BooleanOptionalAction, default=False)
@@ -1294,6 +1738,10 @@ def main() -> None:
         raise ValueError("--completion-loss-ratio must be in [0, 1]")
     if not 0.0 <= args.mixed_full_loss_ratio <= 1.0:
         raise ValueError("--mixed-full-loss-ratio must be in [0, 1]")
+    if args.synthetic_spatial_eval_n_per_tier <= 0:
+        raise ValueError("--synthetic-spatial-eval-n-per-tier must be positive")
+    if args.synthetic_spatial_eval_batch_size is not None and args.synthetic_spatial_eval_batch_size <= 0:
+        raise ValueError("--synthetic-spatial-eval-batch-size must be positive")
 
     set_all_seeds(args.seed)
     rows = load_text_rows(args.data, text_column=args.text_column)

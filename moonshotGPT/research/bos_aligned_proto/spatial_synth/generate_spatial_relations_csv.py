@@ -44,6 +44,7 @@ INVERSE_REL: Dict[str, str] = {
 }
 
 HORIZONTAL = ["north", "east", "south", "west"]
+CARDINAL = ["north", "south", "east", "west"]
 
 AGENTS = ["Ava", "Noah", "Mira", "Kai", "Lena", "Omar", "Jay", "Mohammed", "Leo", "Ali"]
 OBJECTS = ["lantern", "statue", "pig", "mug", "book", "box", "key", "stone", "cow"]
@@ -254,6 +255,19 @@ TEMPLATE_PRESETS: Dict[str, Tuple[List[str], List[int]]] = {
             "implicit_left_right_paired_contrast",
         ],
         [5, 2, 2, 2, 2, 2, 2, 2, 2, 6],
+    ),
+    # Cardinal-only preset for natural-data mixing tests. The goal is to target
+    # north/south and east/west without adding more left/right, vertical, or
+    # distance examples, so we can test whether small token-budget injections
+    # improve those EWoK slices without broad spatial distribution narrowing.
+    "cardinal_v1": (
+        [
+            "implicit_cardinal_inverse",
+            "implicit_cardinal_move_past",
+            "implicit_cardinal_landmark",
+            "implicit_cardinal_route_update",
+        ],
+        [2, 2, 2, 2],
     ),
 }
 
@@ -1473,6 +1487,236 @@ def generate_cardinal_guard_item(
     )
 
 
+def generate_cardinal_inverse_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int = 0,
+    relation: str | None = None,
+    template_variant: int | None = None,
+) -> Item:
+    """Generate direct plus reciprocal cardinal-direction facts."""
+    relation = relation or rng.choice(CARDINAL)
+    if relation not in CARDINAL:
+        raise ValueError(f"relation must be one of {CARDINAL}, got {relation!r}")
+
+    inverse = inverse_relation(relation)
+    before = State((0, 0, 0), WORLD_DIRS[relation], rng.choice(HORIZONTAL), rng.choice(HORIZONTAL))
+    obj_mention = get_mention(obj, False)
+    templates = [
+        (
+            "{obj} was marked {rel_agent}. Reading the same map from {obj_poss} spot, "
+            "{agent} was {inv_obj}."
+        ),
+        (
+            "A note placed {obj} {rel_agent}. The reverse note is therefore that "
+            "{agent} is {inv_obj}."
+        ),
+        (
+            "On the sketch, {obj} sat {rel_agent}. From {obj}, the matching return "
+            "direction put {agent} {inv_obj}."
+        ),
+    ]
+    if template_variant is None:
+        template_variant = rng.randrange(len(templates))
+    if not 0 <= template_variant < len(templates):
+        raise ValueError(f"template_variant must be in [0, {len(templates) - 1}], got {template_variant}")
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        obj_poss=get_possessive(obj, False),
+        rel_agent=world_phrase(relation, agent),
+        inv_obj=world_phrase(inverse, obj_mention),
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"implicit_cardinal_inverse_{relation}",
+        observer="a",
+        before=before,
+        after=before,
+        text=text,
+        difficulty=1,
+        template_id=1100 + template_variant,
+        template_family="implicit_cardinal_inverse",
+    )
+
+
+def generate_cardinal_move_past_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int = 0,
+    relation: str | None = None,
+    template_variant: int | None = None,
+) -> Item:
+    """Generate straight cardinal motion that crosses a fixed landmark."""
+    relation = relation or rng.choice(CARDINAL)
+    if relation not in CARDINAL:
+        raise ValueError(f"relation must be one of {CARDINAL}, got {relation!r}")
+
+    step = WORLD_DIRS[relation]
+    before = State((0, 0, 0), step, relation, rng.choice(HORIZONTAL))
+    after = State(scale(step, 2), step, relation, before.b_facing)
+    final_rel = compute_relations(after, "a")[0]
+    obj_mention = get_mention(obj, False)
+    templates = [
+        (
+            "{agent} walked {relation} toward {obj} and continued past it. "
+            "After stopping, {obj} was {final_rel}."
+        ),
+        (
+            "{obj} stayed fixed as {agent} traveled {relation} beyond it. "
+            "At the end of the route, {obj} was {final_rel}."
+        ),
+        (
+            "{agent} crossed the spot by {obj} while moving {relation}. "
+            "Once {agent} was beyond that spot, {obj} lay {final_rel}."
+        ),
+    ]
+    if template_variant is None:
+        template_variant = rng.randrange(len(templates))
+    if not 0 <= template_variant < len(templates):
+        raise ValueError(f"template_variant must be in [0, {len(templates) - 1}], got {template_variant}")
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        relation=relation,
+        final_rel=world_phrase(final_rel, agent),
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"implicit_cardinal_move_past_{relation}",
+        observer="a",
+        before=before,
+        after=after,
+        text=text,
+        difficulty=3,
+        template_id=1110 + template_variant,
+        template_family="implicit_cardinal_move_past",
+    )
+
+
+def generate_cardinal_landmark_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int = 0,
+    relation: str | None = None,
+    template_variant: int | None = None,
+) -> Item:
+    """Generate map/landmark wording for direct and inverse cardinal facts."""
+    relation = relation or rng.choice(CARDINAL)
+    if relation not in CARDINAL:
+        raise ValueError(f"relation must be one of {CARDINAL}, got {relation!r}")
+
+    inverse = inverse_relation(relation)
+    before = State((0, 0, 0), WORLD_DIRS[relation], rng.choice(HORIZONTAL), rng.choice(HORIZONTAL))
+    obj_mention = get_mention(obj, False)
+    templates = [
+        (
+            "The map placed {obj} {rel_agent} from {agent}'s marker. "
+            "That same layout placed {agent}'s marker {inv_obj}."
+        ),
+        (
+            "Using {agent}'s marker as the reference, {obj} was {rel_agent}. "
+            "Using {obj} as the reference, {agent}'s marker was {inv_obj}."
+        ),
+        (
+            "A route card listed {obj} {rel_agent}. The return line on the card "
+            "listed {agent}'s marker {inv_obj}."
+        ),
+    ]
+    if template_variant is None:
+        template_variant = rng.randrange(len(templates))
+    if not 0 <= template_variant < len(templates):
+        raise ValueError(f"template_variant must be in [0, {len(templates) - 1}], got {template_variant}")
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        rel_agent=world_phrase(relation, agent),
+        inv_obj=world_phrase(inverse, obj_mention),
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"implicit_cardinal_landmark_{relation}",
+        observer="a",
+        before=before,
+        after=before,
+        text=text,
+        difficulty=2,
+        template_id=1120 + template_variant,
+        template_family="implicit_cardinal_landmark",
+    )
+
+
+def generate_cardinal_route_update_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int = 0,
+    relation: str | None = None,
+    template_variant: int | None = None,
+) -> Item:
+    """Generate cardinal relations that stay fixed under shared translation."""
+    relation = relation or rng.choice(CARDINAL)
+    if relation not in CARDINAL:
+        raise ValueError(f"relation must be one of {CARDINAL}, got {relation!r}")
+
+    move_dir = rng.choice(CARDINAL)
+    before = State((0, 0, 0), WORLD_DIRS[relation], rng.choice(HORIZONTAL), rng.choice(HORIZONTAL))
+    move = WORLD_DIRS[move_dir]
+    after = State(add(before.a_pos, move), add(before.b_pos, move), before.a_facing, before.b_facing)
+    obj_mention = get_mention(obj, False)
+    templates = [
+        (
+            "{obj} began {rel_agent}. Then {agent} and {obj} both shifted {move_dir} "
+            "by the same amount. The shift kept {obj} {rel_agent}."
+        ),
+        (
+            "Before the route changed, {obj} was {rel_agent}. {agent} and {obj} "
+            "moved together toward the {move_dir}. Their spacing stayed the same, "
+            "so {obj} remained {rel_agent}."
+        ),
+        (
+            "{agent} and {obj} slid together in the {move_dir} direction. Since both "
+            "moved equally, {obj} was still {rel_agent} afterward."
+        ),
+    ]
+    if template_variant is None:
+        template_variant = rng.randrange(len(templates))
+    if not 0 <= template_variant < len(templates):
+        raise ValueError(f"template_variant must be in [0, {len(templates) - 1}], got {template_variant}")
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        rel_agent=world_phrase(relation, agent),
+        move_dir=move_dir,
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"implicit_cardinal_route_update_{relation}_move_{move_dir}",
+        observer="a",
+        before=before,
+        after=after,
+        text=text,
+        difficulty=2,
+        template_id=1130 + template_variant,
+        template_family="implicit_cardinal_route_update",
+    )
+
+
 def generate_relation_type_contrast_item(
     rng: random.Random,
     *,
@@ -1789,6 +2033,14 @@ def generate_item(rng: random.Random, *, example_id: int = 0, template_preset: s
         return generate_turn_around_lr_item(rng, agent=agent, obj=obj, example_id=example_id)
     if template_family == "implicit_cardinal_guard":
         return generate_cardinal_guard_item(rng, agent=agent, obj=obj, example_id=example_id)
+    if template_family == "implicit_cardinal_inverse":
+        return generate_cardinal_inverse_item(rng, agent=agent, obj=obj, example_id=example_id)
+    if template_family == "implicit_cardinal_move_past":
+        return generate_cardinal_move_past_item(rng, agent=agent, obj=obj, example_id=example_id)
+    if template_family == "implicit_cardinal_landmark":
+        return generate_cardinal_landmark_item(rng, agent=agent, obj=obj, example_id=example_id)
+    if template_family == "implicit_cardinal_route_update":
+        return generate_cardinal_route_update_item(rng, agent=agent, obj=obj, example_id=example_id)
     if template_family == "implicit_relation_type_contrast":
         return generate_relation_type_contrast_item(rng, agent=agent, obj=obj, example_id=example_id)
     if template_family == "implicit_pass_by":
@@ -1974,7 +2226,8 @@ def parse_args() -> argparse.Namespace:
             "v7 adds close/far distance contrasts; v8-v12 branch from v6 to test reciprocal distance, "
             "distance-lite, turn-around left/right, cardinal guardrails, and relation-type contrast; "
             "v13-v15 compose v8 with turn-order and turn-around left/right variants; "
-            "v19-v21 add matched left/right contrast pairs at increasing density."
+            "v19-v21 add matched left/right contrast pairs at increasing density; "
+            "cardinal_v1 generates only north/south and east/west text for natural-data mixing."
         ),
     )
     parser.add_argument(

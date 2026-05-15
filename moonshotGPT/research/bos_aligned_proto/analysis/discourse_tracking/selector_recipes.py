@@ -17,15 +17,20 @@ from .snippet_features import (
 
 SELECTOR_NAMES = (
     "relation_role",
+    "persistent_relation_role",
     "entity_persistence",
     "attribute_rich",
     "role_alternation",
     "state_update",
+    "persistent_state_update",
+    "persistent_relation_state_update",
     "internal_state",
     "mixed_structural",
 )
 
 RELATION_ROLE_DIRECTED_COUNT_CAP = 16.0
+PERSISTENT_RELATION_ROLE_DIRECTED_COUNT_CAP = 16.0
+PERSISTENT_RELATION_ROLE_CAST_SIZE_SOFT_CAP = 12.0
 ATTRIBUTE_RICH_ENTITY_MIN = 1
 ATTRIBUTE_RICH_EDGE_COUNT_CAP = 8.0
 MIXED_RELATION_DENSITY_CAP = 4.0
@@ -43,6 +48,15 @@ MIXED_BIBLIOGRAPHY_PENALTY_WEIGHT = 1.0
 def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
     if selector == "relation_role":
         return ["relation_role_score", "directed_relation_count", "two_entity_relation_sentence_fraction", "window_id"], [False, False, False, True]
+    if selector == "persistent_relation_role":
+        return [
+            "persistent_relation_role_score",
+            "mean_entity_persistence",
+            "pair_recurrence",
+            "adjacent_entity_overlap",
+            "directed_relation_count",
+            "window_id",
+        ], [False, False, False, False, False, True]
     if selector == "entity_persistence":
         return ["entity_recurrence", "entity_persistence", "window_id"], [False, False, True]
     if selector == "attribute_rich":
@@ -51,6 +65,24 @@ def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
         return ["role_alternation_score", "role_alternating_pair_count", "same_pair_multi_relation_count", "window_id"], [False, False, False, True]
     if selector == "state_update":
         return ["state_update_score", "change_verb_density", "change_verb_count", "window_id"], [False, False, False, True]
+    if selector == "persistent_state_update":
+        return [
+            "persistent_state_update_score",
+            "same_entity_event_chain_count",
+            "change_verb_count",
+            "mean_entity_persistence",
+            "entity_recurrence",
+            "window_id",
+        ], [False, False, False, False, False, True]
+    if selector == "persistent_relation_state_update":
+        return [
+            "persistent_relation_state_update_score",
+            "same_entity_event_chain_count",
+            "directed_relation_count",
+            "change_verb_count",
+            "mean_entity_persistence",
+            "window_id",
+        ], [False, False, False, False, False, True]
     if selector == "internal_state":
         return [
             "internal_state_score",
@@ -73,8 +105,14 @@ def selector_sort_columns(selector: str) -> tuple[list[str], list[bool]]:
 SELECTOR_DEFAULT_COLUMNS = (
     "relation_density",
     "unique_entity_count",
+    "mean_entity_persistence",
     "entity_recurrence",
     "entity_persistence",
+    "entity_sentence_coverage",
+    "effective_cast_size",
+    "adjacent_entity_overlap",
+    "pair_recurrence",
+    "directed_relation_count",
     "attribute_density",
     "property_word_count",
     "entity_attribute_edge_count",
@@ -85,6 +123,7 @@ SELECTOR_DEFAULT_COLUMNS = (
     "change_verb_count",
     "temporal_marker_count",
     "temporal_marker_density",
+    "before_after_marker_count",
     "result_state_pattern_count",
     "same_entity_event_chain_count",
     "mental_state_density",
@@ -107,6 +146,7 @@ SELECTOR_DEFAULT_COLUMNS = (
     "unique_attribute_count",
     "layout_noise_score",
     "bibliography_noise_score",
+    "dense_separator_density",
     "inline_list_glyph_count",
     "table_catalog_symptom_noise_score",
     "repeated_3gram_ratio",
@@ -117,9 +157,12 @@ SELECTOR_DEFAULT_COLUMNS = (
     "mixed_core_selector_count",
     "mixed_primary_signal",
     "relation_role_score",
+    "persistent_relation_role_score",
     "attribute_rich_score",
     "role_alternation_score",
     "state_update_score",
+    "persistent_state_update_score",
+    "persistent_relation_state_update_score",
     "internal_state_score",
     "mixed_structural_score",
 )
@@ -183,6 +226,27 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         + 0.25 * min(_record_float(record, "relation_density"), 6.0)
         - 2.0 * noise_penalty
     )
+    persistent_relation_role_score = float(
+        1.5 * min(_record_float(record, "directed_relation_count"), 12.0)
+        + 2.0 * _record_float(record, "two_entity_relation_sentence_fraction")
+        + 5.0 * _record_float(record, "mean_entity_persistence")
+        + 3.0 * _record_float(record, "entity_sentence_coverage")
+        + 1.5 * _record_float(record, "entity_recurrence")
+        + 4.0 * _record_float(record, "pair_recurrence")
+        + 3.0 * _record_float(record, "adjacent_entity_overlap")
+        + 0.75 * min(_record_float(record, "same_pair_multi_relation_count"), 6.0)
+        - 0.75
+        * max(
+            0.0,
+            _record_float(record, "directed_relation_count") - PERSISTENT_RELATION_ROLE_DIRECTED_COUNT_CAP,
+        )
+        - 0.50
+        * max(0.0, _record_float(record, "effective_cast_size") - PERSISTENT_RELATION_ROLE_CAST_SIZE_SOFT_CAP)
+        - 2.5 * noise_penalty
+        - 1.5 * _record_float(record, "bibliography_noise_score")
+        - 1.5 * _record_float(record, "table_catalog_symptom_noise_score")
+        - 0.75 * _record_float(record, "dense_separator_density")
+    )
     attribute_rich_score = float(
         0.85 * min(_record_float(record, "attribute_density"), 5.0)
         + 0.65 * min(_record_float(record, "entity_attribute_edge_count"), ATTRIBUTE_RICH_EDGE_COUNT_CAP)
@@ -207,6 +271,42 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
         - 2.10 * noise_penalty
         - 1.50 * _record_float(record, "bibliography_noise_score")
     )
+    persistent_state_update_score = float(
+        1.0 * min(_record_float(record, "change_verb_count"), 6.0)
+        + 1.0 * min(_record_float(record, "change_verb_density"), 3.0)
+        + 3.0 * _record_float(record, "mean_entity_persistence")
+        + 2.0 * _record_float(record, "entity_sentence_coverage")
+        + 1.5 * _record_float(record, "entity_recurrence")
+        + 2.0 * min(_record_float(record, "same_entity_event_chain_count"), 3.0)
+        + 0.75 * min(_record_float(record, "result_state_pattern_count"), 3.0)
+        + 0.50 * min(_record_float(record, "temporal_marker_count"), 4.0)
+        + 0.50 * min(_record_float(record, "before_after_marker_count"), 2.0)
+        - 2.25 * noise_penalty
+        - 1.50 * _record_float(record, "bibliography_noise_score")
+        - 1.25 * _record_float(record, "table_catalog_symptom_noise_score")
+        - 0.50 * _record_float(record, "dense_separator_density")
+    )
+    persistent_relation_state_update_score = float(
+        2.5 * _record_float(record, "mean_entity_persistence")
+        + 2.0 * _record_float(record, "entity_sentence_coverage")
+        + 1.0 * _record_float(record, "entity_recurrence")
+        + 1.0 * min(_record_float(record, "directed_relation_count"), 8.0)
+        + 1.25 * min(_record_float(record, "two_entity_relation_sentence_fraction"), 0.75)
+        + 0.75 * min(_record_float(record, "same_pair_multi_relation_count"), 3.0)
+        + 0.75 * min(_record_float(record, "pair_recurrence"), 1.0)
+        + 0.75 * min(_record_float(record, "adjacent_entity_overlap"), 1.0)
+        + 1.0 * min(_record_float(record, "change_verb_count"), 4.0)
+        + 0.75 * min(_record_float(record, "change_verb_density"), 2.0)
+        + 1.50 * min(_record_float(record, "same_entity_event_chain_count"), 3.0)
+        + 0.50 * min(_record_float(record, "result_state_pattern_count"), 3.0)
+        + 0.50 * min(_record_float(record, "temporal_marker_count"), 4.0)
+        + 0.25 * min(_record_float(record, "before_after_marker_count"), 2.0)
+        - 0.35 * max(0.0, _record_float(record, "effective_cast_size") - 12.0)
+        - 2.25 * noise_penalty
+        - 1.25 * _record_float(record, "bibliography_noise_score")
+        - 1.25 * _record_float(record, "table_catalog_symptom_noise_score")
+        - 0.50 * _record_float(record, "dense_separator_density")
+    )
     internal_state_score = float(
         min(_record_float(record, "strong_internal_state_density"), 5.0)
         + min(_record_float(record, "strong_agent_state_edge_count"), 4.0)
@@ -226,9 +326,12 @@ def selector_score_features(record: dict[str, Any]) -> dict[str, float]:
     )
     return {
         "relation_role_score": relation_role_score,
+        "persistent_relation_role_score": persistent_relation_role_score,
         "attribute_rich_score": attribute_rich_score,
         "role_alternation_score": role_alternation_score,
         "state_update_score": state_update_score,
+        "persistent_state_update_score": persistent_state_update_score,
+        "persistent_relation_state_update_score": persistent_relation_state_update_score,
         "internal_state_score": internal_state_score,
         "mixed_structural_score": mixed_structural_score,
     }
@@ -278,6 +381,27 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
             and _record_int(record, "unique_entity_count", 0) >= 2
             and _record_float(record, "entity_recurrence") > 0.0
         ),
+        "persistent_relation_role": (
+            valid
+            and repeat_ok
+            and heavy_list_ok
+            and bibliography_ok
+            and _record_float(record, "dense_separator_density") <= 1.00
+            and _record_float(record, "table_catalog_symptom_noise_score") <= 0.25
+            and _record_int(record, "snippet_sentence_count", _record_int(record, "sentence_count", 0)) >= 2
+            and _record_int(record, "unique_entity_count", 0) >= 2
+            and _record_float(record, "entity_sentence_coverage") >= 0.60
+            and _record_float(record, "mean_entity_persistence") >= 0.25
+            and _record_float(record, "entity_recurrence") > 0.0
+            and _record_int(record, "directed_relation_count", 0) >= 2
+            and _record_float(record, "two_entity_relation_sentence_fraction") >= 0.20
+            and (
+                _record_float(record, "pair_recurrence") > 0.0
+                or _record_float(record, "adjacent_entity_overlap") > 0.0
+                or _record_int(record, "same_pair_multi_relation_count", 0) > 0
+            )
+            and scores["persistent_relation_role_score"] > 0.0
+        ),
         "attribute_rich": (
             valid
             and repeat_ok
@@ -302,6 +426,40 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
             and _record_float(record, "change_verb_density") > 0.0
             and scores["state_update_score"] > 0.0
         ),
+        "persistent_state_update": (
+            valid
+            and repeat_ok
+            and list_ok
+            and bibliography_ok
+            and _record_float(record, "dense_separator_density") <= 1.00
+            and _record_float(record, "table_catalog_symptom_noise_score") <= 0.25
+            and _record_int(record, "snippet_sentence_count", _record_int(record, "sentence_count", 0)) >= 2
+            and _record_int(record, "unique_entity_count", 0) >= 1
+            and _record_float(record, "entity_sentence_coverage") >= 0.60
+            and _record_float(record, "mean_entity_persistence") >= 0.25
+            and _record_float(record, "entity_recurrence") > 0.0
+            and _record_int(record, "change_verb_count", 0) >= 1
+            and state_update_anchor
+            and scores["persistent_state_update_score"] > 0.0
+        ),
+        "persistent_relation_state_update": (
+            valid
+            and repeat_ok
+            and list_ok
+            and bibliography_ok
+            and _record_float(record, "dense_separator_density") <= 1.00
+            and _record_float(record, "table_catalog_symptom_noise_score") <= 0.25
+            and _record_int(record, "snippet_sentence_count", _record_int(record, "sentence_count", 0)) >= 2
+            and _record_int(record, "unique_entity_count", 0) >= 2
+            and _record_float(record, "entity_sentence_coverage") >= 0.60
+            and _record_float(record, "mean_entity_persistence") >= 0.25
+            and _record_float(record, "entity_recurrence") > 0.0
+            and _record_int(record, "directed_relation_count", 0) >= 2
+            and _record_float(record, "two_entity_relation_sentence_fraction") >= 0.20
+            and _record_int(record, "change_verb_count", 0) >= 1
+            and state_update_anchor
+            and scores["persistent_relation_state_update_score"] > 0.0
+        ),
         "internal_state": (
             valid
             and repeat_ok
@@ -318,7 +476,17 @@ def selector_gate_features(record: dict[str, Any]) -> dict[str, float | int | bo
     }
     active_selector_type_count = int(sum(1 for passed in gates.values() if passed))
     mixed_core_selector_count = int(
-        sum(1 for selector in ("relation_role", "entity_persistence", "internal_state") if gates[selector])
+        sum(
+            1
+            for selector in (
+                "relation_role",
+                "persistent_relation_role",
+                "persistent_relation_state_update",
+                "entity_persistence",
+                "internal_state",
+            )
+            if gates[selector]
+        )
     )
     mixed_primary_signal = _mixed_primary_signal(record)
     scores["mixed_structural_score"] = float(
@@ -427,8 +595,12 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "sentence_count",
         "token_count_text",
         "unique_entity_count",
+        "mean_entity_persistence",
         "entity_recurrence",
         "entity_persistence",
+        "entity_sentence_coverage",
+        "effective_cast_size",
+        "adjacent_entity_overlap",
         "relation_density",
         "directed_relation_count",
         "two_entity_relation_sentence_fraction",
@@ -443,6 +615,8 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "change_verb_density",
         "change_verb_count",
         "temporal_marker_density",
+        "temporal_marker_count",
+        "before_after_marker_count",
         "result_state_pattern_count",
         "same_entity_event_chain_count",
         "mental_state_density",
@@ -487,9 +661,12 @@ def snippet_feature_columns() -> tuple[str, ...]:
         "author_initial_count",
         "citation_year_volume_count",
         "relation_role_score",
+        "persistent_relation_role_score",
         "attribute_rich_score",
         "role_alternation_score",
         "state_update_score",
+        "persistent_state_update_score",
+        "persistent_relation_state_update_score",
         "internal_state_score",
         "active_selector_type_count",
         "mixed_core_selector_count",
