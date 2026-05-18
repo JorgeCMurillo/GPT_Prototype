@@ -526,12 +526,22 @@ def collect_paper_block_candidate_index(
                 else:
                     if self.cfg.drop_columns:
                         self.data = self.data.remove_columns(["input_ids"])
-                    self.data = self.data.add_column(
-                        "loss",
-                        self.per_doc_losses.cpu().numpy(),
-                        feature=Value("float32"),
-                        new_fingerprint="loss",
-                    )
+                    losses_np = self.per_doc_losses.cpu().numpy()
+                    try:
+                        self.data = self.data.add_column(
+                            "loss",
+                            losses_np,
+                            feature=Value("float32"),
+                            new_fingerprint="loss",
+                        )
+                    except TypeError as exc:
+                        if "feature" not in str(exc):
+                            raise
+                        self.data = self.data.add_column(
+                            "loss",
+                            losses_np,
+                            new_fingerprint="loss",
+                        )
                 self.data.save_to_disk(str(self.cfg.partial_run_path / "data.hf"))
                 self.processor.save(self.cfg.partial_run_path)
 

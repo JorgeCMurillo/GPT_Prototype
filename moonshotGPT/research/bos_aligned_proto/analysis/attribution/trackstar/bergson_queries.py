@@ -12,6 +12,7 @@ from collections import OrderedDict
 import hashlib
 from typing import Any, Mapping, Sequence
 
+import numpy as np
 import torch
 from transformers.pytorch_utils import Conv1D as HFConv1D
 
@@ -226,9 +227,12 @@ def _create_projection_matrix(
         prng = torch.Generator(device).manual_seed(seed)
         matrix = torch.randn(rows, cols, device=device, dtype=dtype, generator=prng)
     elif projection_type == "rademacher":
-        prng = torch.Generator(device).manual_seed(seed)
-        matrix = torch.randint(0, 2, (rows, cols), device=device, generator=prng, dtype=torch.int64)
-        matrix = matrix.to(dtype=dtype).mul_(2).add_(-1)
+        numpy_rng = np.random.Generator(np.random.PCG64(seed))
+        random_bytes = numpy_rng.bytes((rows * cols + 7) // 8)
+        random_bytes = np.frombuffer(random_bytes, dtype=np.uint8)
+        bits = np.unpackbits(random_bytes)[: rows * cols].reshape((rows, cols))
+        matrix = torch.from_numpy(bits).to(device=device, dtype=dtype)
+        matrix = matrix.add_(-0.5).mul_(2)
     else:
         raise ValueError(f"Unsupported Bergson projection_type: {projection_type!r}")
 

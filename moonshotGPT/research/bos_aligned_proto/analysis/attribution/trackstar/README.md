@@ -553,6 +553,174 @@ The summary includes global Pearson/Spearman correlations between exported
 scores, raw dots, and negative actual deltas so you can see whether the sign
 and ranking are coherent before trusting the longer ablation workflow.
 
+## Projection Geometry Audit
+
+When the raw dot path works but projected scores look suspicious, use the
+projection-geometry audit before rebuilding a full TrackStar index at a larger
+dimension. It recomputes raw and Adam-corrected query/candidate gradients for
+sampled single examples, sweeps projection side ranks, and compares:
+
+- `raw_dot` vs `projected_raw_dot`
+- `raw_dot` vs `projected_raw_dot_rescaled`
+- `adam_dot` vs `projected_adam_dot`
+- `adam_dot` vs `projected_adam_dot_rescaled`
+
+The `*_rescaled` metrics compensate for the expected scale introduced by
+Bergson's row-normalized two-sided projection, so they are useful for
+distinguishing random-basis bugs from ordinary projection/module reweighting.
+
+Example:
+
+```bash
+conda run -n <your_env_name> python -m research.bos_aligned_proto.analysis.attribution.trackstar.run_projection_geometry_audit \
+  --base_ckpt /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/ckpt_periodic_step0016000 \
+  --attribution_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/trackstar_varswap_ckpt16000_window16000_20000 \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --step 16000 \
+  --score_mode net_pooled \
+  --group_size 100 \
+  --num_examples_per_group 16 \
+  --projection_ranks 16 32 64 128 \
+  --device cuda
+```
+
+If correlations improve smoothly with rank, the projected path is likely
+dimension-limited rather than broken. If raw projection improves but Adam
+projection stays near zero, inspect the Adam normalizer shapes/scales and the
+Adam-corrected feature distribution. If both projected paths stay bad, suspect
+projection layout or basis mismatch.
+
+## Adam Projection Diagnostic
+
+When the projection-geometry audit shows healthy raw projection but weak
+Adam-corrected projection, run the per-block diagnostic. It samples the same
+top/matched-random/bottom pools, then writes per-example and per-paper-block
+comparisons between:
+
+- pre-projection raw and Adam dots
+- rescaled projected raw and Adam dots
+- raw-to-Adam norm amplification
+- Adam normalizer scale summaries
+
+Example:
+
+```bash
+conda run --no-capture-output -n <your_env_name> python -u -m research.bos_aligned_proto.analysis.attribution.trackstar.run_adam_projection_diagnostic \
+  --base_ckpt /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/ckpt_periodic_step0016000 \
+  --attribution_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/trackstar_varswap_ckpt16000_window16000_20000_paper_blocks_fresh \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --step 16000 \
+  --score_mode net_pooled \
+  --group_size 100 \
+  --num_examples_per_group 12 \
+  --projection_ranks 64 \
+  --device cuda
+```
+
+It writes:
+
+- `example_results.jsonl`
+- `block_results.jsonl`
+- `normalizer_module_summary.csv`
+- `normalizer_block_summary.csv`
+- `summary.json`
+
+In `summary.json`, start with
+`block_correlations_by_rank.<rank>.top_problem_blocks_by_adam_projection_error`
+and `top_blocks_by_mean_abs_adam_dot`. If the same blocks dominate both lists,
+the issue is probably a block-specific Adam scale/projection interaction. If
+many blocks have poor Adam projection despite normal raw projection, suspect a
+global Adam-normalization convention mismatch.
+
+### Current Variable-Swap Findings
+
+For the checkpoint-16000 FineWeb variable-swap run, the score-path audit and
+projection diagnostics currently support the following interpretation:
+
+- the raw first-order path is the trusted sanity check for tiny SGD updates
+- `paper_blocks` raw projection is behaving like a normal dimension/fidelity
+  tradeoff, not like a projection-basis bug
+- Adam-corrected gradients are substantially spikier and need more projection
+  dimension than raw gradients
+- `2^16` total paper-block features is useful for cheap exploratory retrieval,
+  but it under-resolves Adam-corrected geometry for this task
+- `2^18` total paper-block features is the practical compromise for a fresh
+  Adam/TrackStar-style index
+- `2^20` is a useful diagnostic upper bound, but likely too expensive for
+  ordinary iteration
+
+In the rank sweep, `projection_rank` is the side length per paper block:
+
+```text
+rank 64:   16 blocks * 64^2   = 65,536 dims   = 2^16
+rank 128:  16 blocks * 128^2  = 262,144 dims  = 2^18
+rank 256:  16 blocks * 256^2  = 1,048,576 dims = 2^20
+```
+
+The 36-example Adam projection diagnostic showed:
+
+```text
+Example-level raw projection
+rank 64:   Pearson 0.753, Spearman 0.699, RMSE/RMS 0.950
+rank 128:  Pearson 0.808, Spearman 0.755, RMSE/RMS 0.666
+rank 256:  Pearson 0.905, Spearman 0.892, RMSE/RMS 0.451
+
+Example-level Adam projection
+rank 64:   Pearson 0.318, Spearman 0.286, RMSE/RMS 3.318
+rank 128:  Pearson 0.571, Spearman 0.529, RMSE/RMS 1.362
+rank 256:  Pearson 0.785, Spearman 0.729, RMSE/RMS 0.769
+```
+
+This does not contradict the TrackStar paper's `2^16` setting. The paper treats
+`2^16` as a memory/fidelity compromise, notes that higher projection dimension
+improves fidelity, and reports that their 8B model had not clearly plateaued at
+`2^16`. In this project, the variable-swap Adam geometry appears to need more
+dimension than raw geometry; a `2^18` index should be treated as the next
+production-ish test.
+
+The added audit code lives in:
+
+- `adam_projection_diagnostic.py`
+- `run_adam_projection_diagnostic.py`
+
+The relevant test coverage is in `tests/test_paper_blocks.py`, especially the
+paper-block projection and collector parity checks.
+
+For a fresh full `2^18` paper-block index, use `--paper_block_features 16384`
+because features are specified per block:
+
+```bash
+conda run --no-capture-output -n <your_env_name> python -u -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+  --run_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name> \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --exp_name trackstar_varswap_ckpt16000_window16000_20000_paper_blocks_2p18 \
+  --checkpoint_steps 16000 \
+  --candidate_from_step 16000 \
+  --candidate_to_step 20000 \
+  --max_candidate_rows 50000 \
+  --ewok_filter_spec /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/target_diff_variable_swap.json \
+  --ewok_score_view babylm_completion_choice \
+  --score_reduction mean \
+  --projection_layout paper_blocks \
+  --paper_block_features 16384 \
+  --write_dense_scores \
+  --device cuda
+```
+
+For the current 19,196-candidate window, the main `gradients.bin` storage would
+be roughly 18.7 GiB at `2^18`, before smaller metadata and normalizer files.
+
+### Projection Sanity Failure Mode
+
+If the raw first-order signal correlates with tiny one-step loss improvement
+but the projected TrackStar score does not, treat that as a projection-space
+bug until proven otherwise. Candidate and query gradients must be projected
+with the same deterministic Bergson matrices. In particular, Bergson's
+Rademacher projection uses a NumPy `PCG64` byte stream seeded from the module
+identifier, not `torch.randint` from the same seed. Using different random
+generators leaves the two sides in incompatible bases, so a good raw-gradient
+correlation can disappear after projection.
+
 ## Example Command
 
 ```bash

@@ -460,6 +460,23 @@ space on the order of millions of coordinates.
 If you need a smaller memory footprint, try `--proj_dim 8`. If you want a
 larger approximation budget and have the hardware for it, try `--proj_dim 32`.
 
+## Projection Basis Contract
+
+Projected scores are only meaningful when candidate-side and query-side
+gradients use exactly the same deterministic projection matrices. A useful
+debugging pattern is:
+
+- raw first-order signal `-<grad L_Q, grad loss_x>` correlates with negative
+  one-step target-loss deltas;
+- projected TrackStar scores stop correlating.
+
+That pattern is coherent, but it should raise suspicion that the two projected
+feature spaces are not actually the same. For Bergson's default Rademacher
+projection, the matrix entries come from a NumPy `PCG64` byte stream seeded by
+the module/side identifier. Replacing that with `torch.randint` under the same
+integer seed produces a different matrix, so raw-gradient agreement can vanish
+only after projection.
+
 ## Cache Behavior
 
 TrackStar caches checkpoint-local backend artifacts under:
