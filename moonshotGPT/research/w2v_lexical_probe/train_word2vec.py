@@ -1,13 +1,16 @@
-"""Train a Word2Vec lexical probe from detokenized GPT-style shards.
+"""Train a Word2Vec lexical probe and evaluate it on EWoK.
 
 How it works:
-- Resolve a shard dataset directory such as `fineweb_edu_10B`.
-- Read `meta.json` to recover tokenizer metadata.
-- Stream BOS-delimited `train_*.bin` shards and detokenize each document.
+- Resolve a training corpus in one supported format:
+  - BOS-delimited token shards (`shard_bin`)
+  - raw line-oriented text directories (`text_dir`)
+  - Hugging Face Arrow files with a text column (`hf_arrow`)
+- Stream raw text documents from the corpus reader.
 - Normalize the decoded text with the shared Word2Vec text pipeline.
 - Build a gensim vocabulary from the resulting tokenized documents.
 - Train a skip-gram negative-sampling model with CPU worker threads.
 - Optionally save intermediate checkpoints after fixed epoch intervals.
+- Optionally run the standard Word2Vec EWoK evaluator after training.
 - Save the trained vectors, vocabulary, and run summary under the output root.
 
 Corpus framing:
@@ -42,8 +45,14 @@ except Exception as exc:
     CallbackAny2Vec = object
     _GENSIM_IMPORT_ERROR = exc
 
-from .corpus import ShardCorpusConfig, ShardCorpusReader
-from .eval_ewok_word2vec import evaluate_loaded_run, load_ewok_eval_data
+from .corpus import (
+    VALID_CORPUS_FORMATS,
+    CorpusConfig,
+    CorpusReader,
+    ShardCorpusConfig,
+    build_corpus_reader,
+)
+from .eval_ewok_word2vec import evaluate_and_write_outputs, evaluate_loaded_run, load_ewok_eval_data
 from .model import (
     LoadedWord2VecRun,
     Word2VecTrainingConfig,
@@ -87,7 +96,7 @@ class _TokenizedDocumentIterable:
 
     def __init__(
         self,
-        reader: ShardCorpusReader,
+        reader: CorpusReader,
         tokenizer: WordTokenizer,
         *,
         total_documents: int | None = None,
@@ -150,18 +159,29 @@ class _TokenizedDocumentIterable:
         }
 
 
-def _build_run_name(reader: ShardCorpusReader, config: Word2VecTrainingConfig, corpus_config: ShardCorpusConfig) -> str:
+def _format_slug(reader: CorpusReader) -> str:
+    return _safe_slug(str(reader.describe().get("corpus_format", "corpus")))
+
+
+def _build_run_name(reader: CorpusReader, config: Word2VecTrainingConfig, corpus_config: CorpusConfig) -> str:
     parts = [
         "sgns",
-        _safe_slug(reader.data_dir.name),
-        f"d{config.embedding_dim}",
-        f"w{config.window_size}",
-        f"neg{config.negative_samples}",
-        f"mc{config.min_count}",
-        f"sh{corpus_config.max_shards}",
-        f"ep{config.epochs}",
-        f"seed{config.seed}",
+        _safe_slug(reader.source_name),
     ]
+    if not isinstance(corpus_config, ShardCorpusConfig):
+        parts.append(_format_slug(reader))
+    parts.extend(
+        [
+            f"d{config.embedding_dim}",
+            f"w{config.window_size}",
+            f"neg{config.negative_samples}",
+            f"mc{config.min_count}",
+            f"ep{config.epochs}",
+            f"seed{config.seed}",
+        ]
+    )
+    if isinstance(corpus_config, ShardCorpusConfig):
+        parts.insert(-2, f"sh{corpus_config.max_shards}")
     if corpus_config.max_docs > 0:
         parts.append(f"docs{corpus_config.max_docs}")
     return "_".join(parts)
@@ -170,8 +190,8 @@ def _build_run_name(reader: ShardCorpusReader, config: Word2VecTrainingConfig, c
 def _build_run_summary(
     *,
     run_name: str,
-    reader: ShardCorpusReader,
-    corpus_config: ShardCorpusConfig,
+    reader: CorpusReader,
+    corpus_config: CorpusConfig,
     text_config: TextNormalizationConfig,
     training_config: Word2VecTrainingConfig,
     vocab_stats: dict,
@@ -290,7 +310,7 @@ def _load_resume_state(resume_run_dir: str | Path) -> tuple[object, dict]:
 def _validate_resume_configuration(
     *,
     resume_state: dict,
-    corpus_config: ShardCorpusConfig,
+    corpus_config: CorpusConfig,
     text_config: TextNormalizationConfig,
     training_config: Word2VecTrainingConfig,
     eval_every_words: int,
@@ -304,14 +324,7 @@ def _validate_resume_configuration(
     mismatches = []
     prior_corpus = summary.get("corpus_config", {})
     if isinstance(prior_corpus, dict):
-        corpus_checks = {
-            "data_dir": corpus_config.data_dir,
-            "split": corpus_config.split,
-            "max_shards": corpus_config.max_shards,
-            "max_docs": corpus_config.max_docs,
-            "tokenizer_name": corpus_config.tokenizer_name,
-        }
-        for key, current_value in corpus_checks.items():
+        for key, current_value in corpus_config.to_dict().items():
             if key in prior_corpus and prior_corpus.get(key) != current_value:
                 mismatches.append(
                     f"corpus_config.{key}: resume={prior_corpus.get(key)!r} current={current_value!r}"
@@ -450,8 +463,8 @@ def _save_epoch_checkpoint(
     *,
     run_dir: Path,
     run_name: str,
-    reader: ShardCorpusReader,
-    corpus_config: ShardCorpusConfig,
+    reader: CorpusReader,
+    corpus_config: CorpusConfig,
     text_config: TextNormalizationConfig,
     training_config: Word2VecTrainingConfig,
     vocabulary,
@@ -485,7 +498,7 @@ def _save_epoch_checkpoint(
 
 
 def _iter_training_chunks(
-    reader: ShardCorpusReader,
+    reader: CorpusReader,
     tokenizer: WordTokenizer,
     *,
     chunk_word_limit: int,
@@ -613,8 +626,8 @@ class _EpochCallback(CallbackAny2Vec):
         *,
         run_dir: Path,
         run_name: str,
-        reader: ShardCorpusReader,
-        corpus_config: ShardCorpusConfig,
+        reader: CorpusReader,
+        corpus_config: CorpusConfig,
         text_config: TextNormalizationConfig,
         training_config: Word2VecTrainingConfig,
         vocabulary,
@@ -699,8 +712,8 @@ def _train_with_periodic_eval(
     model,
     run_dir: Path,
     run_name: str,
-    reader: ShardCorpusReader,
-    corpus_config: ShardCorpusConfig,
+    reader: CorpusReader,
+    corpus_config: CorpusConfig,
     text_config: TextNormalizationConfig,
     training_config: Word2VecTrainingConfig,
     vocabulary,
@@ -888,6 +901,71 @@ def _train_with_periodic_eval(
     )
 
 
+def _resolve_max_docs(args: argparse.Namespace) -> int:
+    max_docs = int(args.max_docs)
+    max_lines = getattr(args, "max_lines", None)
+    if max_lines is not None:
+        max_lines = int(max_lines)
+        if max_lines < 0:
+            raise ValueError("--max_lines must be >= 0")
+        if max_docs > 0 and max_docs != max_lines:
+            print("[warn] --max_lines is ignored because --max_docs was also provided.")
+        elif max_docs == 0:
+            print("[warn] --max_lines is deprecated; use --max_docs instead.")
+            max_docs = max_lines
+    if max_docs < 0:
+        raise ValueError("--max_docs must be >= 0")
+    return max_docs
+
+
+def _log_resolved_corpus(
+    *,
+    reader: CorpusReader,
+    corpus_config: CorpusConfig,
+    training_config: Word2VecTrainingConfig,
+) -> None:
+    description = reader.describe()
+    source = description.get("data_dir") or description.get("arrow_path") or reader.source_name
+    print(
+        "[info] resolved corpus:"
+        f" format={description.get('corpus_format', 'unknown')}"
+        f" source={source}"
+    )
+    if isinstance(corpus_config, ShardCorpusConfig):
+        print(
+            "[info] shard selection:"
+            f" split={corpus_config.split}"
+            f" shards={len(description.get('shards', []))}"
+            f" max_shards={corpus_config.max_shards}"
+        )
+    elif "files" in description:
+        print(
+            "[info] text file selection:"
+            f" files={len(description['files'])}"
+            f" glob={description.get('glob_pattern')}"
+        )
+    elif "num_rows" in description:
+        print(
+            "[info] arrow selection:"
+            f" rows={description.get('num_rows')}"
+            f" text_column={description.get('text_column')}"
+        )
+    if int(description.get("max_docs", 0) or 0) > 0:
+        print(f"[info] document cap: {description['max_docs']}")
+    print(
+        "[info] worker configuration:"
+        f" {training_config.workers}/{_available_cpu_count()}"
+        f" ({(100.0 * training_config.workers / _available_cpu_count()):.0f}%)"
+    )
+    print(
+        "[info] corpus framing:"
+        f" role={description.get('baseline_role', 'unknown')}"
+    )
+    interpretation = description.get("interpretation")
+    if interpretation:
+        print(f"[info] {interpretation}")
+
+
 def train(args: argparse.Namespace) -> Path:
     _require_gensim()
     _warn_deprecated_args(args)
@@ -903,17 +981,19 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("--eval_every_words must be >= 0")
     if args.eval_margin_eps < 0:
         raise ValueError("--eval_margin_eps must be >= 0")
-    corpus_config = ShardCorpusConfig(
+    max_docs = _resolve_max_docs(args)
+    print(f"[info] loading {args.corpus_format} corpus from {args.data_dir}")
+    corpus_config, reader = build_corpus_reader(
+        corpus_format=args.corpus_format,
         data_dir=args.data_dir,
         split=args.split,
         max_shards=args.max_train_shards,
-        max_docs=args.max_docs,
+        max_docs=max_docs,
         tokenizer_name=args.tokenizer,
+        glob_pattern=args.glob_pattern,
+        text_column=args.text_column,
     )
     text_config = TextNormalizationConfig()
-
-    print(f"[info] loading shard dataset from {args.data_dir}")
-    reader = ShardCorpusReader(corpus_config)
 
     resume_model = None
     resume_state = None
@@ -953,23 +1033,11 @@ def train(args: argparse.Namespace) -> Path:
             ewok_text_preprocessing=args.ewok_text_preprocessing,
         )
 
-    print(
-        "[info] resolved dataset:"
-        f" dir={reader.data_dir}"
-        f" shards={len(reader.shard_paths)}"
-        f" split={corpus_config.split}"
+    _log_resolved_corpus(
+        reader=reader,
+        corpus_config=corpus_config,
+        training_config=training_config,
     )
-    print(
-        "[info] worker configuration:"
-        f" {training_config.workers}/{_available_cpu_count()}"
-        f" ({(100.0 * training_config.workers / _available_cpu_count()):.0f}%)"
-    )
-    print(
-        "[info] corpus framing:"
-        f" format={reader.corpus_role['corpus_format']}"
-        f" role={reader.corpus_role['baseline_role']}"
-    )
-    print(f"[info] {reader.corpus_role['interpretation']}")
     if resume_state is not None:
         print(
             "[info] resuming Word2Vec run:"
@@ -980,7 +1048,7 @@ def train(args: argparse.Namespace) -> Path:
         if args.output_root != build_arg_parser().get_default("output_root") or args.run_name is not None:
             print("[warn] --output_root/--run_name are ignored when --resume_run_dir is used.")
 
-    total_documents = corpus_config.max_docs if corpus_config.max_docs > 0 else None
+    total_documents = max_docs if max_docs > 0 else None
     word_tokenizer = WordTokenizer(text_config)
 
     if resume_model is None:
@@ -1134,6 +1202,24 @@ def train(args: argparse.Namespace) -> Path:
     }
     if periodic_eval_summary is not None:
         output_payload["ewok_interval_metrics"] = periodic_eval_summary["interval_metrics_path"]
+    if args.eval_after_train:
+        print(
+            "[info] running final EWoK evaluation:"
+            f" variant={args.ewok_variant}"
+            f" preprocessing={args.ewok_text_preprocessing}"
+        )
+        final_eval_paths = evaluate_and_write_outputs(
+            run_dir,
+            margin_eps=args.eval_margin_eps,
+            ewok_variant=args.ewok_variant,
+            ewok_text_preprocessing=args.ewok_text_preprocessing,
+            write_per_item=args.write_per_item,
+            filter_agent_names=args.filter_ewok_agent_names,
+            write_prediction_df=args.write_prediction_df,
+        )
+        output_payload["ewok_metrics"] = str(final_eval_paths["metrics"])
+        if args.write_prediction_df:
+            output_payload["ewok_word2vec_predictions"] = str(final_eval_paths["prediction_df"])
     if resume_state is not None:
         output_payload["resumed_from"] = str(resume_state["run_dir"])
     print(json.dumps(output_payload, indent=2))
@@ -1141,12 +1227,26 @@ def train(args: argparse.Namespace) -> Path:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train a Word2Vec lexical probe from detokenized shard data.")
-    parser.add_argument("--data_dir", required=True, help="Shard dataset directory, e.g. fineweb_edu_10B")
-    parser.add_argument("--split", default="train", help="Shard split to read")
-    parser.add_argument("--tokenizer", default=None, help="Override tokenizer name/path from meta.json")
-    parser.add_argument("--max_train_shards", type=int, default=0, help="How many shards to read; 0 means all shards")
-    parser.add_argument("--max_docs", type=int, default=0, help="Optional cap on documents; 0 means all docs in selected shards")
+    parser = argparse.ArgumentParser(description="Train a Word2Vec lexical probe and optionally evaluate it on EWoK.")
+    parser.add_argument(
+        "--corpus_format",
+        choices=VALID_CORPUS_FORMATS,
+        default="shard_bin",
+        help="Training corpus storage format: token shards, text files, or a Hugging Face Arrow file",
+    )
+    parser.add_argument("--data_dir", required=True, help="Corpus directory/file path for the selected --corpus_format")
+    parser.add_argument("--split", default="train", help="Shard split to read when --corpus_format=shard_bin")
+    parser.add_argument("--tokenizer", default=None, help="Override tokenizer name/path from shard meta.json")
+    parser.add_argument("--max_train_shards", type=int, default=0, help="Shard cap for shard_bin; 0 means all shards")
+    parser.add_argument("--max_docs", type=int, default=0, help="Optional cap on documents/lines/rows; 0 means all")
+    parser.add_argument(
+        "--max_lines",
+        type=int,
+        default=None,
+        help="Deprecated alias for --max_docs when using line or Arrow corpora",
+    )
+    parser.add_argument("--glob_pattern", default="*.train", help="File glob for --corpus_format=text_dir")
+    parser.add_argument("--text_column", default="text", help="Text column for --corpus_format=hf_arrow")
     parser.add_argument("--embedding_dim", type=int, default=300)
     parser.add_argument("--window_size", type=int, default=5)
     parser.add_argument("--negative_samples", type=int, default=5)
@@ -1193,6 +1293,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=("probe", "paper"),
         default="probe",
         help="How to tokenize EWoK text during periodic evaluation: probe-style tokenizer or paper-style lowercase/punctuation-strip split",
+    )
+    parser.add_argument(
+        "--eval_after_train",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run the standard EWoK Word2Vec evaluator after saving the final vectors (default: off)",
+    )
+    parser.add_argument("--write_per_item", action="store_true", help="With --eval_after_train, also write EWoK per-item JSONL")
+    parser.add_argument(
+        "--write_prediction_df",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="With --eval_after_train, write merged EWoK prediction CSVs (default: on)",
     )
     parser.add_argument("--device", default=None, help="Deprecated no-op; gensim training is CPU-threaded")
     parser.add_argument(

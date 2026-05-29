@@ -23,6 +23,8 @@ research/w2v_lexical_probe/
   model.py
   train_word2vec.py
   eval_ewok_word2vec.py
+  compare_ewok_word2vec_runs.py
+  run_fineweb_word_budget_ewok_ci.py
   eval_google_word2vec.py
   plot_ewok_interval_metrics.py
   plot_gpt2_vs_word2vec_domains.py
@@ -42,9 +44,15 @@ research/w2v_lexical_probe/
   Run-format helpers for saving and loading Word2Vec runs in a consistent local
   format.
 - `train_word2vec.py`
-  Main training entrypoint for gensim Word2Vec on FineWeb-derived corpora.
+  Main training entrypoint for gensim Word2Vec on shard, raw-text, and Arrow
+  corpora. Can optionally run the standard EWoK evaluator after training.
 - `eval_ewok_word2vec.py`
   Evaluates a saved lexical-probe run on EWoK and writes prediction artifacts.
+- `compare_ewok_word2vec_runs.py`
+  Compares saved EWoK metrics from multiple Word2Vec runs by domain.
+- `run_fineweb_word_budget_ewok_ci.py`
+  Trains repeated random FineWeb-Edu word-budget W2V samples, evaluates EWoK,
+  and plots per-domain confidence intervals.
 - `eval_google_word2vec.py`
   Imports Google News pretrained vectors into the same local run format and
   evaluates them on EWoK.
@@ -96,9 +104,19 @@ packing and cropping artifacts from LM supervision. That makes it less ideal as
 plain prose, but sometimes more relevant when the research question is about
 what the model was actually exposed to.
 
+The same trainer also supports BabyLM-style text corpora:
+
+- `--corpus_format text_dir`
+  Treats each non-empty line in files matching `--glob_pattern` as a document.
+- `--corpus_format hf_arrow`
+  Treats each row in an Arrow file's `--text_column` as a document.
+
+This lets you ask the intended question directly: train a Word2Vec model on a
+particular dataset, then evaluate that trained lexical model on EWoK.
+
 ## Setup
 
-Run from the repo root's `moonshotGPT/` directory.
+Run from `/home/jorge/tokenPred/moonshotGPT`.
 
 Install `gensim` if it is not already available:
 
@@ -119,6 +137,7 @@ EWoK sources expected by this package live at the repo root:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
+  --corpus_format shard_bin \
   --data_dir data/processed/fineweb_edu_10B
 ```
 
@@ -126,6 +145,7 @@ Small explicit example:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
+  --corpus_format shard_bin \
   --data_dir data/processed/fineweb_edu_10B \
   --max_train_shards 1 \
   --max_docs 2000 \
@@ -138,6 +158,7 @@ Exposure-oriented BOS-row example:
 
 ```bash
 python -m research.w2v_lexical_probe.train_word2vec \
+  --corpus_format shard_bin \
   --data_dir data/processed/bos_aligned_proto/fineweb_edu_10B_bosrow \
   --max_train_shards 0 \
   --max_docs 0 \
@@ -145,11 +166,114 @@ python -m research.w2v_lexical_probe.train_word2vec \
   --vocab_report_every_secs 120
 ```
 
+### Train on BabyLM-Style Corpora and Evaluate on EWoK
+
+Raw BabyLM text files:
+
+```bash
+python -m research.w2v_lexical_probe.train_word2vec \
+  --corpus_format text_dir \
+  --data_dir /home/jorge/tokenPred/babylm_10m/train_files/train_10M \
+  --glob_pattern "*.train" \
+  --eval_after_train \
+  --ewok_variant full \
+  --write_per_item
+```
+
+BabyLM-Cosmo-Fine Arrow cache:
+
+```bash
+python -m research.w2v_lexical_probe.train_word2vec \
+  --corpus_format hf_arrow \
+  --data_dir /home/jorge/.cache/huggingface/datasets/ltg___babylm-2024-baby-cosmo-fine-10m/default/0.0.0/5179e7ac0b6be2083ed03444a3a8c3d2c96061a2/babylm-2024-baby-cosmo-fine-10m-train.arrow \
+  --text_column text \
+  --eval_after_train \
+  --ewok_variant full
+```
+
 ### Evaluate a saved run on EWoK
 
 ```bash
 python -m research.w2v_lexical_probe.eval_ewok_word2vec \
   --run_dir runs/research/w2v_lexical_probe/<run_name>
+```
+
+### Compare Word2Vec Runs on EWoK
+
+```bash
+python -m research.w2v_lexical_probe.compare_ewok_word2vec_runs \
+  --run raw_babylm=/path/to/raw_babylm_w2v_run \
+  --run babycosmo=/path/to/babycosmo_w2v_run \
+  --run fineweb=/path/to/fineweb_w2v_run \
+  --ewok_variant full
+```
+
+### Estimate FineWeb Word-Budget Variation on EWoK
+
+Run five random 10M-word and 100M-word FineWeb-Edu W2V samples, evaluate each
+on EWoK, and plot per-domain 95% confidence intervals:
+
+```bash
+python -m research.w2v_lexical_probe.run_fineweb_word_budget_ewok_ci \
+  --data_dir data/processed/fineweb_edu_10B \
+  --word_budget 10000000 \
+  --word_budget 100000000 \
+  --replicates 5 \
+  --workers 44 \
+  --ewok_variant full
+```
+
+By default this uses the BabyLM-style completion-choice score. For the EWoK
+context-sensitivity score, pass `--method ewok_context_sensitivity`. To reuse
+the existing 10M/100M runs and add 50M/200M to the same plot, include all four
+budgets and `--skip_existing`:
+
+```bash
+python -m research.w2v_lexical_probe.run_fineweb_word_budget_ewok_ci \
+  --data_dir data/processed/fineweb_edu_10B \
+  --word_budget 10000000 \
+  --word_budget 50000000 \
+  --word_budget 100000000 \
+  --word_budget 200000000 \
+  --replicates 5 \
+  --epochs 4 \
+  --workers 44 \
+  --ewok_variant full \
+  --method ewok_context_sensitivity \
+  --score_kind pair_average \
+  --skip_existing
+```
+
+After that finishes, generate the paper-style combined context-sensitivity plot
+from the same saved metrics without retraining:
+
+```bash
+python -m research.w2v_lexical_probe.run_fineweb_word_budget_ewok_ci \
+  --data_dir data/processed/fineweb_edu_10B \
+  --word_budget 10000000 \
+  --word_budget 50000000 \
+  --word_budget 100000000 \
+  --word_budget 200000000 \
+  --replicates 5 \
+  --epochs 4 \
+  --workers 44 \
+  --ewok_variant full \
+  --method ewok_context_sensitivity \
+  --score_kind combined \
+  --skip_existing
+```
+
+Useful smoke run:
+
+```bash
+python -m research.w2v_lexical_probe.run_fineweb_word_budget_ewok_ci \
+  --data_dir data/processed/fineweb_edu_10B \
+  --word_budget 50000 \
+  --replicates 2 \
+  --embedding_dim 64 \
+  --epochs 1 \
+  --workers 4 \
+  --ewok_variant fast
 ```
 
 ### Evaluate pretrained Google Word2Vec

@@ -710,6 +710,61 @@ def _write_outputs(
         write_prediction_dataframe(run_dir, prediction_df, filename=output_paths["prediction_df"].name)
 
 
+def evaluate_and_write_outputs(
+    run_dir: str | Path,
+    *,
+    margin_eps: float = 1e-6,
+    ewok_variant: str = "fast",
+    ewok_text_preprocessing: str = "probe",
+    write_per_item: bool = False,
+    filter_agent_names: bool = True,
+    write_prediction_df: bool = True,
+) -> dict[str, Path]:
+    """Evaluate a saved Word2Vec run on EWoK and write standard artifacts."""
+    run_dir = Path(run_dir).expanduser().resolve()
+    output_paths = get_ewok_output_paths(run_dir, ewok_variant, ewok_text_preprocessing)
+    ewok_df, source = load_ewok_eval_data(ewok_variant)
+    run = load_word2vec_run(run_dir)
+    tokenizer, _text_config = build_tokenizer_for_run(
+        run,
+        filter_agent_names=filter_agent_names,
+        ewok_text_preprocessing=ewok_text_preprocessing,
+    )
+    records = ewok_per_item_records_for_run(
+        run,
+        ewok_df=ewok_df,
+        tokenizer=tokenizer,
+        margin_eps=margin_eps,
+    )
+    metrics_by_method = _summarize_records_all_methods(
+        ewok_df,
+        records,
+        margin_eps=margin_eps,
+    )
+    metadata = {
+        "run_dir": str(run_dir),
+        "ewok_source": str(source),
+        "ewok_variant": ewok_variant,
+        "ewok_text_preprocessing": ewok_text_preprocessing,
+        "normalization": run.summary.get("normalization", {}),
+        "margin_eps": float(margin_eps),
+        "filter_ewok_agent_names": bool(filter_agent_names),
+    }
+    prediction_df = _prediction_dataframe_from_records(ewok_df, records) if write_prediction_df else None
+    _write_outputs(
+        run_dir,
+        metrics_by_method=metrics_by_method,
+        per_item=(records if write_per_item else None),
+        write_per_item=write_per_item,
+        metadata=metadata,
+        write_prediction_df=write_prediction_df,
+        prediction_df=prediction_df,
+        ewok_variant=ewok_variant,
+        ewok_text_preprocessing=ewok_text_preprocessing,
+    )
+    return output_paths
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate a trained Word2Vec run on EWoK.")
     parser.add_argument(
@@ -748,49 +803,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 if __name__ == "__main__":
     args = build_arg_parser().parse_args()
-    run_dir = Path(args.run_dir).expanduser().resolve()
-    output_paths = get_ewok_output_paths(
-        run_dir,
-        args.ewok_variant,
-        args.ewok_text_preprocessing,
-    )
-    ewok_df, source = load_ewok_eval_data(args.ewok_variant)
-    run = load_word2vec_run(run_dir)
-    records = ewok_per_item_records(
-        run_dir,
+    output_paths = evaluate_and_write_outputs(
+        args.run_dir,
         margin_eps=args.margin_eps,
-        filter_agent_names=args.filter_ewok_agent_names,
         ewok_variant=args.ewok_variant,
         ewok_text_preprocessing=args.ewok_text_preprocessing,
-    )
-    metrics_by_method = _summarize_records_all_methods(
-        ewok_df,
-        records,
-        margin_eps=args.margin_eps,
-    )
-    metadata = {
-        "run_dir": str(run_dir),
-        "ewok_source": str(source),
-        "ewok_variant": args.ewok_variant,
-        "ewok_text_preprocessing": args.ewok_text_preprocessing,
-        "normalization": run.summary.get("normalization", {}),
-        "margin_eps": float(args.margin_eps),
-        "filter_ewok_agent_names": bool(args.filter_ewok_agent_names),
-    }
-    prediction_df = _prediction_dataframe_from_records(ewok_df, records) if args.write_prediction_df else None
-    _write_outputs(
-        run_dir,
-        metrics_by_method=metrics_by_method,
-        per_item=(records if args.write_per_item else None),
         write_per_item=args.write_per_item,
-        metadata=metadata,
+        filter_agent_names=args.filter_ewok_agent_names,
         write_prediction_df=args.write_prediction_df,
-        prediction_df=prediction_df,
-        ewok_variant=args.ewok_variant,
-        ewok_text_preprocessing=args.ewok_text_preprocessing,
     )
     output_payload = {
-        "run_dir": str(run_dir),
+        "run_dir": str(Path(args.run_dir).expanduser().resolve()),
         "ewok_metrics": str(output_paths["metrics"]),
     }
     if args.write_prediction_df:
