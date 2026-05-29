@@ -18,7 +18,11 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
-from .bergson_queries import _apply_weight_normalizer, _create_projection_matrix
+from .bergson_queries import (
+    QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
+    _apply_weight_normalizer,
+    _create_projection_matrix,
+)
 from ..common.ewok_targets import EWOKTargetBundle, iter_target_batches, score_target_batch
 
 
@@ -579,13 +583,20 @@ def collect_query_paper_block_grads(
     batch_size: int,
     temperature: float,
     layout: PaperBlockLayoutSpec,
+    query_objective: str = QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
     reduction: str,
     weight_normalizers: Mapping[str, Any] | None = None,
     projection_type: str = "rademacher",
     show_progress: bool = False,
     progress_desc: str | None = None,
 ) -> tuple[tuple[str, ...], dict[str, torch.Tensor]]:
-    from .bergson_queries import _build_tqdm, _resolve_bos_token_id, build_query_groups, _select_gradient_modules
+    from .bergson_queries import (
+        _build_tqdm,
+        _resolve_bos_token_id,
+        build_query_groups,
+        compute_query_objective_loss,
+        _select_gradient_modules,
+    )
     from .raw_dot_audit import _normalize_module_weight_grad
 
     group_specs = build_query_groups(bundle, reduction)
@@ -612,7 +623,13 @@ def collect_query_paper_block_grads(
                 temperature=temperature,
                 bos_token_id=bos_token_id,
             )
-            scores["softplus_loss"].sum().backward()
+            loss = compute_query_objective_loss(
+                scores,
+                query_objective=query_objective,
+                score_reduction=bundle.score_reduction,
+                target_ids=tuple(item.target_id for item in prepared.items),
+            )
+            loss.backward()
             raw_module_grads: dict[str, torch.Tensor] = {}
             for name, module in modules.items():
                 grad = getattr(module, "weight").grad

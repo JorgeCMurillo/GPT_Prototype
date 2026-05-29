@@ -20,7 +20,13 @@ from research.bos_aligned_proto.analysis.attribution.trackstar.bergson_datasets 
     build_candidate_index_fingerprint,
 )
 from research.bos_aligned_proto.analysis.attribution.trackstar.bergson_queries import (
+    COMPLETION_SIDES,
+    QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+    QUERY_OBJECTIVE_COMPLETION_CE,
+    QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
     _select_gradient_modules,
+    compute_query_objective_loss,
+    expand_completion_side_target_bundle,
 )
 from research.bos_aligned_proto.analysis.attribution.common.candidates import select_candidate_rows
 from research.bos_aligned_proto.analysis.attribution.common.checkpoints import (
@@ -591,6 +597,76 @@ def test_mean_reduction_normalizes_by_target_length() -> None:
     assert torch.allclose(meaned, torch.tensor([1.0, 2.0 / 3.0]))
 
 
+def test_trackstar_query_objective_loss_supports_completion_ce() -> None:
+    scores = {
+        "softplus_loss": torch.tensor([0.25, 0.75]),
+        "s11_mean": torch.tensor([-2.0, -4.0]),
+        "s22_mean": torch.tensor([-6.0, -8.0]),
+        "s11_sum": torch.tensor([-20.0, -40.0]),
+        "s22_sum": torch.tensor([-60.0, -80.0]),
+    }
+
+    paired_loss = compute_query_objective_loss(
+        scores,
+        query_objective=QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
+        score_reduction="mean",
+    )
+    completion_mean_loss = compute_query_objective_loss(
+        scores,
+        query_objective=QUERY_OBJECTIVE_COMPLETION_CE,
+        score_reduction="mean",
+    )
+    completion_sum_loss = compute_query_objective_loss(
+        scores,
+        query_objective=QUERY_OBJECTIVE_COMPLETION_CE,
+        score_reduction="sum",
+    )
+
+    assert torch.allclose(paired_loss, torch.tensor(1.0))
+    assert torch.allclose(completion_mean_loss, torch.tensor(10.0))
+    assert torch.allclose(completion_sum_loss, torch.tensor(100.0))
+
+
+def test_trackstar_query_objective_loss_supports_completion_side_ce() -> None:
+    scores = {
+        "softplus_loss": torch.tensor([0.25, 0.75]),
+        "s11_mean": torch.tensor([-2.0, -4.0]),
+        "s22_mean": torch.tensor([-6.0, -8.0]),
+        "s11_sum": torch.tensor([-20.0, -40.0]),
+        "s22_sum": torch.tensor([-60.0, -80.0]),
+    }
+
+    loss = compute_query_objective_loss(
+        scores,
+        query_objective=QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+        score_reduction="mean",
+        target_ids=(
+            "target-a:completion_side:c1_t1",
+            "target-a:completion_side:c2_t2",
+        ),
+    )
+
+    assert torch.allclose(loss, torch.tensor(10.0))
+
+
+def test_trackstar_completion_side_bundle_expands_target_rows() -> None:
+    bundle = _make_target_bundle()
+
+    expanded = expand_completion_side_target_bundle(bundle)
+
+    assert len(expanded.items) == 2 * len(bundle.items)
+    assert expanded.target_ids == (
+        "target-a:completion_side:c1_t1",
+        "target-a:completion_side:c2_t2",
+        "target-b:completion_side:c1_t1",
+        "target-b:completion_side:c2_t2",
+    )
+    assert expanded.groups["overall"] == expanded.target_ids
+    assert expanded.groups["domain:social-relations"] == tuple(
+        f"target-a:completion_side:{side}" for side in COMPLETION_SIDES
+    )
+
+
 def test_compare_adjacent_row_summaries_reports_overlap_and_sign_flips() -> None:
     row_summaries = {
         100: pd.DataFrame(
@@ -678,6 +754,7 @@ def test_trackstar_arg_parser_defaults_to_projected_indexing(tmp_path) -> None:
     assert ns.proj_dim == 16
     assert ns.projection_layout == "module"
     assert ns.paper_block_features == 4096
+    assert ns.query_objective == QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS
     assert ns.bottomk == 0
     assert ns.show_progress is True
 
@@ -700,6 +777,40 @@ def test_trackstar_arg_parser_accepts_candidate_window_overrides(tmp_path) -> No
 
     assert ns.candidate_from_step == 16000
     assert ns.candidate_to_step == 20000
+
+
+def test_trackstar_arg_parser_accepts_completion_query_objective(tmp_path) -> None:
+    parser = build_trackstar_arg_parser()
+
+    ns = parser.parse_args(
+        [
+            "--run_dir",
+            str(tmp_path / "run"),
+            "--data_dir",
+            str(tmp_path / "data"),
+            "--query_objective",
+            QUERY_OBJECTIVE_COMPLETION_CE,
+        ]
+    )
+
+    assert ns.query_objective == QUERY_OBJECTIVE_COMPLETION_CE
+
+
+def test_trackstar_arg_parser_accepts_completion_side_query_objective(tmp_path) -> None:
+    parser = build_trackstar_arg_parser()
+
+    ns = parser.parse_args(
+        [
+            "--run_dir",
+            str(tmp_path / "run"),
+            "--data_dir",
+            str(tmp_path / "data"),
+            "--query_objective",
+            QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+        ]
+    )
+
+    assert ns.query_objective == QUERY_OBJECTIVE_COMPLETION_SIDE_CE
 
 
 def test_trackstar_config_resolves_paper_block_projection_fields(tmp_path) -> None:
@@ -1174,3 +1285,49 @@ def test_execute_trak_run_writes_expected_artifacts(tmp_path) -> None:
 
     top_rows = pd.read_csv(output_dir / "top_rows_step00000100.csv")
     assert {"checkpoint_step", "domain", "row_id", "m1", "m2"} <= set(top_rows.columns)
+
+
+def test_execute_trackstar_completion_side_expands_export_bundle(tmp_path) -> None:
+    data_dir = _make_row_data(tmp_path)
+    run_dir = _make_run_dir(tmp_path)
+    manifest = build_row_manifest(data_dir)
+    exposure_index = build_exposure_index(run_dir, manifest)
+    target_bundle = _make_target_bundle()
+    checkpoints = [
+        CheckpointRef(step=100, path=run_dir / "ckpt_periodic_step0001000", kind="periodic"),
+    ]
+    output_dir = run_dir / "analysis" / "attribution" / "trackstar_completion_side"
+    config = TrackstarConfig(
+        run_dir=run_dir,
+        data_dir=data_dir,
+        exp_name="trackstar_completion_side",
+        output_dir=output_dir,
+        checkpoint_steps=(100,),
+        query_objective=QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+        topk=1,
+        max_candidate_rows=10,
+    ).resolved()
+
+    summary = execute_attribution_run(
+        config=config,
+        checkpoints=checkpoints,
+        previous_checkpoint_step_by_step=build_previous_checkpoint_step_map(checkpoints),
+        manifest=manifest,
+        exposure_index=exposure_index,
+        target_bundle=target_bundle,
+        backend=_FakeBackend(),
+    )
+
+    assert summary["target_count"] == 4
+    target_rows = [
+        json.loads(line)
+        for line in (output_dir / "target_items.jsonl").read_text().splitlines()
+    ]
+    assert [row["target_id"] for row in target_rows] == [
+        "target-a:completion_side:c1_t1",
+        "target-a:completion_side:c2_t2",
+        "target-b:completion_side:c1_t1",
+        "target-b:completion_side:c2_t2",
+    ]
+    top_rows = pd.read_csv(output_dir / "top_rows_step00000100.csv")
+    assert set(top_rows["target_id"]) == {row["target_id"] for row in target_rows}

@@ -192,13 +192,14 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _target_bundle_fingerprint(bundle: EWOKTargetBundle) -> str:
+def _target_bundle_fingerprint(bundle: EWOKTargetBundle, *, query_objective: str) -> str:
     """Hash the query bundle properties that affect shard assembly reuse."""
 
     payload = {
         "target_ids": list(bundle.target_ids),
         "score_view": bundle.score_view,
         "score_reduction": bundle.score_reduction,
+        "query_objective": str(query_objective),
     }
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]
@@ -1377,7 +1378,11 @@ class BergsonAttributionBackend:
     def _assembly_dir(self, checkpoint: CheckpointRef, bundle: EWOKTargetBundle) -> Path:
         """Return the directory used for temporary distributed shard files."""
 
-        return self._step_cache_dir(checkpoint) / f"assemble_{_target_bundle_fingerprint(bundle)}"
+        fingerprint = _target_bundle_fingerprint(
+            bundle,
+            query_objective=self.config.query_objective,
+        )
+        return self._step_cache_dir(checkpoint) / f"assemble_{fingerprint}"
 
     def _write_local_shard(
         self,
@@ -1439,9 +1444,9 @@ class BergsonAttributionBackend:
         4. score every target against every candidate example
         5. return the unchanged `CheckpointScores` shape used by export/compare
 
-        Query gradients stay item-level in the main path even though the query
-        utilities also support reduced views. That preserves the existing export
-        contract: one score row per EWoK item.
+        Query gradients stay aligned to the provided target bundle even though
+        the query utilities also support reduced views. For side-specific query
+        objectives, the runner expands that bundle before calling the backend.
         """
 
         self._load_checkpoint_into_model(checkpoint)
@@ -1450,7 +1455,8 @@ class BergsonAttributionBackend:
         self._status(
             "scoring checkpoint "
             f"step={checkpoint.step} against {len(candidate_ids)} candidate example(s) "
-            f"and {len(target_bundle.items)} total target(s)",
+            f"and {len(target_bundle.items)} total target(s) "
+            f"using query_objective={self.config.query_objective}",
             root_only=True,
         )
         candidate_dataset = BergsonCandidateDataset(manifest, candidate_ids)
@@ -1505,6 +1511,7 @@ class BergsonAttributionBackend:
                     local_bundle,
                     batch_size=self.config.batch_size,
                     temperature=self.config.temperature,
+                    query_objective=self.config.query_objective,
                     layout=paper_block_layout,
                     reduction="item",
                     weight_normalizers=query_weight_normalizers,
@@ -1519,6 +1526,7 @@ class BergsonAttributionBackend:
                     local_bundle,
                     batch_size=self.config.batch_size,
                     temperature=self.config.temperature,
+                    query_objective=self.config.query_objective,
                     module_names=tuple(index_grads),
                     reduction="item",
                     projection_dim=int(self.config.proj_dim) if self.config.use_fast_jl else None,
@@ -1528,7 +1536,7 @@ class BergsonAttributionBackend:
                     progress_desc=f"step {checkpoint.step} query gradients",
                 )
             if tuple(query_target_ids) != local_bundle.target_ids:
-                raise ValueError("Item-level query gradient ordering drifted away from target bundle ordering")
+                raise ValueError("Query gradient ordering drifted away from target bundle ordering")
             self._status(
                 f"scoring {len(local_bundle.items)} target gradient(s) against {len(candidate_ids)} candidate example(s)",
                 root_only=not self.execution_context.is_distributed,
@@ -1573,7 +1581,7 @@ class BergsonAttributionBackend:
             ),
         )
         self._status(
-            f"wrote local shard for checkpoint step={checkpoint.step} with {len(local_target_indices)} target item(s)"
+            f"wrote local shard for checkpoint step={checkpoint.step} with {len(local_target_indices)} target row(s)"
         )
         if dist.is_initialized():
             dist.barrier()

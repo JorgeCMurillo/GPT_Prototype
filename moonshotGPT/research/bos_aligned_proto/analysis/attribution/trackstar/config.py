@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from ..common.config_base import AttributionConfigBase, add_common_args
+from .bergson_queries import QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS, QUERY_OBJECTIVES
 from .paper_blocks import MODULE_LAYOUT, PAPER_BLOCK_LAYOUT, validate_paper_block_features
 
 
 @dataclass(frozen=True)
 class TrackstarConfig(AttributionConfigBase):
     backend: str = "trackstar"
+    query_objective: str = QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS
     use_hessian_correction: bool = True
     hessian_lambda: float | None = None
     hessian_target_components: int = 1000
@@ -23,6 +25,12 @@ class TrackstarConfig(AttributionConfigBase):
     def resolved(self) -> "TrackstarConfig":
         base = super().resolved()
         projection_layout = str(getattr(base, "projection_layout", self.projection_layout))
+        query_objective = str(getattr(base, "query_objective", self.query_objective))
+        if query_objective not in QUERY_OBJECTIVES:
+            raise ValueError(
+                f"Unknown query_objective={query_objective!r}; "
+                f"expected one of {QUERY_OBJECTIVES!r}"
+            )
         if projection_layout not in {MODULE_LAYOUT, PAPER_BLOCK_LAYOUT}:
             raise ValueError(
                 f"Unknown projection_layout={projection_layout!r}; "
@@ -33,6 +41,7 @@ class TrackstarConfig(AttributionConfigBase):
         if projection_layout == PAPER_BLOCK_LAYOUT and not bool(base.use_fast_jl):
             raise ValueError("paper_blocks mode requires random projection; omit --no_fast_jl")
         payload = dict(base.__dict__)
+        payload["query_objective"] = query_objective
         payload["projection_layout"] = projection_layout
         payload["paper_block_features"] = paper_block_features
         payload["paper_block_side"] = paper_block_side
@@ -67,6 +76,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=4096,
         help="Projected feature count per pooled paper block. Must be a perfect square.",
+    )
+    parser.add_argument(
+        "--query_objective",
+        choices=QUERY_OBJECTIVES,
+        default=QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
+        help=(
+            "`ewok_pair_softplus` differentiates the current two-margin EWoK loss. "
+            "`completion_ce` differentiates TrackStar-style completion loss on the "
+            "two correct EWoK prompt/completion pairs and averages them per item. "
+            "`completion_side_ce` emits one query row per correct prompt/completion pair."
+        ),
     )
     parser.add_argument(
         "--no_hessian_correction",
@@ -126,6 +146,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrackstarConfig:
         batch_size=ns.batch_size,
         proj_dim=ns.proj_dim,
         use_fast_jl=ns.use_fast_jl,
+        query_objective=ns.query_objective,
         use_hessian_correction=ns.use_hessian_correction,
         hessian_lambda=ns.hessian_lambda,
         hessian_target_components=ns.hessian_target_components,

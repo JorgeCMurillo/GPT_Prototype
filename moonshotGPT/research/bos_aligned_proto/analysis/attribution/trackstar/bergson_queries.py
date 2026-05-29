@@ -1,14 +1,15 @@
 """EWoK query helpers for the Bergson attribution backend.
 
-The Bergson backend keeps the repo's existing EWoK target bundle and paired
-softplus objective. This module owns target subsetting, reduction-group
-construction, diagnostics, and manual query-gradient extraction for the custom
-query loss.
+The Bergson backend keeps the repo's existing EWoK target bundle and supports
+both the paired softplus objective and TrackStar-style completion losses. This
+module owns target subsetting, reduction-group construction, diagnostics, and
+manual query-gradient extraction for those query losses.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import replace
 import hashlib
 from typing import Any, Mapping, Sequence
 
@@ -26,6 +27,20 @@ from ..common.ewok_targets import (
 
 
 QUERY_GRADIENT_REDUCTIONS = ("item", "per_domain", "overall")
+QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS = "ewok_pair_softplus"
+QUERY_OBJECTIVE_COMPLETION_CE = "completion_ce"
+QUERY_OBJECTIVE_COMPLETION_SIDE_CE = "completion_side_ce"
+QUERY_OBJECTIVES = (
+    QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
+    QUERY_OBJECTIVE_COMPLETION_CE,
+    QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+)
+COMPLETION_SIDE_TARGET_MARKER = ":completion_side:"
+COMPLETION_SIDES = ("c1_t1", "c2_t2")
+COMPLETION_SIDE_SCORE_KEYS = {
+    "c1_t1": "s11",
+    "c2_t2": "s22",
+}
 
 
 def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str, leave: bool = False):
@@ -78,6 +93,57 @@ def subset_target_bundle(bundle: EWOKTargetBundle, target_indices: Sequence[int]
     return EWOKTargetBundle(
         items=selected,
         groups=filtered_groups,
+        source_path=bundle.source_path,
+        score_view=bundle.score_view,
+        score_reduction=bundle.score_reduction,
+    )
+
+
+def completion_side_target_id(target_id: str, side: str) -> str:
+    if side not in COMPLETION_SIDES:
+        raise ValueError(
+            f"Unsupported completion side={side!r}; expected one of {COMPLETION_SIDES!r}"
+        )
+    return f"{target_id}{COMPLETION_SIDE_TARGET_MARKER}{side}"
+
+
+def completion_side_from_target_id(target_id: str) -> str | None:
+    if COMPLETION_SIDE_TARGET_MARKER not in target_id:
+        return None
+    _, side = target_id.rsplit(COMPLETION_SIDE_TARGET_MARKER, 1)
+    if side not in COMPLETION_SIDES:
+        raise ValueError(f"Unsupported completion side in target ID {target_id!r}")
+    return side
+
+
+def expand_completion_side_target_bundle(bundle: EWOKTargetBundle) -> EWOKTargetBundle:
+    """Expand each EWoK item into the two correct prompt-completion query rows."""
+
+    existing_sides = tuple(
+        completion_side_from_target_id(item.target_id)
+        for item in bundle.items
+    )
+    if any(side is not None for side in existing_sides):
+        if all(side is not None for side in existing_sides):
+            return bundle
+        raise ValueError("Cannot expand a partially side-specific completion-side target bundle")
+
+    expanded_items = tuple(
+        replace(item, target_id=completion_side_target_id(item.target_id, side))
+        for item in bundle.items
+        for side in COMPLETION_SIDES
+    )
+    expanded_groups = {
+        name: tuple(
+            completion_side_target_id(target_id, side)
+            for target_id in target_ids
+            for side in COMPLETION_SIDES
+        )
+        for name, target_ids in bundle.groups.items()
+    }
+    return EWOKTargetBundle(
+        items=expanded_items,
+        groups=expanded_groups,
         source_path=bundle.source_path,
         score_view=bundle.score_view,
         score_reduction=bundle.score_reduction,
@@ -302,6 +368,56 @@ def _apply_weight_normalizer(
     return corrected
 
 
+def compute_query_objective_loss(
+    scores: Mapping[str, torch.Tensor],
+    *,
+    query_objective: str,
+    score_reduction: str,
+    target_ids: Sequence[str] | None = None,
+) -> torch.Tensor:
+    """Return the scalar query loss to differentiate for TrackStar scoring."""
+
+    if query_objective == QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS:
+        return scores["softplus_loss"].sum()
+    if query_objective == QUERY_OBJECTIVE_COMPLETION_CE:
+        if score_reduction not in {"mean", "sum"}:
+            raise ValueError(f"Unsupported score_reduction={score_reduction!r}")
+        s11 = scores[f"s11_{score_reduction}"]
+        s22 = scores[f"s22_{score_reduction}"]
+        return (-0.5 * (s11 + s22)).sum()
+    if query_objective == QUERY_OBJECTIVE_COMPLETION_SIDE_CE:
+        if score_reduction not in {"mean", "sum"}:
+            raise ValueError(f"Unsupported score_reduction={score_reduction!r}")
+        if target_ids is None:
+            raise ValueError(
+                "completion_side_ce requires side-specific target IDs; "
+                "call expand_completion_side_target_bundle(...) before collecting query gradients"
+            )
+        expected_rows = int(scores[f"s11_{score_reduction}"].shape[0])
+        if len(target_ids) != expected_rows:
+            raise ValueError(
+                f"completion_side_ce got {len(target_ids)} target ID(s) for "
+                f"{expected_rows} score row(s)"
+            )
+        losses: list[torch.Tensor] = []
+        for row_idx, target_id in enumerate(target_ids):
+            side = completion_side_from_target_id(str(target_id))
+            if side is None:
+                raise ValueError(
+                    "completion_side_ce requires target IDs with the "
+                    f"{COMPLETION_SIDE_TARGET_MARKER!r} side suffix; got {target_id!r}"
+                )
+            score_key = f"{COMPLETION_SIDE_SCORE_KEYS[side]}_{score_reduction}"
+            losses.append(-scores[score_key][int(row_idx)])
+        if not losses:
+            return scores[f"s11_{score_reduction}"].sum() * 0.0
+        return torch.stack(losses).sum()
+    raise ValueError(
+        f"Unsupported query_objective={query_objective!r}; "
+        f"expected one of {QUERY_OBJECTIVES!r}"
+    )
+
+
 def collect_query_module_grads(
     model: torch.nn.Module,
     tokenizer,
@@ -309,6 +425,7 @@ def collect_query_module_grads(
     *,
     batch_size: int,
     temperature: float,
+    query_objective: str = QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS,
     module_names: Sequence[str] | None = None,
     reduction: str = "item",
     projection_dim: int | None = None,
@@ -344,7 +461,12 @@ def collect_query_module_grads(
                 temperature=temperature,
                 bos_token_id=bos_token_id,
             )
-            loss = scores["softplus_loss"].sum()
+            loss = compute_query_objective_loss(
+                scores,
+                query_objective=query_objective,
+                score_reduction=bundle.score_reduction,
+                target_ids=tuple(item.target_id for item in prepared.items),
+            )
             loss.backward()
             for name, module in modules.items():
                 grad = getattr(module, "weight").grad
@@ -379,9 +501,20 @@ def collect_query_module_grads(
 
 
 __all__ = [
+    "COMPLETION_SIDE_SCORE_KEYS",
+    "COMPLETION_SIDES",
+    "COMPLETION_SIDE_TARGET_MARKER",
+    "QUERY_OBJECTIVE_COMPLETION_SIDE_CE",
+    "QUERY_OBJECTIVE_COMPLETION_CE",
+    "QUERY_OBJECTIVE_EWOK_PAIR_SOFTPLUS",
+    "QUERY_OBJECTIVES",
     "QUERY_GRADIENT_REDUCTIONS",
     "build_query_groups",
+    "completion_side_from_target_id",
+    "completion_side_target_id",
+    "compute_query_objective_loss",
     "collect_query_module_grads",
+    "expand_completion_side_target_bundle",
     "score_bundle_diagnostics",
     "subset_target_bundle",
 ]

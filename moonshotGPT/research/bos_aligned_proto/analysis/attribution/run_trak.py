@@ -32,6 +32,10 @@ from .common.exposures import ExposureIndex, build_exposure_index
 from .common.training_examples import ExampleManifest, build_example_manifest, infer_candidate_kind
 from .common.training_metadata import resolve_training_example_spec
 from .trackstar.backend import build_backend as build_trackstar_backend
+from .trackstar.bergson_queries import (
+    QUERY_OBJECTIVE_COMPLETION_SIDE_CE,
+    expand_completion_side_target_bundle,
+)
 from .trak.backend import build_backend as build_trak_backend
 from .trak.config import parse_args
 
@@ -287,6 +291,30 @@ def build_attribution_backend(
     raise ValueError(f"Unsupported backend={config.backend!r}")
 
 
+def _prepare_target_bundle_for_config(
+    *,
+    config: AttributionConfigBase,
+    target_bundle: EWOKTargetBundle,
+    context: RunExecutionContext,
+) -> EWOKTargetBundle:
+    if (
+        config.backend == "trackstar"
+        and getattr(config, "query_objective", None) == QUERY_OBJECTIVE_COMPLETION_SIDE_CE
+    ):
+        original_target_count = len(target_bundle.items)
+        expanded = expand_completion_side_target_bundle(target_bundle)
+        if expanded is not target_bundle:
+            _status(
+                "expanded EWoK targets for completion_side_ce "
+                f"from {original_target_count} item(s) to "
+                f"{len(expanded.items)} prompt-completion query row(s)",
+                context=context,
+                root_only=True,
+            )
+        return expanded
+    return target_bundle
+
+
 def execute_attribution_run(
     *,
     config: AttributionConfigBase,
@@ -302,6 +330,11 @@ def execute_attribution_run(
         backend=config.backend,
         requested_device=config.device,
         resolved_device=config.device,
+    )
+    target_bundle = _prepare_target_bundle_for_config(
+        config=config,
+        target_bundle=target_bundle,
+        context=context,
     )
     output_dir = Path(config.output_dir)
 

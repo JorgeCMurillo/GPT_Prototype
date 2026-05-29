@@ -123,6 +123,33 @@ This gives the backend a smooth, differentiable objective that still matches
 the benchmark question: which data seems most aligned with making the model
 prefer the plausible concept-context pairing over the implausible one?
 
+The runner also supports an original TrackStar-style completion objective via
+`--query_objective completion_ce`. That mode keeps the same EWoK item bundle,
+but differentiates the average correct-completion loss:
+
+$$
+L_{completion}(t) =
+-\frac{1}{2}\left[\log P(T_1 \mid C_1) + \log P(T_2 \mid C_2)\right]
+$$
+
+where each conditional log-probability uses the configured token reduction
+(`mean` or `sum`). This is a semantic-support probe: it asks which training
+rows point toward making the correct completions likely, without directly
+contrasting against `T2 | C1` or `T1 | C2`.
+
+The more paper-faithful completion-query mode is
+`--query_objective completion_side_ce`. It expands each EWoK item into two
+query rows and differentiates them separately:
+
+$$
+L_{C_1 \to T_1}(t) = -\log P(T_1 \mid C_1),
+\qquad
+L_{C_2 \to T_2}(t) = -\log P(T_2 \mid C_2)
+$$
+
+This preserves side identity, so attribution can ask what training examples
+support `C1 -> T1` versus `C2 -> T2` before requiring both sides to be solved.
+
 ## Candidate-Side CE Convention
 
 For a raw candidate token chunk
@@ -223,7 +250,10 @@ $$
 
 So the current backend is best read as:
 
-- query = gradient of the custom EWoK paired loss;
+- query = gradient of the custom EWoK paired loss by default, the average
+  correct-completion loss when `--query_objective completion_ce` is selected,
+  or separate correct-completion losses when
+  `--query_objective completion_side_ce` is selected;
 - candidate = gradient of training cross-entropy on the candidate row;
 - optional optimizer correction = Adam second-moment correction from
   `optimizer.pt` when available;

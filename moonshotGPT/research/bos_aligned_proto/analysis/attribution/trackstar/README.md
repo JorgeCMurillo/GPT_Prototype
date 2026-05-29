@@ -197,10 +197,37 @@ $$
 
 where `tau` is the configured temperature.
 
-In this backend, the query-side gradient `q(t)` is the gradient of that paired
-loss with respect to model parameters.
+By default, the query-side gradient `q(t)` is the gradient of that paired loss
+with respect to model parameters.
 
-That loss makes the attribution question concrete:
+The TrackStar runner also supports `--query_objective completion_ce`. That mode
+keeps one exported row per EWoK item, but uses a TrackStar-style completion
+loss on the two correct prompt-completion pairs:
+
+$$
+L_{completion}(t) =
+-\frac{1}{2}\left[\log P(T_1 \mid C_1) + \log P(T_2 \mid C_2)\right]
+$$
+
+where each log-probability uses the configured `--score_reduction` (`mean` or
+`sum`) over target tokens. This is meant as an interpretable semantic-support
+probe; it does not encode the two counterfactual completions directly.
+
+For the more paper-faithful completion-query shape, use
+`--query_objective completion_side_ce`. That expands each EWoK item into two
+query rows:
+
+$$
+L_{C_1 \to T_1}(t) = -\log P(T_1 \mid C_1),
+\qquad
+L_{C_2 \to T_2}(t) = -\log P(T_2 \mid C_2)
+$$
+
+The exported target IDs get `:completion_side:c1_t1` or
+`:completion_side:c2_t2` suffixes, so downstream rankings can inspect which
+training examples support each correct side separately.
+
+These query losses make the attribution question concrete:
 
 Which training examples appear most aligned with reducing the EWoK mistake signal
 for this checkpoint?
@@ -229,8 +256,10 @@ two sides are instantiated differently here:
 - `g(x)` comes from candidate-side training gradients for BOS-packed rows,
   or exact stream windows, using the example’s training cross-entropy
   objective and stored/loaded through Bergson;
-- `q(t)` is computed at query time from the repo’s EWoK paired loss, not from a
-  factual prompt-completion objective from the paper.
+- `q(t)` is computed at query time from either the repo's EWoK paired loss, an
+  averaged correct-completion CE loss via `--query_objective completion_ce`, or
+  separate correct prompt-completion losses via
+  `--query_objective completion_side_ce`.
 
 So the score should be read as:
 
