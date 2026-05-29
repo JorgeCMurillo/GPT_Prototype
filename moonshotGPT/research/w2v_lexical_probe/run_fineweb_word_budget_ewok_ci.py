@@ -227,6 +227,18 @@ def _format_word_count(value: int) -> str:
     return str(value)
 
 
+def _format_word_count_compact(value: int | float) -> str:
+    value = float(value)
+    for suffix, scale in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if abs(value) >= scale:
+            return f"{value / scale:.2f}".rstrip("0").rstrip(".") + suffix
+    return str(int(value))
+
+
+def _format_training_words_label(value: int | float) -> str:
+    return _format_word_count_compact(value)
+
+
 def _load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -496,11 +508,57 @@ def _load_replicate_scores(
     return rows
 
 
-def _format_average_summary(summary_rows: list[dict]) -> str | None:
-    average_rows = [row for row in summary_rows if row["domain"] == "average"]
-    if not average_rows:
+def _load_run_epochs(run_dir: Path) -> int | None:
+    summary_path = run_dir / "train_summary.json"
+    if not summary_path.exists():
         return None
 
+    payload = _load_json(summary_path)
+    training = payload.get("training", {})
+    if isinstance(training, dict) and isinstance(training.get("epochs_completed"), (int, float)):
+        return int(training["epochs_completed"])
+    training_config = payload.get("training_config", {})
+    if isinstance(training_config, dict) and isinstance(training_config.get("epochs"), (int, float)):
+        return int(training_config["epochs"])
+    return None
+
+
+def _load_run_word_count(run_dir: Path) -> int | None:
+    summary_path = run_dir / "train_summary.json"
+    if not summary_path.exists():
+        return None
+
+    payload = _load_json(summary_path)
+    training = payload.get("training", {})
+    if isinstance(training, dict) and isinstance(training.get("corpus_total_words"), (int, float)):
+        return int(training["corpus_total_words"])
+    vocabulary = payload.get("vocabulary", {})
+    if isinstance(vocabulary, dict) and isinstance(vocabulary.get("total_tokens_seen"), (int, float)):
+        return int(vocabulary["total_tokens_seen"])
+    return None
+
+
+def _load_baseline_scores(
+    *,
+    run_dir: Path,
+    args: argparse.Namespace,
+) -> dict[str, float]:
+    metrics_path = get_ewok_output_paths(
+        run_dir,
+        args.ewok_variant,
+        args.ewok_text_preprocessing,
+    )["metrics"]
+    payload = _load_json(metrics_path)
+    return extract_scores(payload, method=args.method, score_kind=args.score_kind)
+
+
+def _format_average_summary(
+    summary_rows: list[dict],
+    *,
+    baseline_scores: dict[str, float] | None = None,
+    baseline_label: str | None = None,
+) -> str | None:
+    average_rows = [row for row in summary_rows if row["domain"] == "average"]
     lines = ["Average score"]
     for row in sorted(average_rows, key=lambda item: int(item["word_budget"])):
         lines.append(
@@ -511,10 +569,40 @@ def _format_average_summary(summary_rows: list[dict]) -> str | None:
                 high=float(row["ci95_high"]),
             )
         )
+    if baseline_scores and isinstance(baseline_scores.get("average"), (int, float)):
+        lines.append(f"{baseline_label or 'Baseline'}: {float(baseline_scores['average']):.3f}")
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
+def _format_run_info(
+    *,
+    epochs: int,
+    replicates: int,
+    baseline_epochs: int | None = None,
+    baseline_words: int | None = None,
+) -> str:
+    lines = [
+        f"Budget runs: {int(epochs)} epochs",
+        f"Replicates: {int(replicates)} per budget",
+    ]
+    if baseline_words is not None and baseline_epochs is not None:
+        lines.append(f"10B W2V: {_format_word_count_compact(baseline_words)} words, {int(baseline_epochs)} epochs")
+    elif baseline_words is not None:
+        lines.append(f"10B W2V: {_format_word_count_compact(baseline_words)} words")
+    elif baseline_epochs is not None:
+        lines.append(f"10B W2V: {int(baseline_epochs)} epochs")
     return "\n".join(lines)
 
 
-def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) -> Path | None:
+def _plot_summary(
+    summary_rows: list[dict],
+    output_path: Path,
+    *,
+    title: str,
+    baseline_scores: dict[str, float] | None = None,
+    baseline_label: str | None = None,
+    run_info: str | None = None,
+) -> Path | None:
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:
@@ -526,14 +614,22 @@ def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) ->
         domains.append("average")
     budgets = sorted({int(row["word_budget"]) for row in summary_rows})
     by_key = {(int(row["word_budget"]), str(row["domain"])): row for row in summary_rows}
+    baseline_values = None
+    if baseline_scores:
+        baseline_values = [
+            float(baseline_scores[domain]) if domain in baseline_scores else np.nan
+            for domain in domains
+        ]
+    has_baseline = bool(baseline_values and any(np.isfinite(value) for value in baseline_values))
 
     x = np.arange(len(domains), dtype=np.float64)
-    width = min(0.8 / max(1, len(budgets)), 0.34)
+    series_count = len(budgets) + (1 if has_baseline else 0)
+    width = min(0.8 / max(1, series_count), 0.34)
     fig_w = max(12.0, 0.75 * len(domains) + 2.5)
     fig, ax = plt.subplots(figsize=(fig_w, 6.2))
 
     for idx, budget in enumerate(budgets):
-        offset = (idx - (len(budgets) - 1) / 2.0) * width
+        offset = (idx - (series_count - 1) / 2.0) * width
         means = []
         yerr = [[], []]
         for domain in domains:
@@ -554,10 +650,22 @@ def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) ->
             capsize=4,
             linewidth=1.4,
             markersize=5,
-            label=_format_word_count(budget),
+            label=_format_training_words_label(budget),
         )
 
-    ax.axhline(0.5, color="#d62728", linestyle="--", linewidth=1.0, alpha=0.7)
+    if has_baseline and baseline_values is not None:
+        baseline_offset = (len(budgets) - (series_count - 1) / 2.0) * width
+        ax.errorbar(
+            x + baseline_offset,
+            baseline_values,
+            fmt="D",
+            linestyle="none",
+            color="#222222",
+            markersize=4.8,
+            label=baseline_label or "Baseline",
+        )
+
+    ax.axhline(0.5, color="#9e9e9e", linestyle="-", linewidth=0.8, alpha=0.8)
     ax.text(
         0.985,
         0.505,
@@ -566,7 +674,7 @@ def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) ->
         va="bottom",
         ha="right",
         fontsize=9,
-        color="#b22222",
+        color="#666666",
     )
     ax.set_ylim(0.0, 1.0)
     ax.set_yticks(np.arange(0.0, 1.01, 0.1))
@@ -575,8 +683,12 @@ def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) ->
     ax.set_xticks(x)
     ax.set_xticklabels(domains, rotation=35, ha="right")
     ax.grid(axis="y", color="#d9d9d9", linewidth=0.8)
-    ax.legend(title="Word budget")
-    average_summary = _format_average_summary(summary_rows)
+    ax.legend(title="Training words", loc="upper right")
+    average_summary = _format_average_summary(
+        summary_rows,
+        baseline_scores=baseline_scores,
+        baseline_label=baseline_label,
+    )
     if average_summary:
         ax.text(
             0.015,
@@ -585,6 +697,22 @@ def _plot_summary(summary_rows: list[dict], output_path: Path, *, title: str) ->
             transform=ax.transAxes,
             va="top",
             ha="left",
+            fontsize=9,
+            bbox={
+                "boxstyle": "square,pad=0.35",
+                "facecolor": "white",
+                "edgecolor": "#bdbdbd",
+                "alpha": 0.92,
+            },
+        )
+    if run_info:
+        ax.text(
+            0.985,
+            0.025,
+            run_info,
+            transform=ax.transAxes,
+            va="bottom",
+            ha="right",
             fontsize=9,
             bbox={
                 "boxstyle": "square,pad=0.35",
@@ -628,6 +756,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--filter_ewok_agent_names", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--write_per_item", action="store_true")
     parser.add_argument("--write_prediction_df", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--baseline_run_dir", default=None, help="Optional saved W2V run to overlay as a no-CI baseline")
+    parser.add_argument("--baseline_label", default="FineWeb-Edu 10B W2V", help="Legend label for --baseline_run_dir")
     parser.add_argument("--output_root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--skip_existing", action="store_true", help="Reuse runs that already have EWoK metrics")
     parser.add_argument("--overwrite", action="store_true", help="Allow overwriting existing run artifacts")
@@ -666,6 +796,15 @@ def main() -> None:
         return
 
     summary_rows = summarize_domain_scores(replicate_rows)
+    baseline_run_dir = Path(args.baseline_run_dir).expanduser().resolve() if args.baseline_run_dir else None
+    baseline_scores = _load_baseline_scores(run_dir=baseline_run_dir, args=args) if baseline_run_dir else None
+    baseline_epochs = _load_run_epochs(baseline_run_dir) if baseline_run_dir else None
+    baseline_words = _load_run_word_count(baseline_run_dir) if baseline_run_dir else None
+    baseline_plot_label = (
+        f"{_format_training_words_label(baseline_words)} ({args.baseline_label})"
+        if baseline_words is not None
+        else args.baseline_label
+    )
     replicate_csv = _write_csv(
         output_root / f"{experiment_tag}_replicate_scores.csv",
         replicate_rows,
@@ -702,6 +841,14 @@ def main() -> None:
         summary_rows,
         output_root / f"{experiment_tag}_domain_ci95.png",
         title=f"FineWeb-Edu Word2Vec on EWoK ({args.method}, {args.score_kind})",
+        baseline_scores=baseline_scores,
+        baseline_label=baseline_plot_label if baseline_scores else None,
+        run_info=_format_run_info(
+            epochs=int(args.epochs),
+            replicates=int(args.replicates),
+            baseline_epochs=baseline_epochs,
+            baseline_words=baseline_words,
+        ),
     )
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -713,6 +860,11 @@ def main() -> None:
         "ewok_text_preprocessing": args.ewok_text_preprocessing,
         "method": args.method,
         "score_kind": args.score_kind,
+        "baseline_run_dir": str(baseline_run_dir) if baseline_run_dir else None,
+        "baseline_label": args.baseline_label if baseline_run_dir else None,
+        "baseline_plot_label": baseline_plot_label if baseline_run_dir else None,
+        "baseline_epochs": int(baseline_epochs) if baseline_epochs is not None else None,
+        "baseline_words": int(baseline_words) if baseline_words is not None else None,
         "replicate_scores_csv": str(replicate_csv),
         "summary_csv": str(summary_csv),
         "plot_png": str(plot_path) if plot_path is not None else None,
