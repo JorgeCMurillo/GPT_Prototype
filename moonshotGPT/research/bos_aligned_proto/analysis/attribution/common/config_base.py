@@ -13,6 +13,7 @@ from .ewok_filters import EWOK_VARIANTS
 EWOK_SCORE_VIEWS = (
     "babylm_completion_choice",
     "ewok_paper_context_sensitivity",
+    "ewok_context_sensitivity",
 )
 EWOK_TARGET_SCOPES = ("overall", "per_domain", "both")
 SCORE_REDUCTIONS = ("mean", "sum")
@@ -23,6 +24,12 @@ CANDIDATE_STRATEGIES = (
     "up_to_step",
     "recent_window",
     "new_since_prev",
+)
+CANDIDATE_KIND_CHOICES = (
+    "auto",
+    "bos_packed_row",
+    "stream_window",
+    "document_aligned_row",
 )
 
 
@@ -45,6 +52,7 @@ class AttributionConfigBase:
     candidate_from_step: int | None = None
     candidate_to_step: int | None = None
     max_candidate_rows: int = 50_000
+    candidate_kind: str = "auto"
     candidate_seed: int = 1337
     recent_window_steps: int = 2_000
     ewok_variant: str = "fast"
@@ -119,6 +127,10 @@ class AttributionConfigBase:
             )
         if self.max_candidate_rows <= 0:
             raise ValueError("max_candidate_rows must be > 0")
+        if self.candidate_kind not in CANDIDATE_KIND_CHOICES:
+            raise ValueError(
+                f"Unknown candidate_kind={self.candidate_kind!r}; expected one of {CANDIDATE_KIND_CHOICES!r}"
+            )
         if self.candidate_from_step is not None and int(self.candidate_from_step) < 0:
             raise ValueError("candidate_from_step must be >= 0 when provided")
         if self.candidate_to_step is not None and int(self.candidate_to_step) < 0:
@@ -216,6 +228,17 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--max_candidate_rows", type=int, default=50_000)
+    parser.add_argument(
+        "--candidate_kind",
+        type=str,
+        choices=CANDIDATE_KIND_CHOICES,
+        default="auto",
+        help=(
+            "Override the candidate example unit. The default 'auto' reconstructs the exact training "
+            "example surface; 'document_aligned_row' scores one full model-context row starting at each "
+            "document boundary in raw stream data."
+        ),
+    )
     parser.add_argument("--candidate_seed", type=int, default=1337)
     parser.add_argument("--recent_window_steps", type=int, default=2_000)
     parser.add_argument(

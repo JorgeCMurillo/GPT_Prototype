@@ -29,7 +29,7 @@ from .common.config_base import AttributionConfigBase
 from .common.ewok_targets import CheckpointScores, EWOKTargetBundle, build_ewok_targets
 from .common.export import export_target_items, write_checkpoint_outputs, write_json
 from .common.exposures import ExposureIndex, build_exposure_index
-from .common.training_examples import ExampleManifest, build_example_manifest
+from .common.training_examples import ExampleManifest, build_example_manifest, infer_candidate_kind
 from .common.training_metadata import resolve_training_example_spec
 from .trackstar.backend import build_backend as build_trackstar_backend
 from .trak.backend import build_backend as build_trak_backend
@@ -488,16 +488,31 @@ def run(config: AttributionConfigBase) -> dict:
             run_dir=runtime_config.run_dir,
             data_dir=runtime_config.data_dir,
         )
+        candidate_kind = (
+            example_spec.candidate_kind
+            if runtime_config.candidate_kind == "auto"
+            else infer_candidate_kind(
+                runtime_config.data_dir,
+                preferred_kind=runtime_config.candidate_kind,
+            )
+        )
         _status(
             "resolved training-example semantics "
             f"candidate_kind={example_spec.candidate_kind} seq_len={example_spec.seq_len}",
             context=context,
             root_only=True,
         )
+        if candidate_kind != example_spec.candidate_kind:
+            _status(
+                "using candidate kind override "
+                f"{candidate_kind} instead of exact training surface {example_spec.candidate_kind}",
+                context=context,
+                root_only=True,
+            )
         manifest = build_example_manifest(
             runtime_config.data_dir,
             split="train",
-            candidate_kind=example_spec.candidate_kind,
+            candidate_kind=candidate_kind,
             seq_len=example_spec.seq_len,
             show_progress=context.is_root and runtime_config.show_progress,
         )

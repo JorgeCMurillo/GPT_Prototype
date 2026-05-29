@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import torch
 
-from evaluation.ewok import BABYLM_COMPLETION_CHOICE
+from evaluation.ewok import BABYLM_COMPLETION_CHOICE, EWOK_PAPER_CONTEXT_SENSITIVITY
 from research.bos_aligned_proto.analysis.attribution.trackstar.backend import (
     BergsonAttributionBackend,
     BergsonShardResult,
@@ -35,6 +35,8 @@ from research.bos_aligned_proto.analysis.attribution.common.ewok_targets import 
     EWOKTargetItem,
     TargetDiagnostics,
     build_ewok_targets,
+    compute_view_margins,
+    normalize_ewok_score_view,
     reduce_masked_token_logprobs,
 )
 from research.bos_aligned_proto.analysis.attribution.common.export import (
@@ -52,6 +54,10 @@ from research.bos_aligned_proto.analysis.attribution.common.row_dataset import (
     FiniteBOSRowDataset,
     build_row_manifest,
     iter_row_batches,
+)
+from research.bos_aligned_proto.analysis.attribution.common.training_examples import (
+    FiniteTrainingExampleDataset,
+    build_example_manifest,
 )
 from research.bos_aligned_proto.analysis.attribution.run_trak import (
     RunExecutionContext,
@@ -112,6 +118,65 @@ def _make_run_dir(tmp_path: Path) -> Path:
                 {"shard_idx": 1, "start": 4, "end": 8},
             ],
         },
+    ]
+    with (exposure_dir / "exposures_rank0000.jsonl").open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    return run_dir
+
+
+def _make_stream_data(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "stream_data"
+    data_dir.mkdir()
+    (data_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "format": "token_stream",
+                "dtype": "uint16",
+                "bos_token_id": 99,
+                "eos_token_id": 99,
+                "doc_format": "[BOS] + text",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_u16(
+        data_dir / "train_000000.bin",
+        [
+            99,
+            1,
+            2,
+            3,
+            4,
+            5,
+            99,
+            6,
+            7,
+            99,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+        ],
+    )
+    return data_dir
+
+
+def _make_stream_run_dir(tmp_path: Path) -> Path:
+    run_dir = tmp_path / "stream_run"
+    run_dir.mkdir()
+    exposure_dir = run_dir / "exposures"
+    exposure_dir.mkdir()
+    rows = [
+        {
+            "step": 100,
+            "micro_batches": [
+                {"shard_idx": 0, "start": 1, "end": 4},
+                {"shard_idx": 0, "start": 12, "end": 14},
+            ],
+        }
     ]
     with (exposure_dir / "exposures_rank0000.jsonl").open("w", encoding="utf-8") as handle:
         for row in rows:
@@ -251,6 +316,38 @@ def test_row_manifest_and_dataset_are_deterministic(tmp_path) -> None:
     assert batches[0].local_inds.tolist() == [0, 1]
 
 
+def test_document_aligned_manifest_uses_full_document_boundaries(tmp_path) -> None:
+    data_dir = _make_stream_data(tmp_path)
+    manifest = build_example_manifest(
+        data_dir,
+        candidate_kind="document_aligned_row",
+        seq_len=4,
+    )
+
+    assert manifest.candidate_kind == "document_aligned_row"
+    assert len(manifest.examples) == 2
+    assert [(ref.token_offset_start, ref.token_offset_end) for ref in manifest.examples] == [
+        (0, 5),
+        (9, 14),
+    ]
+    assert [
+        (ref.document_token_offset_start, ref.document_token_offset_end)
+        for ref in manifest.examples
+    ] == [
+        (0, 6),
+        (9, 16),
+    ]
+
+    dataset = FiniteTrainingExampleDataset(manifest, example_ids=(0, 1))
+    first = dataset[0]
+    second = dataset[1]
+
+    assert torch.equal(first["input_ids"], torch.tensor([99, 1, 2, 3]))
+    assert torch.equal(first["labels"], torch.tensor([1, 2, 3, 4]))
+    assert torch.equal(second["input_ids"], torch.tensor([99, 8, 9, 10]))
+    assert torch.equal(second["labels"], torch.tensor([8, 9, 10, 11]))
+
+
 def test_exposure_index_maps_offsets_to_global_row_ids(tmp_path) -> None:
     data_dir = _make_row_data(tmp_path)
     run_dir = _make_run_dir(tmp_path)
@@ -261,6 +358,21 @@ def test_exposure_index_maps_offsets_to_global_row_ids(tmp_path) -> None:
     assert index.rows_exposed_up_to_step(200) == (0, 1, 2)
     assert index.rows_exposed_between_steps(100, 300) == (2, 3)
     assert index.rows_first_seen_between_steps(100, 300) == (2, 3)
+
+
+def test_exposure_index_maps_stream_spans_to_document_aligned_rows(tmp_path) -> None:
+    data_dir = _make_stream_data(tmp_path)
+    run_dir = _make_stream_run_dir(tmp_path)
+    manifest = build_example_manifest(
+        data_dir,
+        candidate_kind="document_aligned_row",
+        seq_len=4,
+    )
+
+    index = build_exposure_index(run_dir, manifest)
+
+    assert index.rows_exposed_up_to_step(100) == (0, 1)
+    assert index.first_seen_step_by_row_id == {0: 100, 1: 100}
 
 
 def test_candidate_selection_is_deterministic() -> None:
@@ -386,6 +498,42 @@ def test_ewok_targets_include_domain_groups_and_normalized_metadata() -> None:
         item.context_diff_raw == "variable_swap" and item.context_diff == "variable swap"
         for item in bundle.items
     )
+
+
+def test_ewok_context_sensitivity_alias_is_supported() -> None:
+    assert normalize_ewok_score_view("ewok_paper_context_sensitivity") == EWOK_PAPER_CONTEXT_SENSITIVITY
+
+    bundle = build_ewok_targets(
+        score_view="ewok_paper_context_sensitivity",
+        target_scope="overall",
+        score_reduction="mean",
+        max_targets=2,
+    )
+
+    assert bundle.score_view == EWOK_PAPER_CONTEXT_SENSITIVITY
+    assert all(item.score_view == EWOK_PAPER_CONTEXT_SENSITIVITY for item in bundle.items)
+    assert all(":ewok_context_sensitivity:" in item.target_id for item in bundle.items)
+
+    s11 = torch.tensor([4.0])
+    s12 = torch.tensor([1.0])
+    s22 = torch.tensor([3.0])
+    s21 = torch.tensor([2.0])
+    alias_margins = compute_view_margins(
+        score_view="ewok_paper_context_sensitivity",
+        s11=s11,
+        s12=s12,
+        s22=s22,
+        s21=s21,
+    )
+    canonical_margins = compute_view_margins(
+        score_view=EWOK_PAPER_CONTEXT_SENSITIVITY,
+        s11=s11,
+        s12=s12,
+        s22=s22,
+        s21=s21,
+    )
+
+    assert all(torch.equal(left, right) for left, right in zip(alias_margins, canonical_margins))
 
 
 def test_ewok_filter_spec_restricts_targets_by_multiple_fields(tmp_path: Path) -> None:

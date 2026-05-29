@@ -21,6 +21,20 @@ from .ewok_filters import (
 )
 
 
+EWOK_PAPER_CONTEXT_SENSITIVITY_ALIAS = "ewok_paper_context_sensitivity"
+
+
+def normalize_ewok_score_view(score_view: str) -> str:
+    """Resolve user-facing EWoK score-view aliases to evaluation constants."""
+
+    normalized = str(score_view)
+    if normalized == EWOK_PAPER_CONTEXT_SENSITIVITY_ALIAS:
+        return EWOK_PAPER_CONTEXT_SENSITIVITY
+    if normalized in {BABYLM_COMPLETION_CHOICE, EWOK_PAPER_CONTEXT_SENSITIVITY}:
+        return normalized
+    raise ValueError(f"Unsupported score_view: {score_view!r}")
+
+
 @dataclass(frozen=True)
 class EWOKTargetItem:
     target_id: str
@@ -115,8 +129,7 @@ def build_ewok_targets(
     filter_spec_path: str | Path | None = None,
     max_targets: int = 0,
 ) -> EWOKTargetBundle:
-    if score_view not in {BABYLM_COMPLETION_CHOICE, EWOK_PAPER_CONTEXT_SENSITIVITY}:
-        raise ValueError(f"Unsupported score_view: {score_view!r}")
+    resolved_score_view = normalize_ewok_score_view(score_view)
     if target_scope not in {"overall", "per_domain", "both"}:
         raise ValueError(f"Unsupported target_scope: {target_scope!r}")
 
@@ -138,10 +151,10 @@ def build_ewok_targets(
     for row in df.itertuples(index=False):
         domain = normalize_ewok_string(row.Domain)
         item = EWOKTargetItem(
-            target_id=f"ewok-{resolved_variant}:{score_view}:{score_reduction}:{domain}:{int(row.index)}",
+            target_id=f"ewok-{resolved_variant}:{resolved_score_view}:{score_reduction}:{domain}:{int(row.index)}",
             domain=domain,
             row_index=int(row.index),
-            score_view=score_view,
+            score_view=resolved_score_view,
             concept_a=str(row.ConceptA),
             concept_b=str(row.ConceptB),
             context1=str(row.Context1),
@@ -172,7 +185,7 @@ def build_ewok_targets(
         items=tuple(items),
         groups=groups,
         source_path=Path(src),
-        score_view=score_view,
+        score_view=resolved_score_view,
         score_reduction=score_reduction,
     )
 
@@ -260,9 +273,10 @@ def compute_view_margins(
     s22: torch.Tensor,
     s21: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if score_view == BABYLM_COMPLETION_CHOICE:
+    resolved_score_view = normalize_ewok_score_view(score_view)
+    if resolved_score_view == BABYLM_COMPLETION_CHOICE:
         return s11 - s12, s22 - s21
-    if score_view == EWOK_PAPER_CONTEXT_SENSITIVITY:
+    if resolved_score_view == EWOK_PAPER_CONTEXT_SENSITIVITY:
         return s11 - s21, s22 - s12
     raise ValueError(f"Unsupported score_view: {score_view!r}")
 
@@ -482,6 +496,7 @@ __all__ = [
     "compute_softplus_score",
     "compute_view_margins",
     "iter_target_batches",
+    "normalize_ewok_score_view",
     "reduce_masked_token_logprobs",
     "score_target_batch",
     "score_target_bundle",

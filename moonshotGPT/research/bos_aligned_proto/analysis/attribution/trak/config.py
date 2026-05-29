@@ -32,6 +32,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TRAKConfig:
         candidate_from_step=ns.candidate_from_step,
         candidate_to_step=ns.candidate_to_step,
         max_candidate_rows=ns.max_candidate_rows,
+        candidate_kind=ns.candidate_kind,
         candidate_seed=ns.candidate_seed,
         recent_window_steps=ns.recent_window_steps,
         ewok_variant=ns.ewok_variant,

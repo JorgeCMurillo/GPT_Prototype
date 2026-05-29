@@ -36,7 +36,7 @@ except ImportError:
     from ....pipeline.bos_packed_index import PACKED_INDEX_FORMAT, PackedIndexView
 
 
-CandidateKind = Literal["bos_packed_row", "stream_window"]
+CandidateKind = Literal["bos_packed_row", "stream_window", "document_aligned_row"]
 
 
 def _load_meta(data_dir: Path) -> dict:
@@ -102,6 +102,21 @@ def _stream_examples_per_shard(n_tokens: int, seq_len: int) -> int:
     return 1 + (n_tokens - example_tokens) // int(seq_len)
 
 
+def _document_boundary_token_id(meta: dict) -> int:
+    for key in ("bos_token_id", "eos_token_id"):
+        value = meta.get(key)
+        if value is not None:
+            return int(value)
+    raise ValueError(
+        "Document-aligned attribution requires meta.json to define bos_token_id or eos_token_id."
+    )
+
+
+def _document_boundaries(path: Path, boundary_token_id: int) -> np.ndarray:
+    mm = np.memmap(path, dtype=np.uint16, mode="r")
+    return np.flatnonzero(mm == int(boundary_token_id)).astype(np.int64, copy=False)
+
+
 @dataclass(frozen=True)
 class ExampleRef:
     """Stable identity and on-disk location for one candidate training example."""
@@ -113,6 +128,8 @@ class ExampleRef:
     local_example_idx: int
     token_offset_start: int
     token_offset_end: int
+    document_token_offset_start: int | None = None
+    document_token_offset_end: int | None = None
 
     @property
     def global_row_id(self) -> int:
@@ -197,9 +214,23 @@ def infer_candidate_kind(
         return "bos_packed_row"
     if resolved in {"stream", "stream_window", "stream_windows"}:
         return "stream_window"
+    if resolved in {
+        "document",
+        "documents",
+        "document_row",
+        "document_rows",
+        "document_aligned",
+        "document_aligned_row",
+        "document_aligned_rows",
+        "doc",
+        "doc_row",
+        "doc_rows",
+    }:
+        return "document_aligned_row"
     if resolved != "auto":
         raise ValueError(
-            f"Unsupported candidate kind override {preferred_kind!r}; expected 'auto', 'bos_packed', or 'stream'."
+            "Unsupported candidate kind override "
+            f"{preferred_kind!r}; expected 'auto', 'bos_packed', 'stream', or 'document_aligned_row'."
         )
 
     meta = _load_meta(Path(data_dir).expanduser().resolve())
@@ -240,7 +271,7 @@ def build_example_manifest(
         else:
             shard_paths = tuple(_list_shards(data_path, split))
             shard_example_counts = []
-    else:
+    elif resolved_kind == "stream_window":
         data_format = str(meta.get("format", "token_stream"))
         if seq_len is None or int(seq_len) <= 0:
             raise ValueError(
@@ -251,6 +282,22 @@ def build_example_manifest(
         token_stride = int(resolved_seq_len)
         shard_paths = tuple(_list_shards(data_path, split))
         shard_example_counts = []
+    else:
+        data_format = str(meta.get("format", "token_stream"))
+        if data_format == PACKED_INDEX_FORMAT or "row_tokens" in meta:
+            raise ValueError(
+                "document_aligned_row attribution expects raw token-stream shards, not BOS-packed row data."
+            )
+        if seq_len is None or int(seq_len) <= 0:
+            raise ValueError(
+                "Document-aligned attribution requires seq_len so fixed model-context rows can be reconstructed."
+            )
+        resolved_seq_len = int(seq_len)
+        example_tokens = int(resolved_seq_len) + 1
+        token_stride = 0
+        shard_paths = tuple(_list_shards(data_path, split))
+        shard_example_counts = []
+        document_boundary_token_id = _document_boundary_token_id(meta)
 
     examples_per_shard: list[int] = []
     shard_example_offsets: list[int] = []
@@ -270,7 +317,7 @@ def build_example_manifest(
             shard_example_offsets.append(next_example_id)
             if resolved_kind == "bos_packed_row" and data_format == PACKED_INDEX_FORMAT:
                 n_examples = int(shard_example_counts[shard_idx])
-            else:
+            elif resolved_kind in {"bos_packed_row", "stream_window"}:
                 n_tokens = _count_tokens(shard_path)
                 if resolved_kind == "bos_packed_row":
                     if n_tokens % example_tokens != 0:
@@ -280,14 +327,38 @@ def build_example_manifest(
                     n_examples = n_tokens // example_tokens
                 else:
                     n_examples = _stream_examples_per_shard(n_tokens, resolved_seq_len)
+            else:
+                n_tokens = _count_tokens(shard_path)
+                boundaries = _document_boundaries(shard_path, document_boundary_token_id)
+                sentinel_boundaries = np.concatenate(
+                    [boundaries, np.asarray([n_tokens], dtype=np.int64)]
+                )
+                kept_documents: list[tuple[int, int]] = []
+                for boundary_idx in range(len(boundaries)):
+                    document_start = int(sentinel_boundaries[boundary_idx])
+                    document_end = int(sentinel_boundaries[boundary_idx + 1])
+                    if document_end - document_start >= example_tokens:
+                        kept_documents.append((document_start, document_end))
+                n_examples = len(kept_documents)
 
             examples_per_shard.append(n_examples)
             for local_example_idx in range(n_examples):
                 if resolved_kind == "bos_packed_row":
                     token_offset_start = local_example_idx * example_tokens
-                else:
+                    token_offset_end = token_offset_start + example_tokens
+                    document_token_offset_start = None
+                    document_token_offset_end = None
+                elif resolved_kind == "stream_window":
                     token_offset_start = local_example_idx * token_stride
-                token_offset_end = token_offset_start + example_tokens
+                    token_offset_end = token_offset_start + example_tokens
+                    document_token_offset_start = None
+                    document_token_offset_end = None
+                else:
+                    document_start, document_end = kept_documents[local_example_idx]
+                    token_offset_start = int(document_start)
+                    token_offset_end = int(document_start) + example_tokens
+                    document_token_offset_start = int(document_start)
+                    document_token_offset_end = int(document_end)
                 example_refs.append(
                     ExampleRef(
                         global_example_id=next_example_id,
@@ -297,6 +368,8 @@ def build_example_manifest(
                         local_example_idx=local_example_idx,
                         token_offset_start=token_offset_start,
                         token_offset_end=token_offset_end,
+                        document_token_offset_start=document_token_offset_start,
+                        document_token_offset_end=document_token_offset_end,
                     )
                 )
                 next_example_id += 1
@@ -374,6 +447,8 @@ class FiniteTrainingExampleDataset(Dataset):
             "local_example_idx": example_ref.local_example_idx,
             "token_offset_start": example_ref.token_offset_start,
             "token_offset_end": example_ref.token_offset_end,
+            "document_token_offset_start": example_ref.document_token_offset_start,
+            "document_token_offset_end": example_ref.document_token_offset_end,
             # Backward-compatible aliases used by older export/notebook code.
             "row_id": example_ref.global_example_id,
             "local_row_idx": example_ref.local_example_idx,

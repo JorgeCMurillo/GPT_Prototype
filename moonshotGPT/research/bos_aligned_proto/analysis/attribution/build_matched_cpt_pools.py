@@ -143,9 +143,11 @@ def _resolve_source_candidate_kind(frame: pd.DataFrame) -> CandidateKind:
             f"but found {unique_kinds!r}"
         )
     candidate_kind = unique_kinds[0]
-    if candidate_kind not in {"bos_packed_row", "stream_window"}:
+    if candidate_kind not in {"bos_packed_row", "stream_window", "document_aligned_row"}:
         raise ValueError(
-            f"Unsupported candidate_kind={candidate_kind!r} in row summary; expected 'bos_packed_row' or 'stream_window'"
+            "Unsupported candidate_kind="
+            f"{candidate_kind!r} in row summary; expected 'bos_packed_row', 'stream_window', "
+            "or 'document_aligned_row'"
         )
     return candidate_kind  # type: ignore[return-value]
 
@@ -502,7 +504,11 @@ def _write_row_packed_shards(
         "rows_per_shard": int(rows_per_shard),
         "source_data_dir": str(manifest.data_dir),
         "source_format": str(manifest.format),
-        "row_semantics": "exact_training_example",
+        "row_semantics": (
+            "document_aligned_first_context"
+            if str(manifest.candidate_kind) == "document_aligned_row"
+            else "exact_training_example"
+        ),
         "pool_role": pool_role,
         **extra_meta,
     }

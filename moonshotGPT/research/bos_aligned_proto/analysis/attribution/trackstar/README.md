@@ -274,6 +274,17 @@ $$
 - per-query candidate ranking from `dense_scores_stepXXXXXXXX.npy`, where one
   target row gives the full set of `s(x_i, q_j)` values for a chosen EWoK item.
 
+For raw token-stream runs, the exact training surface is still
+`stream_window`: fixed contiguous windows of `seq_len + 1` tokens. Those
+windows can cross document boundaries because that is what the stream trainer
+saw. If you want cleaner human interpretation, pass
+`--candidate_kind document_aligned_row`. That alternate candidate view scans
+the raw shards for the BOS/EOS document marker and scores the first full
+model-context row inside each document. Exposure selection then picks documents
+whose full document span overlaps the requested training window. This is better
+for asking "which documents look relevant?", but it is no longer an exact
+reconstruction of the original SGD examples.
+
 If you want to turn those scores into fair continued-pretraining datasets,
 `../build_matched_cpt_pools.py` builds treated/control fixed-row pools while
 matching on observable candidate metadata such as token count and shard
@@ -686,6 +697,13 @@ The added audit code lives in:
 The relevant test coverage is in `tests/test_paper_blocks.py`, especially the
 paper-block projection and collector parity checks.
 
+That projection-basis fix is query-independent: candidate gradients and query
+gradients now share the same deterministic Bergson/TrackStar projection basis.
+Projection quality can still vary by query family, especially after
+Adam-style scaling, because the gradient distribution can be spikier or less
+spiky. So material-dynamics should get its own score-path/projection audit if
+the final interpretation depends on Adam-corrected scores.
+
 For a fresh full `2^18` paper-block index, use `--paper_block_features 16384`
 because features are specified per block:
 
@@ -707,8 +725,71 @@ conda run --no-capture-output -n <your_env_name> python -u -m research.bos_align
   --device cuda
 ```
 
+For a document-aligned material-dynamics run at the cheaper `2^16` setting,
+use:
+
+```bash
+conda run --no-capture-output -n <your_env_name> python -u -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+  --run_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name> \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --exp_name trackstar_material_dynamics_ckpt16000_window16000_20000_doc_rows_paper_blocks \
+  --checkpoint_steps 16000 \
+  --candidate_from_step 16000 \
+  --candidate_to_step 20000 \
+  --candidate_kind document_aligned_row \
+  --max_candidate_rows 50000 \
+  --ewok_filter_spec /home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/domain_material_dynamics.json \
+  --ewok_score_view babylm_completion_choice \
+  --score_reduction mean \
+  --projection_layout paper_blocks \
+  --paper_block_features 4096 \
+  --write_dense_scores \
+  --device cuda
+```
+
 For the current 19,196-candidate window, the main `gradients.bin` storage would
 be roughly 18.7 GiB at `2^18`, before smaller metadata and normalizer files.
+
+If you want to reuse one expensive candidate-gradient pass across multiple
+query sets and ranking metrics, build a projected feature bank instead of
+immediately scoring one query bundle:
+
+```bash
+conda run --no-capture-output -n <your_env_name> python -u -m research.bos_aligned_proto.analysis.attribution.trackstar.run_projected_feature_bank build \
+  --base_ckpt /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/ckpt_periodic_step0016000 \
+  --attribution_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/trackstar_material_dynamics_context_sensitivity_ckpt16000_window16000_20000_doc_rows_paper_blocks \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --step 16000 \
+  --score_mode net_pooled \
+  --candidate_subset first \
+  --max_candidates 0 \
+  --banks raw adam \
+  --paper_block_features 16384 \
+  --storage_dtype float16 \
+  --device cuda \
+  --output_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/projected_feature_bank_material_dynamics_context_sensitivity_step00016000_2p18
+```
+
+Then score any query slice from the saved bank:
+
+```bash
+conda run --no-capture-output -n <your_env_name> python -u -m research.bos_aligned_proto.analysis.attribution.trackstar.run_projected_feature_bank score \
+  --feature_bank_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/projected_feature_bank_material_dynamics_context_sensitivity_step00016000_2p18 \
+  --query_selection highest_margin \
+  --num_queries 10 \
+  --metrics projected_raw_dot projected_raw_cosine projected_adam_dot projected_adam_cosine trackstar_no_hessian \
+  --topk 10 \
+  --bottomk 0 \
+  --chunk_size 128 \
+  --device cuda \
+  --output_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name>/analysis/attribution/projected_feature_bank_scores_material_dynamics_context_sensitivity_step00016000_2p18_highest_margin
+```
+
+`trackstar_no_hessian` is the Adam-corrected projected cosine score without the
+mixed Hessian correction. The full Hessian-corrected TrackStar score is not a
+good first target for a `2^18` feature bank, because it requires large
+per-block covariance eigendecompositions; use the normal `run_trackstar` path
+at a smaller paper-block dimension when you specifically need that comparison.
 
 ### Projection Sanity Failure Mode
 

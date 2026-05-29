@@ -1,0 +1,6 @@
+{
+  "name": "domain_material_dynamics",
+  "description": "Restrict EWoK queries to the material-dynamics domain.",
+  "variant": "fast",
+  "domains": ["material-dynamics"]
+}

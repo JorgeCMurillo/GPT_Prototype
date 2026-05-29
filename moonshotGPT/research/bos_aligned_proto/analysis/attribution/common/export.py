@@ -67,7 +67,7 @@ def _candidate_metadata(example_ref: ExampleRef) -> dict[str, Any]:
     / token-offset columns.
     """
 
-    return {
+    metadata = {
         "candidate_id": int(example_ref.global_example_id),
         "candidate_kind": str(example_ref.candidate_kind),
         "shard_path": example_ref.shard_path,
@@ -77,6 +77,11 @@ def _candidate_metadata(example_ref: ExampleRef) -> dict[str, Any]:
         "row_id": int(example_ref.global_example_id),
         "local_row_idx": int(example_ref.local_example_idx),
     }
+    if example_ref.document_token_offset_start is not None:
+        metadata["document_token_offset_start"] = int(example_ref.document_token_offset_start)
+    if example_ref.document_token_offset_end is not None:
+        metadata["document_token_offset_end"] = int(example_ref.document_token_offset_end)
+    return metadata
 
 
 def build_top_rows_frame(

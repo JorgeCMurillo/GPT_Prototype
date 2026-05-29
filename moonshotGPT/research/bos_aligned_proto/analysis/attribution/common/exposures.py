@@ -12,6 +12,7 @@ candidate unit:
 from __future__ import annotations
 
 import json
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -68,6 +69,49 @@ class ExposureIndex:
     @property
     def first_seen_step_by_row_id(self) -> dict[int, int]:
         return self.first_seen_step_by_example_id
+
+
+@dataclass(frozen=True)
+class _DocumentAlignedLookup:
+    starts_by_shard: dict[int, tuple[int, ...]]
+    ends_by_shard: dict[int, tuple[int, ...]]
+    first_id_by_shard: dict[int, int]
+
+    @classmethod
+    def from_manifest(cls, manifest: ExampleManifest) -> "_DocumentAlignedLookup":
+        starts_by_shard: dict[int, list[int]] = {}
+        ends_by_shard: dict[int, list[int]] = {}
+        first_id_by_shard: dict[int, int] = {}
+        for example in manifest.examples:
+            shard_idx = int(example.shard_idx)
+            starts_by_shard.setdefault(shard_idx, [])
+            ends_by_shard.setdefault(shard_idx, [])
+            first_id_by_shard.setdefault(shard_idx, int(example.global_example_id))
+            starts_by_shard[shard_idx].append(int(example.token_offset_start))
+            ends_by_shard[shard_idx].append(
+                int(
+                    example.document_token_offset_end
+                    if example.document_token_offset_end is not None
+                    else example.token_offset_end
+                )
+            )
+        return cls(
+            starts_by_shard={key: tuple(value) for key, value in starts_by_shard.items()},
+            ends_by_shard={key: tuple(value) for key, value in ends_by_shard.items()},
+            first_id_by_shard=first_id_by_shard,
+        )
+
+    def ids_overlapping_span(self, shard_idx: int, start: int, end: int) -> range:
+        starts = self.starts_by_shard.get(int(shard_idx), ())
+        ends = self.ends_by_shard.get(int(shard_idx), ())
+        if not starts:
+            return range(0, 0)
+        left = bisect_right(ends, int(start))
+        right = bisect_left(starts, int(end))
+        if right <= left:
+            return range(0, 0)
+        first_id = self.first_id_by_shard[int(shard_idx)]
+        return range(first_id + left, first_id + right)
 
 
 def _build_tqdm(*, enabled: bool, total: int, desc: str, unit: str):
@@ -129,9 +173,27 @@ def _stream_window_ids_from_micro_batch(micro_batch: dict, manifest: ExampleMani
     return range(shard_offset + local_example_start, shard_offset + local_example_start + num_examples)
 
 
-def _example_ids_from_micro_batch(micro_batch: dict, manifest: ExampleManifest) -> range:
+def _document_aligned_ids_from_micro_batch(
+    micro_batch: dict,
+    lookup: _DocumentAlignedLookup,
+) -> range:
+    shard_idx = int(micro_batch["shard_idx"])
+    start = int(micro_batch["start"])
+    end = int(micro_batch["end"])
+    return lookup.ids_overlapping_span(shard_idx, start, end)
+
+
+def _example_ids_from_micro_batch(
+    micro_batch: dict,
+    manifest: ExampleManifest,
+    document_lookup: _DocumentAlignedLookup | None,
+) -> range:
     if manifest.candidate_kind == "bos_packed_row":
         return _bos_packed_ids_from_micro_batch(micro_batch, manifest)
+    if manifest.candidate_kind == "document_aligned_row":
+        if document_lookup is None:
+            raise ValueError("document_lookup is required for document_aligned_row exposure indexing")
+        return _document_aligned_ids_from_micro_batch(micro_batch, document_lookup)
     return _stream_window_ids_from_micro_batch(micro_batch, manifest)
 
 
@@ -144,6 +206,11 @@ def build_exposure_index(
     run_path = Path(run_dir).expanduser().resolve()
     step_to_example_ids: dict[int, set[int]] = {}
     first_seen_step_by_example_id: dict[int, int] = {}
+    document_lookup = (
+        _DocumentAlignedLookup.from_manifest(manifest)
+        if manifest.candidate_kind == "document_aligned_row"
+        else None
+    )
 
     exposure_files = tuple(_iter_exposure_files(run_path))
     progress = _build_tqdm(
@@ -165,7 +232,11 @@ def build_exposure_index(
                     step = int(payload["step"])
                     step_examples = step_to_example_ids.setdefault(step, set())
                     for micro_batch in payload.get("micro_batches", []):
-                        for example_id in _example_ids_from_micro_batch(micro_batch, manifest):
+                        for example_id in _example_ids_from_micro_batch(
+                            micro_batch,
+                            manifest,
+                            document_lookup,
+                        ):
                             step_examples.add(int(example_id))
                             if (
                                 example_id not in first_seen_step_by_example_id

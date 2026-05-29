@@ -59,6 +59,7 @@ See [fast_catalog.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_p
 
 - [all_fast.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/all_fast.json)
 - [domain_social_relations.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/domain_social_relations.json)
+- [domain_material_dynamics.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/domain_material_dynamics.json)
 - [context_type_indirect.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/context_type_indirect.json)
 - [context_diff_negation.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/context_diff_negation.json)
 - [target_diff_variable_swap.json](/home/jorge/tokenPred/moonshotGPT/research/bos_aligned_proto/analysis/attribution/ewok_query_specs/target_diff_variable_swap.json)
