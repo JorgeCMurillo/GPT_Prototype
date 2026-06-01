@@ -413,6 +413,7 @@ def collect_paper_block_candidate_index(
     from bergson.process_preconditioners import process_preconditioners
     from bergson.utils.utils import get_gradient_dtype
     from datasets import Dataset
+    import torch.distributed as dist
 
     @dataclass(kw_only=True)
     class _PaperBlockGradientCollector(GradientCollector):
@@ -551,6 +552,11 @@ def collect_paper_block_candidate_index(
 
     if getattr(processor, "projection_dim", None) is not None:
         raise ValueError("paper_blocks collection expects processor.projection_dim to be None")
+
+    if batches is None:
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        batches = [[idx] for idx in range(int(rank), len(data), int(world_size))]
 
     raw_target_modules = set(layout.module_order) if target_modules is None else set(target_modules)
     collector = _PaperBlockGradientCollector(

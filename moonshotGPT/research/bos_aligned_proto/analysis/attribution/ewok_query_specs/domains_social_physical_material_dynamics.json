@@ -1,0 +1,11 @@
+{
+  "name": "domains_social_physical_material_dynamics",
+  "description": "Restrict EWoK queries to social-interactions, social-properties, physical-dynamics, and material-dynamics.",
+  "variant": "fast",
+  "domains": [
+    "social-interactions",
+    "social-properties",
+    "physical-dynamics",
+    "material-dynamics"
+  ]
+}

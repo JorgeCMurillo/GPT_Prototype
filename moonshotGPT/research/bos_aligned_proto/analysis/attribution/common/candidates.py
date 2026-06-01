@@ -12,6 +12,13 @@ import random
 from dataclasses import dataclass
 
 from .exposures import ExposureIndex
+from .training_examples import ExampleManifest
+
+
+RAW_WINDOW_CANDIDATE_STRATEGIES = (
+    "raw_window_range",
+    "raw_window_random",
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,10 @@ def _rows_for_strategy(
     raise ValueError(f"Unknown candidate strategy: {strategy}")
 
 
+def uses_raw_window_candidates(strategy: str) -> bool:
+    return str(strategy) in RAW_WINDOW_CANDIDATE_STRATEGIES
+
+
 def select_candidate_rows(
     exposure_index: ExposureIndex,
     *,
@@ -106,4 +117,70 @@ def select_candidate_rows(
     )
 
 
-__all__ = ["CandidateSelection", "select_candidate_rows"]
+def select_manifest_candidate_rows(
+    manifest: ExampleManifest,
+    *,
+    strategy: str,
+    checkpoint_step: int,
+    max_candidate_rows: int,
+    seed: int,
+    raw_window_start_id: int = 0,
+    raw_window_end_id: int | None = None,
+) -> CandidateSelection:
+    if strategy not in RAW_WINDOW_CANDIDATE_STRATEGIES:
+        raise ValueError(f"Unknown raw-window candidate strategy: {strategy}")
+    if manifest.candidate_kind != "stream_window":
+        raise ValueError(
+            "Raw-window candidate strategies require candidate_kind='stream_window'. "
+            f"Got candidate_kind={manifest.candidate_kind!r}."
+        )
+
+    start_id = int(raw_window_start_id)
+    requested_end_id = len(manifest.examples) if raw_window_end_id is None else int(raw_window_end_id)
+    end_id = min(requested_end_id, len(manifest.examples))
+    if start_id < 0:
+        raise ValueError("raw_window_start_id must be >= 0")
+    if requested_end_id <= start_id:
+        raise ValueError("raw_window_end_id must be greater than raw_window_start_id")
+    if start_id >= len(manifest.examples):
+        raise ValueError(
+            f"raw_window_start_id={start_id} is beyond the manifest length "
+            f"{len(manifest.examples)}"
+        )
+    if end_id <= start_id:
+        raise ValueError(
+            f"Raw-window interval [{start_id}, {requested_end_id}) does not include "
+            "any manifest examples"
+        )
+
+    source_count = end_id - start_id
+    if strategy == "raw_window_range":
+        selected_count = min(source_count, int(max_candidate_rows))
+        selected_candidate_ids = tuple(range(start_id, start_id + selected_count))
+    elif source_count <= int(max_candidate_rows):
+        selected_candidate_ids = tuple(range(start_id, end_id))
+    else:
+        rng = random.Random(f"{seed}:{strategy}:{start_id}:{end_id}")
+        sampled = rng.sample(range(start_id, end_id), int(max_candidate_rows))
+        selected_candidate_ids = tuple(
+            sorted(int(candidate_id) for candidate_id in sampled)
+        )
+
+    return CandidateSelection(
+        strategy=strategy,
+        checkpoint_step=int(checkpoint_step),
+        previous_step=None,
+        candidate_to_step=int(checkpoint_step),
+        source_count=source_count,
+        selected_count=len(selected_candidate_ids),
+        candidate_ids=selected_candidate_ids,
+    )
+
+
+__all__ = [
+    "CandidateSelection",
+    "RAW_WINDOW_CANDIDATE_STRATEGIES",
+    "select_candidate_rows",
+    "select_manifest_candidate_rows",
+    "uses_raw_window_candidates",
+]

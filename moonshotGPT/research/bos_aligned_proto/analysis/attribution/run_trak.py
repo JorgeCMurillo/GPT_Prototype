@@ -16,7 +16,12 @@ from typing import Protocol
 import torch
 import torch.distributed as dist
 
-from .common.candidates import CandidateSelection, select_candidate_rows
+from .common.candidates import (
+    CandidateSelection,
+    select_candidate_rows,
+    select_manifest_candidate_rows,
+    uses_raw_window_candidates,
+)
 from .common.checkpoints import (
     CheckpointRef,
     build_model_from_checkpoint,
@@ -321,7 +326,7 @@ def execute_attribution_run(
     checkpoints: list[CheckpointRef],
     previous_checkpoint_step_by_step: dict[int, int | None],
     manifest: ExampleManifest,
-    exposure_index: ExposureIndex,
+    exposure_index: ExposureIndex | None,
     target_bundle: EWOKTargetBundle,
     backend: AttributionBackend,
     execution_context: RunExecutionContext | None = None,
@@ -364,33 +369,54 @@ def execute_attribution_run(
 
     try:
         for checkpoint in checkpoints:
-            previous_step, candidate_to_step = resolve_candidate_window(
-                checkpoint_step=checkpoint.step,
-                previous_checkpoint_step=previous_checkpoint_step_by_step.get(int(checkpoint.step)),
-                config=config,
-            )
-            candidate_selection = select_candidate_rows(
-                exposure_index,
-                strategy=config.candidate_strategy,
-                checkpoint_step=checkpoint.step,
-                previous_step=previous_step,
-                candidate_to_step=candidate_to_step,
-                max_candidate_rows=config.max_candidate_rows,
-                seed=config.candidate_seed,
-                recent_window_steps=config.recent_window_steps,
+            raw_window_selection = uses_raw_window_candidates(config.candidate_strategy)
+            if raw_window_selection:
+                candidate_selection = select_manifest_candidate_rows(
+                    manifest,
+                    strategy=config.candidate_strategy,
+                    checkpoint_step=checkpoint.step,
+                    max_candidate_rows=config.max_candidate_rows,
+                    seed=config.candidate_seed,
+                    raw_window_start_id=config.raw_window_start_id,
+                    raw_window_end_id=config.raw_window_end_id,
+                )
+            else:
+                if exposure_index is None:
+                    raise RuntimeError(
+                        "Exposure index is required for exposure-based candidate strategy "
+                        f"{config.candidate_strategy!r}"
+                    )
+                previous_step, candidate_to_step = resolve_candidate_window(
+                    checkpoint_step=checkpoint.step,
+                    previous_checkpoint_step=previous_checkpoint_step_by_step.get(int(checkpoint.step)),
+                    config=config,
+                )
+                candidate_selection = select_candidate_rows(
+                    exposure_index,
+                    strategy=config.candidate_strategy,
+                    checkpoint_step=checkpoint.step,
+                    previous_step=previous_step,
+                    candidate_to_step=candidate_to_step,
+                    max_candidate_rows=config.max_candidate_rows,
+                    seed=config.candidate_seed,
+                    recent_window_steps=config.recent_window_steps,
+                )
+            candidate_scope = (
+                f"raw_ids=[{config.raw_window_start_id}, {config.raw_window_end_id or 'end'})"
+                if raw_window_selection
+                else f"window={candidate_selection.previous_step}->{candidate_selection.candidate_to_step}"
             )
             if checkpoint_progress is not None:
                 checkpoint_progress.set_postfix_str(
                     "step="
-                    f"{checkpoint.step} window={candidate_selection.previous_step}->{candidate_selection.candidate_to_step} "
+                    f"{checkpoint.step} {candidate_scope} "
                     f"candidates={candidate_selection.selected_count}"
                 )
             _status(
                 "checkpoint "
                 f"step={checkpoint.step}: selected {candidate_selection.selected_count}/"
                 f"{candidate_selection.source_count} candidate example(s) "
-                f"with strategy={candidate_selection.strategy} over window="
-                f"{candidate_selection.previous_step}->{candidate_selection.candidate_to_step}",
+                f"with strategy={candidate_selection.strategy} over {candidate_scope}",
                 context=context,
                 root_only=True,
             )
@@ -427,6 +453,12 @@ def execute_attribution_run(
                     "candidate_strategy": candidate_selection.strategy,
                     "candidate_from_step": candidate_selection.previous_step,
                     "candidate_to_step": candidate_selection.candidate_to_step,
+                    "raw_window_start_id": (
+                        config.raw_window_start_id if raw_window_selection else None
+                    ),
+                    "raw_window_end_id": (
+                        config.raw_window_end_id if raw_window_selection else None
+                    ),
                     "source_candidate_count": candidate_selection.source_count,
                     "selected_candidate_count": candidate_selection.selected_count,
                     "artifacts": {name: (None if path is None else str(path)) for name, path in paths.items()},
@@ -556,16 +588,28 @@ def run(config: AttributionConfigBase) -> dict:
             context=context,
             root_only=True,
         )
-        exposure_index = build_exposure_index(
-            runtime_config.run_dir,
-            manifest,
-            show_progress=context.is_root and runtime_config.show_progress,
-        )
-        _status(
-            f"built exposure index across {len(exposure_index.step_to_example_ids)} logged step(s)",
-            context=context,
-            root_only=True,
-        )
+        if uses_raw_window_candidates(runtime_config.candidate_strategy):
+            exposure_index = None
+            _status(
+                "using direct raw-window candidate selection "
+                f"strategy={runtime_config.candidate_strategy} "
+                f"range=[{runtime_config.raw_window_start_id}, "
+                f"{runtime_config.raw_window_end_id or 'end'}) "
+                "and skipping exposure index",
+                context=context,
+                root_only=True,
+            )
+        else:
+            exposure_index = build_exposure_index(
+                runtime_config.run_dir,
+                manifest,
+                show_progress=context.is_root and runtime_config.show_progress,
+            )
+            _status(
+                f"built exposure index across {len(exposure_index.step_to_example_ids)} logged step(s)",
+                context=context,
+                root_only=True,
+            )
         target_bundle = build_ewok_targets(
             variant=runtime_config.ewok_variant,
             filter_spec_path=runtime_config.ewok_filter_spec,

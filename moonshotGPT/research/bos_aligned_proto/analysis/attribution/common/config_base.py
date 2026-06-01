@@ -24,6 +24,12 @@ CANDIDATE_STRATEGIES = (
     "up_to_step",
     "recent_window",
     "new_since_prev",
+    "raw_window_range",
+    "raw_window_random",
+)
+RAW_WINDOW_CANDIDATE_STRATEGIES = (
+    "raw_window_range",
+    "raw_window_random",
 )
 CANDIDATE_KIND_CHOICES = (
     "auto",
@@ -55,6 +61,8 @@ class AttributionConfigBase:
     candidate_kind: str = "auto"
     candidate_seed: int = 1337
     recent_window_steps: int = 2_000
+    raw_window_start_id: int = 0
+    raw_window_end_id: int | None = None
     ewok_variant: str = "fast"
     ewok_filter_spec: Path | None = None
     ewok_score_view: str = "babylm_completion_choice"
@@ -70,6 +78,7 @@ class AttributionConfigBase:
     batch_size: int = 8
     proj_dim: int = 2048
     use_fast_jl: bool = False
+    score_candidate_chunk_size: int = 4096
     max_targets: int = 0
 
     def resolved(self) -> "AttributionConfigBase":
@@ -135,6 +144,24 @@ class AttributionConfigBase:
             raise ValueError("candidate_from_step must be >= 0 when provided")
         if self.candidate_to_step is not None and int(self.candidate_to_step) < 0:
             raise ValueError("candidate_to_step must be >= 0 when provided")
+        if int(self.raw_window_start_id) < 0:
+            raise ValueError("raw_window_start_id must be >= 0")
+        if (
+            self.raw_window_end_id is not None
+            and int(self.raw_window_end_id) <= int(self.raw_window_start_id)
+        ):
+            raise ValueError("raw_window_end_id must be greater than raw_window_start_id")
+        if self.candidate_strategy in RAW_WINDOW_CANDIDATE_STRATEGIES:
+            if self.candidate_from_step is not None or self.candidate_to_step is not None:
+                raise ValueError(
+                    "candidate_from_step/candidate_to_step are exposure-window options; "
+                    "use raw_window_start_id/raw_window_end_id with raw_window_* strategies"
+                )
+        elif self.raw_window_start_id != 0 or self.raw_window_end_id is not None:
+            raise ValueError(
+                "raw_window_start_id/raw_window_end_id are only supported with "
+                "candidate_strategy='raw_window_range' or 'raw_window_random'"
+            )
         if (
             self.candidate_from_step is not None
             and self.candidate_strategy not in {"between_checkpoints", "new_since_prev"}
@@ -161,6 +188,8 @@ class AttributionConfigBase:
             raise ValueError("batch_size must be > 0")
         if self.proj_dim <= 0:
             raise ValueError("proj_dim must be > 0")
+        if self.score_candidate_chunk_size <= 0:
+            raise ValueError("score_candidate_chunk_size must be > 0")
         if self.max_targets < 0:
             raise ValueError("max_targets must be >= 0")
 
@@ -176,6 +205,8 @@ class AttributionConfigBase:
                 None if self.candidate_from_step is None else int(self.candidate_from_step)
             ),
             candidate_to_step=None if self.candidate_to_step is None else int(self.candidate_to_step),
+            raw_window_start_id=int(self.raw_window_start_id),
+            raw_window_end_id=None if self.raw_window_end_id is None else int(self.raw_window_end_id),
         )
 
 
@@ -242,6 +273,24 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--candidate_seed", type=int, default=1337)
     parser.add_argument("--recent_window_steps", type=int, default=2_000)
     parser.add_argument(
+        "--raw_window_start_id",
+        type=int,
+        default=0,
+        help=(
+            "First manifest example id for raw-window candidate strategies. "
+            "Only valid with --candidate_strategy raw_window_range/raw_window_random."
+        ),
+    )
+    parser.add_argument(
+        "--raw_window_end_id",
+        type=int,
+        default=None,
+        help=(
+            "Exclusive manifest example-id upper bound for raw-window candidate strategies. "
+            "Defaults to the end of the manifest."
+        ),
+    )
+    parser.add_argument(
         "--ewok_variant",
         type=str,
         choices=EWOK_VARIANTS,
@@ -304,6 +353,15 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--proj_dim", type=int, default=2048)
     parser.add_argument("--use_fast_jl", action="store_true")
+    parser.add_argument(
+        "--score_candidate_chunk_size",
+        type=int,
+        default=4096,
+        help=(
+            "Candidate rows per chunk during local TrackStar scoring. Lower this to reduce "
+            "CPU RAM at the cost of more matrix-multiply calls."
+        ),
+    )
     parser.add_argument("--max_targets", type=int, default=0)
     return parser
 
@@ -316,6 +374,7 @@ __all__ = [
     "EWOK_SCORE_VIEWS",
     "EWOK_TARGET_SCOPES",
     "EWOK_VARIANTS",
+    "RAW_WINDOW_CANDIDATE_STRATEGIES",
     "SCORE_REDUCTIONS",
     "add_common_args",
 ]

@@ -387,7 +387,7 @@ def _serialize_shard(path: Path, shard: BergsonShardResult) -> None:
         {
             "rank": int(shard.rank),
             "target_indices": list(shard.target_indices),
-            "score_matrix": torch.from_numpy(np.asarray(shard.score_matrix, dtype=np.float64)),
+            "score_matrix": torch.from_numpy(np.asarray(shard.score_matrix, dtype=np.float32)),
             "diagnostics": [diag.to_json() for diag in shard.diagnostics],
         },
         path,
@@ -402,7 +402,7 @@ def _deserialize_shard(path: Path) -> BergsonShardResult:
     return BergsonShardResult(
         rank=int(payload["rank"]),
         target_indices=tuple(int(idx) for idx in payload["target_indices"]),
-        score_matrix=np.asarray(payload["score_matrix"], dtype=np.float64),
+        score_matrix=np.asarray(payload["score_matrix"], dtype=np.float32),
         diagnostics=diagnostics,
     )
 
@@ -421,7 +421,7 @@ def assemble_sharded_scores(
     the global matrix so partial or misordered writes fail loudly.
     """
 
-    score_matrix = np.zeros((num_targets, num_candidates), dtype=np.float64)
+    score_matrix = np.zeros((num_targets, num_candidates), dtype=np.float32)
     diagnostics_by_index: list[TargetDiagnostics | None] = [None] * num_targets
 
     for shard in sorted(shard_results, key=lambda item: (item.target_indices[:1], item.rank)):
@@ -752,6 +752,29 @@ class BergsonAttributionBackend:
         projected = features.to(dtype=torch.float32)
         return projected.mT @ projected
 
+    @staticmethod
+    def _feature_gram_matrix_numpy(
+        features: np.ndarray,
+        *,
+        chunk_size: int,
+    ) -> torch.Tensor:
+        """Compute a feature Gram matrix from a memmap/ndarray in row chunks."""
+
+        if features.ndim != 2:
+            raise ValueError(f"Expected 2D projected gradients, got {features.shape}")
+        dim = int(features.shape[1])
+        if features.shape[0] == 0:
+            return torch.zeros((dim, dim), dtype=torch.float32)
+
+        gram = torch.zeros((dim, dim), dtype=torch.float32)
+        effective_chunk_size = max(1, int(chunk_size))
+        for start in range(0, int(features.shape[0]), effective_chunk_size):
+            end = min(start + effective_chunk_size, int(features.shape[0]))
+            chunk_np = np.array(features[start:end], dtype=np.float32, copy=True)
+            chunk = torch.from_numpy(chunk_np)
+            gram.add_(chunk.mT @ chunk)
+        return gram
+
     def _global_query_gram_matrices(
         self,
         query_grads: dict[str, torch.Tensor],
@@ -806,12 +829,15 @@ class BergsonAttributionBackend:
         index_covariances: dict[str, torch.Tensor] = {}
         query_covariances: dict[str, torch.Tensor] = {}
         for name in modules:
-            index_features = torch.from_numpy(np.asarray(index_grads[name])).to(dtype=torch.float32)
+            index_features = index_grads[name]
             index_count = int(index_features.shape[0])
             if index_count <= 0:
                 raise ValueError(f"Cannot build index-side Hessian correction with zero rows for module {name!r}")
 
-            index_covariances[str(name)] = self._feature_gram_matrix(index_features) / float(index_count)
+            index_covariances[str(name)] = self._feature_gram_matrix_numpy(
+                index_features,
+                chunk_size=self.config.score_candidate_chunk_size,
+            ) / float(index_count)
             query_covariances[str(name)] = query_grams[name].to(dtype=torch.float32) / float(total_query_count)
 
         lam, index_weight, query_weight, lambda_source = self._resolve_hessian_lambda(
@@ -1257,15 +1283,7 @@ class BergsonAttributionBackend:
         num_targets: int,
         num_candidates: int,
     ) -> np.ndarray:
-        """Score query gradients with Bergson's scorer when available.
-
-        The optional scorer path is preferred because it lets Bergson apply its
-        native scoring logic. TrackStar now defaults to cosine-normalized
-        similarity, so we unit-normalize the query rows here and ask Bergson to
-        normalize the index rows at score time. If that constructor or call path
-        is absent in the installed version, we fall back to an equivalent local
-        implementation in `_score_queries_direct(...)`.
-        """
+        """Score query gradients against the candidate bank in bounded chunks."""
 
         if split_preconditioners:
             self._status(
@@ -1287,45 +1305,21 @@ class BergsonAttributionBackend:
                 index_grads=index_grads,
                 query_grads=query_grads,
                 split_preconditioners=split_preconditioners,
+                candidate_chunk_size=self.config.score_candidate_chunk_size,
             )
 
         query_grads = self._unit_normalize_query_grads(query_grads)
-        if self.runtime.Scorer is None:
-            self._status(
-                "fallback: Bergson Scorer is unavailable; using the direct local cosine scorer",
-                root_only=not self.execution_context.is_distributed,
-            )
-            return self._score_queries_direct(
-                index_grads=index_grads,
-                query_grads=query_grads,
-                split_preconditioners=None,
-            )
-        try:
-            scorer = self.runtime.Scorer(
-                query_grads=query_grads,
-                modules=list(query_grads),
-                writer=None,
-                device=self.config.device,
-                dtype=torch.float32,
-                unit_normalize=True,
-            )
-            scores = scorer.score(index_grads)
-            return self._normalize_score_matrix(
-                scores,
-                num_targets=num_targets,
-                num_candidates=num_candidates,
-            )
-        except Exception as exc:
-            self._status(
-                "fallback: Bergson runtime scorer failed "
-                f"({type(exc).__name__}: {exc}); using the direct local cosine scorer",
-                root_only=not self.execution_context.is_distributed,
-            )
-            return self._score_queries_direct(
-                index_grads=index_grads,
-                query_grads=query_grads,
-                split_preconditioners=None,
-            )
+        self._status(
+            "using direct chunked cosine scorer "
+            f"(candidate_chunk_size={self.config.score_candidate_chunk_size})",
+            root_only=not self.execution_context.is_distributed,
+        )
+        return self._score_queries_direct(
+            index_grads=index_grads,
+            query_grads=query_grads,
+            split_preconditioners=None,
+            candidate_chunk_size=self.config.score_candidate_chunk_size,
+        )
 
     @staticmethod
     def _score_queries_direct(
@@ -1333,12 +1327,13 @@ class BergsonAttributionBackend:
         index_grads: dict[str, np.ndarray],
         query_grads: dict[str, torch.Tensor],
         split_preconditioners: dict[str, torch.Tensor] | None,
+        candidate_chunk_size: int,
     ) -> np.ndarray:
         """Fallback scorer that computes cosine similarity directly.
 
-        This path keeps the backend robust when Bergson's higher-level scoring
-        API changes shape. Both index and query gradients are assumed to be
-        organized as `[examples, feature_dim]` for each module name.
+        Both index and query gradients are organized as `[examples, feature_dim]`
+        for each module name. Candidate rows are streamed in chunks so large
+        memmap-backed indices do not have to be materialized as float64 arrays.
         """
 
         modules = [name for name in query_grads if name in index_grads]
@@ -1347,33 +1342,52 @@ class BergsonAttributionBackend:
         first_module = modules[0]
         num_targets = int(query_grads[first_module].shape[0])
         num_candidates = int(index_grads[first_module].shape[0])
-        score_matrix = np.zeros((num_targets, num_candidates), dtype=np.float64)
-        index_sq_norms = np.zeros((num_candidates,), dtype=np.float64)
+        score_matrix = np.zeros((num_targets, num_candidates), dtype=np.float32)
         split_preconditioners_np = (
             {
-                name: split_preconditioners[name].detach().cpu().numpy().astype(np.float64, copy=False)
+                name: split_preconditioners[name].detach().cpu().numpy().astype(np.float32, copy=False)
                 for name in modules
                 if name in split_preconditioners
             }
             if split_preconditioners
             else {}
         )
+
+        query_by_module: dict[str, np.ndarray] = {}
         for name in modules:
-            query = np.asarray(query_grads[name].detach().cpu(), dtype=np.float64)
-            index = np.asarray(index_grads[name], dtype=np.float64)
+            query = np.asarray(query_grads[name].detach().cpu(), dtype=np.float32)
+            index = index_grads[name]
             if query.ndim != 2 or index.ndim != 2:
                 raise ValueError(f"Expected 2D grads for module {name!r}, got {query.shape} and {index.shape}")
+            if int(index.shape[0]) != num_candidates:
+                raise ValueError(
+                    f"Candidate count mismatch for module {name!r}: "
+                    f"{index.shape[0]} vs {num_candidates}"
+                )
             if query.shape[1] != index.shape[1]:
                 raise ValueError(
                     f"Gradient dimension mismatch for module {name!r}: query {query.shape[1]} vs index {index.shape[1]}"
                 )
-            if name in split_preconditioners_np:
-                index = index @ split_preconditioners_np[name]
-            score_matrix += query @ index.T
-            index_sq_norms += np.square(index).sum(axis=1)
+            query_by_module[name] = query
 
-        index_inv_norms = np.reciprocal(np.sqrt(np.clip(index_sq_norms, 1e-12, None)))
-        return score_matrix * index_inv_norms[None, :]
+        effective_chunk_size = max(1, int(candidate_chunk_size))
+        for start in range(0, num_candidates, effective_chunk_size):
+            end = min(start + effective_chunk_size, num_candidates)
+            width = end - start
+            chunk_scores = np.zeros((num_targets, width), dtype=np.float32)
+            chunk_sq_norms = np.zeros((width,), dtype=np.float32)
+
+            for name in modules:
+                index_chunk = np.asarray(index_grads[name][start:end], dtype=np.float32)
+                if name in split_preconditioners_np:
+                    index_chunk = index_chunk @ split_preconditioners_np[name]
+                chunk_scores += query_by_module[name] @ index_chunk.T
+                chunk_sq_norms += np.square(index_chunk).sum(axis=1, dtype=np.float32)
+
+            chunk_inv_norms = np.reciprocal(np.sqrt(np.clip(chunk_sq_norms, 1e-12, None)))
+            score_matrix[:, start:end] = chunk_scores * chunk_inv_norms[None, :]
+
+        return score_matrix
 
     def _assembly_dir(self, checkpoint: CheckpointRef, bundle: EWOKTargetBundle) -> Path:
         """Return the directory used for temporary distributed shard files."""

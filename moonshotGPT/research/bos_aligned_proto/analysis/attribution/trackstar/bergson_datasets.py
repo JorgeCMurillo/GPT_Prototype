@@ -472,11 +472,12 @@ def load_flat_gradient_index(index_dir: str | Path) -> dict[str, np.ndarray]:
         mode="r",
         shape=(num_grads, total_dim),
     )
+    array_view = mmap.view(np.ndarray)
     grads: dict[str, np.ndarray] = {}
     start = 0
     for name, size in grad_sizes.items():
         width = int(size)
-        grads[str(name)] = np.asarray(mmap[:, start : start + width], dtype=np.float64)
+        grads[str(name)] = array_view[:, start : start + width]
         start += width
     return grads
 

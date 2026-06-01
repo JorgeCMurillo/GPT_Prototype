@@ -227,6 +227,69 @@ The exported target IDs get `:completion_side:c1_t1` or
 `:completion_side:c2_t2` suffixes, so downstream rankings can inspect which
 training examples support each correct side separately.
 
+### Interpreting Paired Completion Queries
+
+Be careful when interpreting one-row paired EWoK queries, especially with
+`--query_objective completion_ce`. For the BabyLM completion-choice view, the
+paired margin is:
+
+$$
+M = \frac{1}{2}\left[(s_{11} - s_{12}) + (s_{22} - s_{21})\right]
+$$
+
+so `M > 0` does not imply that both facts are learned. It only means the
+average contrast is positive. A checkpoint can satisfy the paired item because
+one side is strong enough to outweigh a failed side:
+
+```text
+side 1 margin < 0
+side 2 margin > 0
+paired margin > 0
+```
+
+The `completion_ce` query gradient has the same averaging issue:
+
+$$
+\nabla_\theta L_{completion}
+= \frac{1}{2}\nabla_\theta CE(T_1 \mid C_1)
+ + \frac{1}{2}\nabla_\theta CE(T_2 \mid C_2)
+$$
+
+so a high-scoring candidate can align with either side, with a failure mode, or
+with generic completion features. It is not automatically evidence for both
+intended concept relations.
+
+In a 20k-step material-dynamics audit over 250k raw stream windows, the direct
+lexical sanity check was weak:
+
+```text
+all material top100 query-stem overlap:      7.53%
+all material random100 query-stem overlap:   6.37%
+
+strong-item top100 query-stem overlap:      10.8%
+strong-item random100 query-stem overlap:    7.5%
+strong-item top5 query-stem overlap:        12.0%
+```
+
+Here "strong" meant both EWoK sides were correct with
+`min(margin_1, margin_2) > 0.2`. Even in that subset, only `6 / 50` top-5 rows
+had direct query-term overlap, and `19 / 50` had neither query-term nor broad
+material-keyword support.
+
+Two illustrative failure modes from that audit:
+
+- `fabric -> wrinkles` vs. `liquid -> splashes` had a positive paired margin
+  because the liquid/splash side was strong, even though the fabric/wrinkle
+  side failed. Its top-5 retrieved windows had `0 / 5` query-term hits.
+- `twill -> drapes` vs. `sand -> stirs` barely passed as a pair, but the
+  twill/drape side failed and the top-5 retrieved windows again had `0 / 5`
+  query-term hits.
+
+The practical takeaway is that paired `completion_ce` rankings can contain weak
+signal but low precision. For cleaner interpretation, prefer
+`completion_side_ce` and restrict downstream analyses to the individual sides
+the checkpoint actually scores correctly.
+
 These query losses make the attribution question concrete:
 
 Which training examples appear most aligned with reducing the EWoK mistake signal
@@ -869,6 +932,33 @@ Without these explicit overrides, `between_checkpoints` now uses the real
 previous discovered checkpoint for a requested step. So `--checkpoint_steps
 20000` will default to the `16000 -> 20000` window when `16000` is the previous
 saved checkpoint in the run.
+
+For direct corpus sweeps, `raw_window_range` bypasses exposure logs and selects
+raw stream-window manifest ids directly. This is useful when you want a fixed
+candidate bank such as the first 250k training windows rather than the subset
+recorded in exposure JSONL:
+
+```bash
+torchrun --nproc_per_node=2 -m research.bos_aligned_proto.analysis.attribution.run_trackstar \
+  --run_dir /home/jorge/tokenPred/moonshotGPT/experiments/<run_name> \
+  --data_dir /home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_10B \
+  --output_dir /SSD-2/trackstar_raw_windows_2p16/results \
+  --cache_dir /SSD-2/trackstar_raw_windows_2p16/cache \
+  --checkpoint_steps 20000 \
+  --candidate_kind stream_window \
+  --candidate_strategy raw_window_range \
+  --raw_window_start_id 0 \
+  --max_candidate_rows 250000 \
+  --projection_layout paper_blocks \
+  --paper_block_features 4096 \
+  --score_candidate_chunk_size 4096 \
+  --distributed ddp \
+  --device cuda
+```
+
+Use `raw_window_random` with the same range flags for a deterministic random
+sample instead of a contiguous prefix. Both raw-window modes require
+`candidate_kind=stream_window`.
 
 By default, TrackStar now shows progress feedback for the main long-running
 phases:
