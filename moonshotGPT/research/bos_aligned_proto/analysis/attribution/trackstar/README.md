@@ -300,6 +300,32 @@ Two illustrative failure modes from that audit:
   twill/drape side failed and the top-5 retrieved windows again had `0 / 5`
   query-term hits.
 
+A completion-side CE rerun over the same 250k raw-window pool improved this
+slightly but did not remove the low-precision problem. That run expanded the 100
+material-dynamics items into 200 side-specific targets. The model had 117
+correct sides, 104 sides with margin `> 0.2`, and 74 sides with margin `> 0.5`.
+The lexical audit found:
+
+```text
+all side top100 query-stem overlap:          4.02%
+all side random100 query-stem overlap:       3.24%
+all side top5 query-stem overlap:            7.30%
+
+strong-side top100 query-stem overlap:       4.68%
+strong-side random100 query-stem overlap:    3.65%
+strong-side top5 query-stem overlap:        10.19%
+
+very-strong-side top100 query-stem overlap:  5.53%
+very-strong-side random100 query-stem:       4.09%
+very-strong-side top5 query-stem overlap:   13.51%
+```
+
+For the strong-side top-5 rows, `53 / 520` had a direct query-stem hit, while
+`136 / 520` had neither a query-stem hit nor a broad material-keyword hit. This
+suggests that side-specific completion CE reduces the paired-query confound and
+changes the retrieved top set, but the remaining projected whole-window
+TrackStar rankings are still noisy as textual evidence.
+
 The practical takeaway is that paired `completion_ce` rankings can contain weak
 signal but low precision. For cleaner interpretation, prefer
 `completion_side_ce` and restrict downstream analyses to the individual sides
