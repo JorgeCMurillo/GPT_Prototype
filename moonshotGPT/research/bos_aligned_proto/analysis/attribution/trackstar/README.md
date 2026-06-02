@@ -259,6 +259,21 @@ so a high-scoring candidate can align with either side, with a failure mode, or
 with generic completion features. It is not automatically evidence for both
 intended concept relations.
 
+This also changes which windows are retrieved. The candidate pool may be fixed
+at the same 250k raw stream windows, but the top-ranked windows are determined
+by the query gradient. If
+
+$$
+g_{pair} = \frac{1}{2}g_{C_1 \to T_1} + \frac{1}{2}g_{C_2 \to T_2}
+$$
+
+then directions that are strong for one side can be cancelled by the other side,
+and the resulting nearest windows can be nearest to the mixed vector rather
+than to either fact by itself. Running `completion_side_ce` over the same 250k
+candidate windows is therefore not just a re-labeling of the paired run: it can
+retrieve a different top set because it scores windows against
+`g_{C_1 \to T_1}` and `g_{C_2 \to T_2}` separately.
+
 In a 20k-step material-dynamics audit over 250k raw stream windows, the direct
 lexical sanity check was weak:
 
