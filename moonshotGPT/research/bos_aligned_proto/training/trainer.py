@@ -22,9 +22,7 @@ from transformers import AutoModelForCausalLM
 
 from torch.optim import AdamW
 
-from transformers import (
-    AutoTokenizer, GPT2Config,
-)
+from transformers import AutoTokenizer
 
 from accelerate.utils import DataLoaderConfiguration
 from accelerate import Accelerator
@@ -167,6 +165,22 @@ from training_utils.resume_trim import (
     trim_run_logs_after_step,
     validate_replay_compatibility,
 )
+from training_utils.rho1 import (
+    Rho1Config,
+    Rho1GapOptStepAccumulator,
+    Rho1OptStepAccumulator,
+    Rho1RefLossLoader,
+    compute_rho1_batch_result,
+    validate_rho_ref_loss_alignment,
+)
+from training_utils.model_config import (
+    build_causal_lm_config,
+    normalize_model_arch,
+)
+from training_utils.muon_polar_express import (
+    MuonWithAuxAdamPE,
+    build_muon_pe_param_groups,
+)
 from training_utils.debug_parity import (
     DebugParityConfig,
     StepDebugRecord,
@@ -180,6 +194,12 @@ from training_utils.debug_parity import (
     write_debug_manifest,
     write_step_debug_record,
     yield_batches_with_index,
+)
+from training_utils.tokenizer_metadata import (
+    effective_tokenizer_vocab_size,
+    resolve_model_vocab_size,
+    resolve_tokenizer_name_or_path,
+    tokenizers_match,
 )
 
 
@@ -195,6 +215,19 @@ def set_all_seeds(seed_value: int):
         torch.backends.cudnn.benchmark = False
     np.random.seed(seed_value)
     random.seed(seed_value)
+
+
+def _resolve_mixed_precision(requested: str) -> str:
+    if requested != "bf16":
+        return requested
+    if not torch.cuda.is_available():
+        return "no"
+    if not torch.cuda.is_bf16_supported():
+        return "fp16"
+    return "bf16"
+
+
+RHO_GAP_DIAGNOSTICS_EVERY_STEPS = 10
 
 
 # -----------------------------
@@ -237,8 +270,8 @@ def build_llmc_style_optimizer(
     decay_params = [p for _, p in param_dict.items() if p.dim() >= 2]
     nodecay_params = [p for _, p in param_dict.items() if p.dim() < 2]
     optim_groups = [
-        {"params": decay_params, "weight_decay": weight_decay},
-        {"params": nodecay_params, "weight_decay": 0.0},
+        {"params": decay_params, "weight_decay": weight_decay, "base_lr": learning_rate},
+        {"params": nodecay_params, "weight_decay": 0.0, "base_lr": learning_rate},
     ]
 
     fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
@@ -253,6 +286,40 @@ def build_llmc_style_optimizer(
         **optimizer_kwargs,
     )
     return optimizer, len(decay_params), len(nodecay_params), use_fused
+
+
+def build_muon_pe_optimizer(
+    model: torch.nn.Module,
+    learning_rate: float,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    muon_lr: float,
+    muon_momentum: float,
+    muon_weight_decay: float,
+    muon_ns_steps: int,
+    muon_nesterov: bool,
+    muon_split_qkv: bool,
+    muon_batch_updates: bool,
+):
+    groups = build_muon_pe_param_groups(
+        model,
+        aux_lr=learning_rate,
+        aux_weight_decay=weight_decay,
+        aux_betas=(beta1, beta2),
+        muon_lr=muon_lr,
+        muon_weight_decay=muon_weight_decay,
+        muon_momentum=muon_momentum,
+        muon_ns_steps=muon_ns_steps,
+        muon_nesterov=muon_nesterov,
+        split_qkv=muon_split_qkv,
+    )
+    optimizer = MuonWithAuxAdamPE(
+        groups.param_groups,
+        qkv_split_dims=groups.qkv_split_dims,
+        batch_muon_updates=bool(muon_batch_updates),
+    )
+    return optimizer, groups.muon_tensors, groups.aux_tensors, groups.qkv_split_tensors
 
 
 @torch.no_grad()
@@ -541,6 +608,78 @@ def _resolve_optional_source_data_dir(path: str) -> str:
     return requested
 
 
+def _resolve_tokenizer_artifact_dir(
+    *,
+    loader_kind: str,
+    data_dir: str,
+    source_data_dir: str,
+) -> str:
+    if loader_kind in {"stream", "bos_row"}:
+        return data_dir
+    if loader_kind == "bos_packed_index":
+        if source_data_dir:
+            return source_data_dir
+        raise ValueError(
+            "Could not resolve tokenizer metadata for loader_kind='bos_packed_index'. "
+            "Pass --source_data_dir pointing at the raw token shard directory, or use a packed-index artifact "
+            "whose source_data_dir still resolves on this machine."
+        )
+    raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
+
+
+def _resolve_training_tokenizer(
+    *,
+    loader_kind: str,
+    data_dir: str,
+    source_data_dir: str,
+    tokenizer_name_or_path: str = "",
+):
+    tokenizer_artifact_dir = _resolve_tokenizer_artifact_dir(
+        loader_kind=loader_kind,
+        data_dir=data_dir,
+        source_data_dir=source_data_dir,
+    )
+    spec = resolve_tokenizer_name_or_path(
+        tokenizer_artifact_dir,
+        tokenizer_name_or_path,
+        explicit_arg_name="--tokenizer_name_or_path",
+        consumer_name="BOS training",
+    )
+    tokenizer = AutoTokenizer.from_pretrained(spec.name_or_path, use_fast=True)
+    tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        raise ValueError(
+            f"Resolved tokenizer {spec.name_or_path!r} does not define eos_token_id/pad_token_id required for training."
+        )
+    return tokenizer_artifact_dir, spec.name_or_path, tokenizer
+
+
+def _validate_ckpt_tokenizer_alignment(ckpt_dir: str, tokenizer) -> None:
+    try:
+        ckpt_tokenizer = AutoTokenizer.from_pretrained(ckpt_dir, use_fast=True)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Checkpoint tokenizer could not be loaded from {ckpt_dir}. "
+            "When --init_from_ckpt is used, the checkpoint tokenizer must be present and match the dataset tokenizer."
+        ) from exc
+    ckpt_tokenizer.pad_token = ckpt_tokenizer.eos_token
+    if not tokenizers_match(ckpt_tokenizer, tokenizer):
+        raise ValueError(
+            "Checkpoint tokenizer does not match the artifact tokenizer.\n"
+            f"checkpoint: {ckpt_dir}\n"
+            f"artifact tokenizer: {tokenizer.name_or_path}"
+        )
+
+
+def _should_save_rho_warmup_checkpoint(
+    *,
+    rho_enabled: bool,
+    rho_warmup_steps: int,
+    opt_step: int,
+) -> bool:
+    return bool(rho_enabled and rho_warmup_steps > 0 and int(opt_step) == int(rho_warmup_steps))
+
+
 # -----------------------------
 # Main
 
@@ -548,26 +687,41 @@ def main(cfg: TrainConfig) -> None:
     invocation_args = sys.argv[1:]
     loader_kind = str(cfg.loader_kind).strip()
     seed = cfg.seed
+    mixed_precision = str(cfg.mixed_precision).strip()
     micro_batch_size = cfg.micro_batch_size
     total_batch_tokens = cfg.total_batch_tokens
     max_train_steps = cfg.max_train_steps
     data_dir = cfg.data_dir
     source_data_dir = str(cfg.source_data_dir).strip()
+    tokenizer_name_or_path = str(cfg.tokenizer_name_or_path).strip()
     experiments_dir = cfg.experiments_dir
     seq_len = cfg.seq_len
     vocab_size = cfg.vocab_size
+    model_arch = normalize_model_arch(cfg.model_arch)
     n_embd = cfg.n_embd
     n_head = cfg.n_head
     n_layer = cfg.n_layer
+    llama_intermediate_size = cfg.llama_intermediate_size
+    llama_num_key_value_heads = cfg.llama_num_key_value_heads
+    llama_tie_word_embeddings = cfg.llama_tie_word_embeddings
+    rope_theta = cfg.rope_theta
     num_workers = cfg.num_workers
     shuffle_blocks = cfg.shuffle_blocks
     grad_clip = cfg.grad_clip
     learning_rate = cfg.learning_rate
     warmup_iters = cfg.warmup_iters
     learning_rate_decay_frac = cfg.learning_rate_decay_frac
+    optimizer_name = str(cfg.optimizer).strip()
     weight_decay = cfg.weight_decay
     beta1 = cfg.beta1
     beta2 = cfg.beta2
+    muon_lr = cfg.muon_lr
+    muon_momentum = cfg.muon_momentum
+    muon_weight_decay = cfg.muon_weight_decay
+    muon_ns_steps = cfg.muon_ns_steps
+    muon_nesterov = bool(cfg.muon_nesterov)
+    muon_split_qkv = bool(cfg.muon_split_qkv)
+    muon_batch_updates = bool(cfg.muon_batch_updates)
     eval_every = cfg.eval_every
     hellaswag_every = cfg.hellaswag_every
     hellaswag_batch_size = cfg.hellaswag_batch_size
@@ -584,6 +738,7 @@ def main(cfg: TrainConfig) -> None:
     ewok_batch_size = cfg.ewok_batch_size
     ewok_reductions = str(cfg.ewok_reductions)
     save_every = cfg.save_every
+    save_final_checkpoint = bool(cfg.save_final_checkpoint)
     exposure_every = cfg.exposure_every
     debug_trace_data = bool(cfg.debug_trace_data)
     debug_trace_steps = int(cfg.debug_trace_steps)
@@ -594,14 +749,41 @@ def main(cfg: TrainConfig) -> None:
     debug_compare_to = str(cfg.debug_compare_to).strip()
     debug_compute_update_norm = bool(cfg.debug_compute_update_norm)
     debug_disable_fused_adamw = bool(cfg.debug_disable_fused_adamw)
+    profile_optimizer_steps = bool(cfg.profile_optimizer_steps)
     push_to_hub = cfg.push_to_hub
     skip_final_ewok = cfg.skip_final_ewok
     include_ewok_sum_plots = cfg.include_ewok_sum_plots
     init_from_ckpt = str(cfg.init_from_ckpt).strip()
     resume_from_run = str(cfg.resume_from_run).strip()
+    rho_ref_loss_dir = str(cfg.rho_ref_loss_dir).strip()
+    rho_keep_frac = float(cfg.rho_keep_frac)
+    rho_warmup_steps = int(cfg.rho_warmup_steps)
+    rho_mode = str(cfg.rho_mode).strip()
+    rho_ref_loss_cap = float(cfg.rho_ref_loss_cap)
+    rho_granularity = str(cfg.rho_granularity).strip()
 
     if loader_kind not in {"stream", "bos_row", "bos_packed_index"}:
         raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
+    if optimizer_name not in {"adamw", "muon_pe"}:
+        raise ValueError(f"Unsupported optimizer={optimizer_name!r}.")
+    if muon_ns_steps <= 0:
+        raise ValueError(f"--muon_ns_steps must be > 0, got {muon_ns_steps}.")
+
+    rho_config = Rho1Config(
+        ref_loss_dir=rho_ref_loss_dir,
+        keep_frac=rho_keep_frac,
+        warmup_steps=rho_warmup_steps,
+        mode=rho_mode,
+        ref_loss_cap=rho_ref_loss_cap,
+        granularity=rho_granularity,
+    )
+    rho_config.validate()
+    rho_enabled = rho_config.enabled
+    if rho_enabled and loader_kind not in {"stream", "bos_row"}:
+        raise ValueError(
+            "Rho-1 masking is only supported for loader_kind in {'stream','bos_row'}. "
+            "The bos_packed_index loader does not have a defined ref-loss alignment."
+        )
 
     if init_from_ckpt and resume_from_run:
         raise ValueError("Use only one of --init_from_ckpt or --resume_from_run, not both.")
@@ -632,6 +814,7 @@ def main(cfg: TrainConfig) -> None:
 
     set_all_seeds(seed)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    effective_mixed_precision = _resolve_mixed_precision(mixed_precision)
 
     data_dir = _resolve_data_dir(data_dir, loader_kind=loader_kind)
     if source_data_dir:
@@ -658,14 +841,46 @@ def main(cfg: TrainConfig) -> None:
         row_tokens = int(packed_index_meta.get("row_tokens", seq_len + 1))
         virtual_shard_rows = packed_index_meta.get("virtual_shard_rows", packed_index_meta.get("shard_rows"))
 
+    tokenizer_artifact_dir, tokenizer_source, tokenizer = _resolve_training_tokenizer(
+        loader_kind=loader_kind,
+        data_dir=data_dir,
+        source_data_dir=source_data_dir,
+        tokenizer_name_or_path=tokenizer_name_or_path,
+    )
+    tokenizer_vocab_size = effective_tokenizer_vocab_size(tokenizer)
+    vocab_size = resolve_model_vocab_size(vocab_size, tokenizer_vocab_size)
+    EOS_ID = tokenizer.pad_token_id
+    # Bug fix: GPT-2-tokenized streams use token 50256 as real BOS/EOS data.
+    # Passing that id as Llama's pad_token_id makes nn.Embedding treat row
+    # 50256 as padding_idx, zeroing a real token embedding and triggering NaN
+    # gradients. The 4GPU gas5 smoke with pad_token_id=None was finite at
+    # step 1 (loss 11.0478), so Llama stream training keeps no model padding
+    # index. GPT-2 keeps the tokenizer pad/eos convention.
+    model_pad_token_id = None if model_arch == "llama" else EOS_ID
+
     # [FIX 1] Initialize Accelerator FIRST so we know the real world_size
     dataloader_config = DataLoaderConfiguration(dispatch_batches=False, split_batches=False)
     accelerator = Accelerator(
         dataloader_config=dataloader_config,
+        mixed_precision=effective_mixed_precision,
         # We will set gradient_accumulation_steps manually below after calculation
     )
     device = accelerator.device
     world_size = accelerator.num_processes
+
+    if rho_enabled:
+        checked_shards = validate_rho_ref_loss_alignment(
+            data_dir=data_dir,
+            ref_loss_dir=rho_ref_loss_dir,
+            seq_len=seq_len,
+            micro_batch_size=micro_batch_size,
+            split="train",
+        )
+        if accelerator.is_local_main_process:
+            print(
+                f"rho preflight validation passed: checked {checked_shards} train shards "
+                f"(seq_len={seq_len}, micro_batch_size={micro_batch_size})."
+            )
 
     # [FIX 1] Calculate grad_accum_steps using the authoritative world_size
     tokens_per_microstep_global = world_size * micro_batch_size * seq_len
@@ -699,11 +914,14 @@ def main(cfg: TrainConfig) -> None:
             loader_tag = "bospackedindex"
         run_name = (
             f"babygpt_fineweb_{loader_tag}_mbs{micro_batch_size}_T{seq_len}_"
+            f"{'' if model_arch == 'gpt2' else model_arch + '_'}"
             f"d{n_embd}_h{n_head}_L{n_layer}_"
             f"tok{total_batch_tokens}_efftok{effective_total_tokens}_"
             f"ws{world_size}_gas{grad_accum_steps}_seed{seed}_"
             f"steps{max_train_steps}"
         )
+        if rho_enabled:
+            run_name += rho_config.run_name_suffix()
         out_dir = os.path.join(experiments_dir, run_name)
 
     model_init_ckpt_dir = ""
@@ -715,12 +933,16 @@ def main(cfg: TrainConfig) -> None:
     if model_init_ckpt_dir:
         validate_ckpt_model_config_alignment(
             ckpt_dir=model_init_ckpt_dir,
+            model_arch=model_arch,
             seq_len=seq_len,
             vocab_size=vocab_size,
             n_embd=n_embd,
             n_head=n_head,
             n_layer=n_layer,
+            llama_intermediate_size=llama_intermediate_size,
+            llama_num_key_value_heads=llama_num_key_value_heads,
         )
+        _validate_ckpt_tokenizer_alignment(model_init_ckpt_dir, tokenizer)
     if debug_cfg.enabled and debug_cfg.overfit_batches > 0 and resume_mode:
         raise ValueError("Tiny-overfit replay mode does not support --resume_from_run.")
     analysis_plot_dir = os.path.join(out_dir, "plots_from_step_metrics")
@@ -853,11 +1075,35 @@ def main(cfg: TrainConfig) -> None:
         print(f"lr@step0                    = {lr_step0}")
         print(f"lr@warmup_end               = {lr_warmup_end}")
         print(f"lr@final_step               = {lr_final}")
+        print(f"optimizer                   = {optimizer_name}")
+        if optimizer_name == "muon_pe":
+            print(f"muon_lr                     = {muon_lr}")
+            print(f"muon_momentum               = {muon_momentum}")
+            print(f"muon_weight_decay           = {muon_weight_decay}")
+            print(f"muon_ns_steps               = {muon_ns_steps}")
+            print(f"muon_nesterov               = {muon_nesterov}")
+            print(f"muon_split_qkv              = {muon_split_qkv}")
+            print(f"muon_batch_updates          = {muon_batch_updates}")
         print("--------------------")
         print(f"loader_kind                 = {loader_kind}")
+        print(f"mixed_precision requested   = {mixed_precision}")
+        print(f"mixed_precision effective   = {effective_mixed_precision}")
         print(f"data_dir                    = {data_dir}")
         if source_data_dir:
             print(f"source_data_dir             = {source_data_dir}")
+        print(f"tokenizer_artifact_dir      = {tokenizer_artifact_dir}")
+        print(f"tokenizer source            = {tokenizer_source}")
+        print(f"model_arch                  = {model_arch}")
+        print(f"resolved vocab_size         = {vocab_size}")
+        if model_arch == "llama":
+            print(f"llama_model_pad_token_id    = <none>")
+        if rho_enabled:
+            print(f"rho_ref_loss_dir            = {rho_ref_loss_dir}")
+            print(f"rho_mode                    = {rho_mode}")
+            print(f"rho_granularity             = {rho_granularity}")
+            print(f"rho_keep_frac               = {rho_keep_frac}")
+            print(f"rho_warmup_steps            = {rho_warmup_steps}")
+            print(f"rho_ref_loss_cap            = {rho_ref_loss_cap}")
         print(f"out_dir = {out_dir}")
         print("---- Eval settings ----")
         print("# Interval settings are in optimizer steps; 0 disables that recurring action.")
@@ -876,7 +1122,9 @@ def main(cfg: TrainConfig) -> None:
         print(f"ewok_every                  = {ewok_every}")
         print(f"ewok_batch_size             = {ewok_batch_size}")
         print(f"save_every                  = {save_every}")
+        print(f"save_final_checkpoint       = {save_final_checkpoint}")
         print(f"exposure_every              = {exposure_every}")
+        print(f"profile_optimizer_steps     = {profile_optimizer_steps}")
         print(f"debug_trace_data            = {debug_trace_data}")
         print(f"debug_trace_steps           = {debug_trace_steps}")
         if debug_trace_data:
@@ -895,19 +1143,6 @@ def main(cfg: TrainConfig) -> None:
         print(f"ewok_reductions             = {ewok_reductions}")
 
     # Tokenizer
-    tokenizer_source = "gpt2"
-    if model_init_ckpt_dir:
-        ckpt_tok_cfg = os.path.join(model_init_ckpt_dir, "tokenizer_config.json")
-        if os.path.exists(ckpt_tok_cfg):
-            tokenizer_source = model_init_ckpt_dir
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
-    if accelerator.is_local_main_process:
-        print(f"tokenizer source             = {tokenizer_source}")
-    tokenizer.pad_token = tokenizer.eos_token
-    EOS_ID = tokenizer.pad_token_id  # 50256
-    tokenizer_vocab_size = int(tokenizer.vocab_size)
-    if vocab_size < tokenizer_vocab_size:
-        raise ValueError(f"vocab_size={vocab_size} must be >= tokenizer vocab ({tokenizer_vocab_size}).")
     if vocab_size > tokenizer_vocab_size and accelerator.is_local_main_process:
         print(
             f"[warn] vocab_size={vocab_size} > tokenizer vocab={tokenizer_vocab_size}; "
@@ -921,6 +1156,13 @@ def main(cfg: TrainConfig) -> None:
         raise ValueError(f"n_layer must be > 0, got {n_layer}")
     if n_embd % n_head != 0:
         raise ValueError(f"n_embd must be divisible by n_head, got n_embd={n_embd}, n_head={n_head}")
+    if model_arch == "llama":
+        if int(llama_intermediate_size) < 0:
+            raise ValueError(f"llama_intermediate_size must be >= 0, got {llama_intermediate_size}")
+        if int(llama_num_key_value_heads) < 0:
+            raise ValueError(f"llama_num_key_value_heads must be >= 0, got {llama_num_key_value_heads}")
+        if float(rope_theta) <= 0:
+            raise ValueError(f"rope_theta must be > 0, got {rope_theta}")
     loss_vocab_size = tokenizer_vocab_size
     can_probe_generate = (vocab_size == tokenizer_vocab_size)
 
@@ -1011,22 +1253,21 @@ def main(cfg: TrainConfig) -> None:
             attn_implementation="sdpa",
         )
     else:
-        config = GPT2Config(
+        config = build_causal_lm_config(
+            model_arch=model_arch,
             vocab_size=vocab_size,
             bos_token_id=EOS_ID,
             eos_token_id=EOS_ID,
-            n_ctx=seq_len,
-            n_positions=seq_len,
+            pad_token_id=model_pad_token_id,
+            seq_len=seq_len,
             n_embd=n_embd,
             n_head=n_head,
             n_layer=n_layer,
-            attn_pdrop=0.0,
-            embd_pdrop=0.0,
-            resid_pdrop=0.0,
-            summary_first_dropout=0.0,
+            llama_intermediate_size=llama_intermediate_size,
+            llama_num_key_value_heads=llama_num_key_value_heads,
+            llama_tie_word_embeddings=llama_tie_word_embeddings,
+            rope_theta=rope_theta,
         )
-        # KV cache only helps incremental decoding; pretraining recomputes full sequences.
-        config.use_cache = False
         model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
     model.config.use_cache = False
 
@@ -1035,24 +1276,48 @@ def main(cfg: TrainConfig) -> None:
             print(f"model init source            = {model_init_ckpt_dir}")
         print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Optimizer (llm.c-style defaults + param grouping)
-    optimizer, n_decay, n_nodecay, use_fused = build_llmc_style_optimizer(
-        model=model,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        beta1=beta1,
-        beta2=beta2,
-        device=device,
-        allow_fused=not debug_cfg.disable_fused_adamw,
-    )
+    # Optimizer (llm.c-style AdamW baseline, or Muon for hidden matrices + aux AdamW)
+    muon_qkv_split_tensors = 0
+    if optimizer_name == "adamw":
+        optimizer, n_decay, n_nodecay, use_fused = build_llmc_style_optimizer(
+            model=model,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            beta1=beta1,
+            beta2=beta2,
+            device=device,
+            allow_fused=not debug_cfg.disable_fused_adamw,
+        )
+    elif optimizer_name == "muon_pe":
+        optimizer, n_decay, n_nodecay, muon_qkv_split_tensors = build_muon_pe_optimizer(
+            model=model,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            beta1=beta1,
+            beta2=beta2,
+            muon_lr=muon_lr,
+            muon_momentum=muon_momentum,
+            muon_weight_decay=muon_weight_decay,
+            muon_ns_steps=muon_ns_steps,
+            muon_nesterov=muon_nesterov,
+            muon_split_qkv=muon_split_qkv,
+            muon_batch_updates=muon_batch_updates,
+        )
+        use_fused = False
+    else:
+        raise ValueError(f"Unsupported optimizer={optimizer_name!r}.")
     optimizer.zero_grad(set_to_none=True)
 
     if accelerator.is_local_main_process:
-        print(f"Optimizer decayed tensors: {n_decay}, non-decayed tensors: {n_nodecay}")
-        print(f"Using fused AdamW: {use_fused}")
+        if optimizer_name == "adamw":
+            print(f"Optimizer decayed tensors: {n_decay}, non-decayed tensors: {n_nodecay}")
+            print(f"Using fused AdamW: {use_fused}")
+        else:
+            print(f"Muon hidden matrix tensors: {n_decay}, auxiliary AdamW tensors: {n_nodecay}")
+            print(f"Muon split-QKV tensors: {muon_qkv_split_tensors}")
+            print(f"Muon batch same-shape updates: {muon_batch_updates}")
 
     model, optimizer = accelerator.prepare(model, optimizer)
-
     resume_opt_step = 0
     resume_tokens_seen_local_total = 0
     resume_skip_microsteps = 0
@@ -1075,6 +1340,7 @@ def main(cfg: TrainConfig) -> None:
             "shuffle_blocks": bool(shuffle_blocks),
             "num_workers": int(num_workers),
             "world_size": int(world_size),
+            "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
             "data_dir": os.path.abspath(data_dir),
             "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
             "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
@@ -1180,6 +1446,10 @@ def main(cfg: TrainConfig) -> None:
         print(f"Saved loss plot to {plot_path}")
 
     def save_checkpoint(tag: str, step: int):
+        # Keep all ranks in lock-step around checkpoint I/O. Without the
+        # trailing rendezvous, non-main ranks can resume training and enqueue
+        # the next DDP/NCCL collective while rank 0 is still writing the
+        # checkpoint to disk.
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
             ckpt_dir = os.path.join(out_dir, f"ckpt_{tag}_step{step:07d}")
@@ -1191,6 +1461,7 @@ def main(cfg: TrainConfig) -> None:
                 ckpt_dir,
                 {
                     "timestamp": datetime.now().isoformat(),
+                    "checkpoint_tag": str(tag),
                     "opt_step": int(step),
                     "loader_kind": str(loader_kind),
                     "tokens_seen_local_total": int(tokens_seen_local_total),
@@ -1204,6 +1475,7 @@ def main(cfg: TrainConfig) -> None:
                     "shuffle_blocks": bool(shuffle_blocks),
                     "num_workers": int(num_workers),
                     "world_size": int(world_size),
+                    "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
                     "data_dir": os.path.abspath(data_dir),
                     "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
                     "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
@@ -1213,6 +1485,7 @@ def main(cfg: TrainConfig) -> None:
                 },
             )
             print(f"Saved checkpoint to {ckpt_dir}/")
+        accelerator.wait_for_everyone()
 
     debug_trace_global_offset_map = {}
     debug_trace_handle = None
@@ -1290,6 +1563,7 @@ def main(cfg: TrainConfig) -> None:
                 "resume_step_hint": int(resume_step_hint),
                 "grad_accum_steps": int(grad_accum_steps),
                 "tokens_per_opt_step_global": int(effective_total_tokens),
+                "optimizer": str(optimizer_name),
                 "optimizer_use_fused": bool(use_fused),
                 "compare_to": (debug_cfg.compare_to or None),
                 "cached_batch_summaries_rank0": debug_cached_batch_summaries,
@@ -1328,6 +1602,7 @@ def main(cfg: TrainConfig) -> None:
 
     # Buffer meta per optimizer step (i.e., across grad_accum microsteps)
     micro_meta_buf = []
+    ref_loss_loader = Rho1RefLossLoader(rho_ref_loss_dir) if rho_enabled else None
 
     # Keep last step scalars around so ewok records can include them
     last_lr = None
@@ -1335,10 +1610,31 @@ def main(cfg: TrainConfig) -> None:
     last_param_norm = None
     last_train_loss = None
     last_train_loss_micro = None
+    last_rho_keep_frac = None
+    last_rho_kept_tokens = None
+    last_rho_keep_seq_frac = None
+    last_rho_kept_sequences = None
+    last_rho_ref_loss_mean = None
+    last_rho_gap_delta_mean_all = None
+    last_rho_gap_delta_median_all = None
+    last_rho_gap_delta_p90_all = None
+    last_rho_gap_delta_pos_frac_all = None
+    last_rho_gap_delta_pos_mean_all = None
+    last_rho_gap_delta_mean_kept = None
+    last_rho_gap_delta_pos_frac_kept = None
+    last_rho_gap_delta_mean_seq_all = None
+    last_rho_gap_delta_median_seq_all = None
+    last_rho_gap_delta_p90_seq_all = None
+    last_rho_gap_delta_pos_frac_seq_all = None
+    last_rho_gap_delta_pos_mean_seq_all = None
+    last_rho_gap_delta_mean_seq_kept = None
+    last_rho_gap_delta_pos_frac_seq_kept = None
 
     # Track mean train loss across all microsteps in each optimizer step.
     opt_step_loss_sum = 0.0
     opt_step_loss_count = 0
+    rho_accum = Rho1OptStepAccumulator()
+    rho_gap_accum = None
 
     for micro_step, (fixed_batch_index, batch) in enumerate(pbar, start=start_micro_step):
         if opt_step >= max_train_steps:
@@ -1363,6 +1659,15 @@ def main(cfg: TrainConfig) -> None:
         debug_update_norm = None
         debug_grad_accum_count = 0
         debug_running_loss_mean = None
+        rho_kept_tokens_batch = None
+        loss_token_count_batch = None
+        should_collect_rho_gap = bool(
+            rho_enabled and ((int(opt_step) + 1) % int(RHO_GAP_DIAGNOSTICS_EVERY_STEPS) == 0)
+        )
+        if should_collect_rho_gap and rho_gap_accum is None:
+            rho_gap_accum = Rho1GapOptStepAccumulator()
+        if not should_collect_rho_gap:
+            rho_gap_accum = None
 
         if debug_trace_handle is not None and int(opt_step) < int(debug_trace_steps):
             debug_trace_samples_written = _write_debug_batch_trace(
@@ -1410,15 +1715,31 @@ def main(cfg: TrainConfig) -> None:
                 with sdpa_kernel(sdpa_backends):
                     logits = model(input_ids=input_ids).logits  # no attention_mask
 
-                # mean NLL per token over (B*T) positions
-                loss_raw = F.cross_entropy(
+                # Token-wise NLL over (B*T) positions.
+                token_loss = F.cross_entropy(
                     logits[..., :loss_vocab_size].reshape(-1, loss_vocab_size),
                     labels.reshape(-1),
-                    reduction="mean",
+                    reduction="none",
+                ).reshape_as(labels)
+
+                rho_batch = compute_rho1_batch_result(
+                    token_loss=token_loss,
+                    shard_meta=meta,
+                    opt_step=opt_step,
+                    config=rho_config,
+                    ref_loss_loader=ref_loss_loader,
+                    gap_accumulator=rho_gap_accum,
                 )
+
+                loss_raw = rho_batch.loss
                 loss_raw_item = float(loss_raw.detach().item())
                 opt_step_loss_sum += loss_raw_item
                 opt_step_loss_count += 1
+                rho_accum.update(rho_batch)
+                rho_kept_tokens_batch = rho_batch.kept_tokens
+                loss_token_count_batch = int(labels.numel())
+                if rho_kept_tokens_batch is not None:
+                    loss_token_count_batch = int(rho_kept_tokens_batch)
                 debug_grad_accum_count = int(opt_step_loss_count)
                 debug_running_loss_mean = opt_step_loss_sum / max(1, opt_step_loss_count)
 
@@ -1430,15 +1751,15 @@ def main(cfg: TrainConfig) -> None:
             if accelerator.sync_gradients:
                 debug_optimizer_step_occurred = True
                 debug_lr_schedule_applied = True
-                step_lr = get_llmc_lr(
-                    step=opt_step,
-                    learning_rate=learning_rate,
-                    warmup_iters=warmup_iters,
-                    num_iterations=max_train_steps,
-                    learning_rate_decay_frac=learning_rate_decay_frac,
-                )
                 for param_group in optimizer.param_groups:
-                    param_group["lr"] = step_lr
+                    base_lr = float(param_group.get("base_lr", learning_rate))
+                    param_group["lr"] = get_llmc_lr(
+                        step=opt_step,
+                        learning_rate=base_lr,
+                        warmup_iters=warmup_iters,
+                        num_iterations=max_train_steps,
+                        learning_rate_decay_frac=learning_rate_decay_frac,
+                    )
 
                 # norms + lr before update
                 lr_before = get_current_lr(optimizer)
@@ -1462,7 +1783,16 @@ def main(cfg: TrainConfig) -> None:
                         enabled=True,
                     )
 
+                optimizer_step_seconds = None
+                if profile_optimizer_steps:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize(device)
+                    optimizer_step_start = time.perf_counter()
                 optimizer.step()
+                if profile_optimizer_steps:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize(device)
+                    optimizer_step_seconds = time.perf_counter() - optimizer_step_start
                 optimizer.zero_grad(set_to_none=True)
                 opt_step += 1
 
@@ -1484,8 +1814,59 @@ def main(cfg: TrainConfig) -> None:
                 last_train_loss = opt_step_loss_sum / max(1, opt_step_loss_count)
                 last_train_loss_micro = loss_raw_item
                 debug_running_loss_mean = last_train_loss
+                rho_summary = rho_accum.finalize()
+                last_rho_keep_frac = rho_summary.keep_frac_mean
+                last_rho_kept_tokens = rho_summary.kept_tokens_mean
+                last_rho_keep_seq_frac = rho_summary.keep_seq_frac_mean
+                last_rho_kept_sequences = rho_summary.kept_sequences_mean
+                last_rho_ref_loss_mean = rho_summary.ref_loss_mean
+                rho_gap_summary = rho_gap_accum.finalize() if rho_gap_accum is not None else None
+                last_rho_gap_delta_mean_all = (
+                    rho_gap_summary.delta_mean_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_median_all = (
+                    rho_gap_summary.delta_median_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_p90_all = (
+                    rho_gap_summary.delta_p90_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_frac_all = (
+                    rho_gap_summary.delta_pos_frac_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_mean_all = (
+                    rho_gap_summary.delta_pos_mean_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_mean_kept = (
+                    rho_gap_summary.delta_mean_kept if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_frac_kept = (
+                    rho_gap_summary.delta_pos_frac_kept if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_mean_seq_all = (
+                    rho_gap_summary.delta_mean_seq_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_median_seq_all = (
+                    rho_gap_summary.delta_median_seq_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_p90_seq_all = (
+                    rho_gap_summary.delta_p90_seq_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_frac_seq_all = (
+                    rho_gap_summary.delta_pos_frac_seq_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_mean_seq_all = (
+                    rho_gap_summary.delta_pos_mean_seq_all if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_mean_seq_kept = (
+                    rho_gap_summary.delta_mean_seq_kept if rho_gap_summary is not None else None
+                )
+                last_rho_gap_delta_pos_frac_seq_kept = (
+                    rho_gap_summary.delta_pos_frac_seq_kept if rho_gap_summary is not None else None
+                )
                 opt_step_loss_sum = 0.0
                 opt_step_loss_count = 0
+                rho_accum.reset()
+                rho_gap_accum = None
 
                 # Approx global tokens seen so far (assumes each rank runs same # microbatches)
                 tokens_seen_global_approx = int(tokens_seen_local_total * accelerator.num_processes)
@@ -1505,10 +1886,94 @@ def main(cfg: TrainConfig) -> None:
                         "param_norm_l2": param_norm,
                         "tokens_seen_global_approx": tokens_seen_global_approx,
                         "tokens_per_opt_step_global": int(effective_total_tokens),
+                        "optimizer": str(optimizer_name),
+                        "optimizer_use_fused": bool(use_fused),
+                        "muon_batch_updates": (
+                            bool(muon_batch_updates) if optimizer_name == "muon_pe" else None
+                        ),
+                        "optimizer_step_ms": (
+                            float(optimizer_step_seconds * 1000.0)
+                            if optimizer_step_seconds is not None else None
+                        ),
                         "world_size": accelerator.num_processes,
                         "grad_accum_steps": int(grad_accum_steps),
                         "micro_batch_size": int(micro_batch_size),
                         "seq_len": int(seq_len),
+                        "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
+                        "rho_enabled": bool(rho_enabled),
+                        "rho_mode": (rho_mode if rho_enabled else None),
+                        "rho_granularity": (rho_granularity if rho_enabled else None),
+                        "rho_keep_frac_target": (float(rho_keep_frac) if rho_enabled else None),
+                        "rho_keep_frac_mean": (float(last_rho_keep_frac) if last_rho_keep_frac is not None else None),
+                        "rho_kept_tokens_mean": (int(last_rho_kept_tokens) if last_rho_kept_tokens is not None else None),
+                        "rho_keep_seq_frac_mean": (
+                            float(last_rho_keep_seq_frac) if last_rho_keep_seq_frac is not None else None
+                        ),
+                        "rho_kept_sequences_mean": (
+                            int(last_rho_kept_sequences) if last_rho_kept_sequences is not None else None
+                        ),
+                        "rho_ref_loss_mean": (float(last_rho_ref_loss_mean) if last_rho_ref_loss_mean is not None else None),
+                        "rho_warmup_steps": (int(rho_warmup_steps) if rho_enabled else None),
+                        "rho_ref_loss_cap": (float(rho_ref_loss_cap) if rho_enabled else None),
+                        "rho_gap_metrics_every_steps": (
+                            int(RHO_GAP_DIAGNOSTICS_EVERY_STEPS) if rho_enabled else None
+                        ),
+                        "delta_mean_all": (
+                            float(last_rho_gap_delta_mean_all)
+                            if last_rho_gap_delta_mean_all is not None else None
+                        ),
+                        "delta_median_all": (
+                            float(last_rho_gap_delta_median_all)
+                            if last_rho_gap_delta_median_all is not None else None
+                        ),
+                        "delta_p90_all": (
+                            float(last_rho_gap_delta_p90_all)
+                            if last_rho_gap_delta_p90_all is not None else None
+                        ),
+                        "delta_pos_frac_all": (
+                            float(last_rho_gap_delta_pos_frac_all)
+                            if last_rho_gap_delta_pos_frac_all is not None else None
+                        ),
+                        "delta_pos_mean_all": (
+                            float(last_rho_gap_delta_pos_mean_all)
+                            if last_rho_gap_delta_pos_mean_all is not None else None
+                        ),
+                        "delta_mean_kept": (
+                            float(last_rho_gap_delta_mean_kept)
+                            if last_rho_gap_delta_mean_kept is not None else None
+                        ),
+                        "delta_pos_frac_kept": (
+                            float(last_rho_gap_delta_pos_frac_kept)
+                            if last_rho_gap_delta_pos_frac_kept is not None else None
+                        ),
+                        "delta_mean_seq_all": (
+                            float(last_rho_gap_delta_mean_seq_all)
+                            if last_rho_gap_delta_mean_seq_all is not None else None
+                        ),
+                        "delta_median_seq_all": (
+                            float(last_rho_gap_delta_median_seq_all)
+                            if last_rho_gap_delta_median_seq_all is not None else None
+                        ),
+                        "delta_p90_seq_all": (
+                            float(last_rho_gap_delta_p90_seq_all)
+                            if last_rho_gap_delta_p90_seq_all is not None else None
+                        ),
+                        "delta_pos_frac_seq_all": (
+                            float(last_rho_gap_delta_pos_frac_seq_all)
+                            if last_rho_gap_delta_pos_frac_seq_all is not None else None
+                        ),
+                        "delta_pos_mean_seq_all": (
+                            float(last_rho_gap_delta_pos_mean_seq_all)
+                            if last_rho_gap_delta_pos_mean_seq_all is not None else None
+                        ),
+                        "delta_mean_seq_kept": (
+                            float(last_rho_gap_delta_mean_seq_kept)
+                            if last_rho_gap_delta_mean_seq_kept is not None else None
+                        ),
+                        "delta_pos_frac_seq_kept": (
+                            float(last_rho_gap_delta_pos_frac_seq_kept)
+                            if last_rho_gap_delta_pos_frac_seq_kept is not None else None
+                        ),
                     })
 
         if debug_cfg.enabled and debug_batch_summary is not None:
@@ -1562,8 +2027,10 @@ def main(cfg: TrainConfig) -> None:
                 ),
             )
 
-        # stats (no masks, no padding)
+        # Loss-weighted stats use the same token count as the training loss.
         bs_tokens = int(labels.numel())
+        if loss_token_count_batch is not None:
+            bs_tokens = int(loss_token_count_batch)
         loss_val = loss_raw_item
         total_loss_sum += loss_val * bs_tokens
         total_tokens += bs_tokens
@@ -1670,6 +2137,11 @@ def main(cfg: TrainConfig) -> None:
         # -------------------------------------------------------------
         if accelerator.sync_gradients and (opt_step > 0):
             do_save = (save_every > 0 and opt_step % save_every == 0)
+            do_rho_warmup_save = _should_save_rho_warmup_checkpoint(
+                rho_enabled=rho_enabled,
+                rho_warmup_steps=rho_warmup_steps,
+                opt_step=opt_step,
+            )
             do_hellaswag = (hellaswag_every > 0 and opt_step % hellaswag_every == 0)
             do_core = (core_every > 0 and opt_step % core_every == 0)
             do_ewok = (ewok_every > 0 and opt_step % ewok_every == 0)
@@ -1770,6 +2242,9 @@ def main(cfg: TrainConfig) -> None:
             if do_save:
                 save_plot()
                 save_checkpoint("periodic", opt_step)
+            if do_rho_warmup_save:
+                save_plot()
+                save_checkpoint("rho_warmup", opt_step)
 
     if debug_trace_handle is not None:
         debug_trace_handle.flush()
@@ -1900,7 +2375,10 @@ def main(cfg: TrainConfig) -> None:
             else:
                 print(f"[warn] metrics file not found at {metrics_path}; skipping auto-plots.")
 
-    save_checkpoint("final", opt_step)
+    if save_final_checkpoint:
+        save_checkpoint("final", opt_step)
+    elif accelerator.is_main_process:
+        print("[info] skipping final checkpoint save (--no-save_final_checkpoint)")
 
     if push_to_hub and accelerator.is_main_process:
         tokenizer.push_to_hub(out_dir)
