@@ -51,6 +51,21 @@ def _parse_plot_formats(value: str) -> tuple[str, ...]:
     return formats
 
 
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_status(output_dir: Path, stage: str, **details: Any) -> None:
+    atomic_write_json(
+        output_dir / "run_status.json",
+        {
+            "updated_utc": _now_utc(),
+            "stage": stage,
+            **details,
+        },
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="HF model id or local checkpoint path.")
@@ -76,6 +91,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--test-ratio", type=float, default=0.15)
     parser.add_argument("--shuffle-repeats", type=int, default=5)
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=25,
+        help="Report activation extraction progress every N batches. Set 0 to keep extraction quiet.",
+    )
     parser.add_argument("--revision", default=None)
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--local-files-only", action="store_true")
@@ -151,6 +172,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_path = output_dir / "activation_cache.fp16.npz"
+    _write_status(output_dir, "started", model=args.model, output_path=str(output_dir))
 
     pairs = build_ewok_probe_pairs(
         variant=args.ewok_variant,
@@ -168,12 +190,39 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     row_splits = assign_grouped_splits(pairs, split_config)
     split_labels = pair_split_labels(pairs, row_splits)
     atomic_write_csv(output_dir / "split_assignments.csv", split_assignment_rows(pairs, row_splits))
+    _write_status(
+        output_dir,
+        "prepared_data",
+        n_pairs=len(pairs),
+        n_rows=len(row_splits),
+        split_counts={
+            "train_pairs": int(np.sum(split_labels == "train")),
+            "val_pairs": int(np.sum(split_labels == "val")),
+            "test_pairs": int(np.sum(split_labels == "test")),
+        },
+    )
 
     if cache_path.exists() and not args.force:
         print(f"[linear_probe] loading activation cache: {cache_path}", flush=True)
+        _write_status(output_dir, "loading_activation_cache", cache_path=str(cache_path))
         cache = load_activation_cache(cache_path, pairs)
+        _write_status(
+            output_dir,
+            "loaded_activation_cache",
+            cache_path=str(cache_path),
+            layer_indices=list(cache.layer_indices),
+            n_pairs=cache.n_pairs,
+            hidden_dim=cache.hidden_dim,
+        )
     else:
         print(f"[linear_probe] extracting activation cache for model: {args.model}", flush=True)
+        _write_status(
+            output_dir,
+            "extracting_activation_cache",
+            model=args.model,
+            requested_layers=parse_layer_arg(args.layers),
+            batch_size=int(args.batch_size),
+        )
         loaded = load_model_and_tokenizer(
             args.model,
             device_arg=args.device,
@@ -189,18 +238,68 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             batch_size=int(args.batch_size),
             layers=parse_layer_arg(args.layers),
             cache_dtype=args.cache_dtype,
+            progress_every=int(args.progress_every),
+            progress_callback=lambda event: (
+                print(
+                    "[linear_probe] activation "
+                    f"{event['completed_batches']}/{event['total_batches']} batches "
+                    f"({event['processed_pairs']}/{event['total_pairs']} pairs)",
+                    flush=True,
+                ),
+                _write_status(output_dir, "extracting_activation_cache", **event),
+            ),
         )
         save_activation_cache(cache_path, cache)
+        _write_status(
+            output_dir,
+            "wrote_activation_cache",
+            cache_path=str(cache_path),
+            layer_indices=list(cache.layer_indices),
+            n_pairs=cache.n_pairs,
+            hidden_dim=cache.hidden_dim,
+        )
 
     c_grid = parse_c_grid(args.C_grid)
+    print(
+        "[linear_probe] fitting probes "
+        f"for {len(cache.layer_indices)} layer(s) x {len(c_grid)} C value(s)",
+        flush=True,
+    )
+    _write_status(
+        output_dir,
+        "fitting_probes",
+        layer_indices=list(cache.layer_indices),
+        c_grid=list(c_grid),
+        total_fits=int(len(cache.layer_indices) * len(c_grid)),
+    )
     selected = fit_validation_selected_probe(
         cache=cache,
         pairs=pairs,
         split_labels=split_labels,
         c_grid=c_grid,
         seed=int(args.seed),
+        progress_callback=lambda event: (
+            print(
+                "[linear_probe] fit "
+                f"{event['completed_fits']}/{event['total_fits']} "
+                f"layer={event['layer_index']} C={event['C']} "
+                f"train_row={event['train_row_strict_accuracy']:.3f} "
+                f"val_row={event['val_row_strict_accuracy']:.3f}",
+                flush=True,
+            ),
+            _write_status(output_dir, "fitting_probes", **event),
+        ),
     )
     atomic_write_csv(output_dir / "layer_validation_table.csv", list(selected.validation_table))
+    _write_status(
+        output_dir,
+        "selected_probe",
+        selected_layer_index=int(selected.layer_index),
+        selected_C=float(selected.C),
+        train_metrics=selected.train_metrics,
+        validation_metrics=selected.validation_metrics,
+        test_metrics=selected.test_metrics,
+    )
 
     lm_scores = _lm_scores_from_cache(cache, args.lm_score_reduction)
     case_rows, bucket_counts, domain_bucket_rows = compute_probe_lm_cases(
@@ -217,31 +316,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     atomic_write_csv(output_dir / "domain_bucket_counts.csv", domain_bucket_rows)
     _write_case_tables(output_dir, case_rows)
 
-    shuffle_controls = run_shuffle_controls(
-        cache=cache,
-        pairs=pairs,
-        split_labels=split_labels,
-        c_grid=c_grid,
-        repeats=int(args.shuffle_repeats),
-        seed=int(args.seed),
-    )
-    atomic_write_csv(
-        output_dir / "shuffle_controls.csv",
-        list(shuffle_controls),
-        fieldnames=[
-            "repeat",
-            "selected_layer_index",
-            "selected_layer_position",
-            "selected_C",
-            "val_row_strict_accuracy",
-            "val_pair_accuracy",
-            "test_row_strict_accuracy",
-            "test_pair_accuracy",
-            "test_k1_accuracy",
-            "test_k2_accuracy",
-        ],
-    )
-
     test_mask = split_labels == "test"
     lm_test_metrics = compute_context_sensitivity_metrics(
         pairs,
@@ -257,6 +331,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "selected_layer_index": int(selected.layer_index),
         "selected_layer_position": int(selected.layer_position),
         "selected_C": float(selected.C),
+        "train_metrics": selected.train_metrics,
         "validation_metrics": selected.validation_metrics,
         "test_metrics": selected.test_metrics,
         "split_counts": {
@@ -284,8 +359,46 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "n_test_rows": int(len(case_rows)),
     }
     atomic_write_json(output_dir / "test_metrics.json", test_metrics)
+    _write_status(output_dir, "wrote_core_metrics", test_metrics_path=str(output_dir / "test_metrics.json"))
+
+    print(f"[linear_probe] running {int(args.shuffle_repeats)} shuffled-label control(s)", flush=True)
+    _write_status(output_dir, "running_shuffle_controls", repeats=int(args.shuffle_repeats))
+    shuffle_controls = run_shuffle_controls(
+        cache=cache,
+        pairs=pairs,
+        split_labels=split_labels,
+        c_grid=c_grid,
+        repeats=int(args.shuffle_repeats),
+        seed=int(args.seed),
+        progress_callback=lambda event: (
+            print(
+                "[linear_probe] shuffle "
+                f"{event['repeat']}/{event['total_repeats']} {event['event']}",
+                flush=True,
+            ),
+            _write_status(output_dir, "running_shuffle_controls", **event),
+        ),
+    )
+    atomic_write_csv(
+        output_dir / "shuffle_controls.csv",
+        list(shuffle_controls),
+        fieldnames=[
+            "repeat",
+            "selected_layer_index",
+            "selected_layer_position",
+            "selected_C",
+            "val_row_strict_accuracy",
+            "val_pair_accuracy",
+            "test_row_strict_accuracy",
+            "test_pair_accuracy",
+            "test_k1_accuracy",
+            "test_k2_accuracy",
+        ],
+    )
     print(f"[linear_probe] wrote artifacts to {output_dir}", flush=True)
+    _write_status(output_dir, "wrote_artifacts", test_metrics_path=str(output_dir / "test_metrics.json"))
     if not args.no_plots:
+        _write_status(output_dir, "plotting", plot_output_dir=args.plot_output_dir or str(output_dir / "plots"))
         created_plots = plot_run(
             output_dir,
             output_dir=args.plot_output_dir,
@@ -299,6 +412,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         plot_dir = Path(args.plot_output_dir).expanduser().resolve() if args.plot_output_dir else output_dir / "plots"
         print(f"[linear_probe] wrote {len(created_plots)} plot files to {plot_dir}", flush=True)
+        _write_status(
+            output_dir,
+            "complete",
+            test_metrics_path=str(output_dir / "test_metrics.json"),
+            plot_dir=str(plot_dir),
+            n_plot_files=len(created_plots),
+        )
+    else:
+        _write_status(output_dir, "complete", test_metrics_path=str(output_dir / "test_metrics.json"))
     return test_metrics
 
 

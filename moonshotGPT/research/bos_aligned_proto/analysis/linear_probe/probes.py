@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -24,6 +25,7 @@ class SelectedProbe:
     layer_index: int
     layer_position: int
     C: float
+    train_metrics: dict
     validation_metrics: dict
     test_metrics: dict
     validation_table: tuple[dict, ...]
@@ -123,6 +125,7 @@ def fit_validation_selected_probe(
     c_grid: Sequence[float] = DEFAULT_C_GRID,
     seed: int = 42,
     train_labels_override: np.ndarray | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> SelectedProbe:
     labels = cache.labels.astype(np.int64, copy=False)
     train_labels = labels if train_labels_override is None else np.asarray(train_labels_override, dtype=np.int64)
@@ -135,6 +138,8 @@ def fit_validation_selected_probe(
     best_estimator: Pipeline | None = None
     best_scores: np.ndarray | None = None
     table_rows: list[dict] = []
+    total_fits = int(cache.n_layers * len(tuple(c_grid)))
+    completed_fits = 0
 
     for layer_position, layer_index in enumerate(cache.layer_indices):
         X = cache.features[:, layer_position, :].astype(np.float32, copy=False)
@@ -160,6 +165,21 @@ def fit_validation_selected_probe(
                 best_row = row
                 best_estimator = estimator
                 best_scores = scores
+            completed_fits += 1
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "completed_fits": completed_fits,
+                        "total_fits": total_fits,
+                        "layer_index": int(layer_index),
+                        "layer_position": int(layer_position),
+                        "C": float(C),
+                        "train_row_strict_accuracy": float(row["train_row_strict_accuracy"]),
+                        "train_pair_accuracy": float(row["train_pair_accuracy"]),
+                        "val_row_strict_accuracy": float(row["val_row_strict_accuracy"]),
+                        "val_pair_accuracy": float(row["val_pair_accuracy"]),
+                    }
+                )
 
     assert best_row is not None and best_estimator is not None and best_scores is not None
     test_cs = compute_context_sensitivity_metrics(
@@ -182,11 +202,21 @@ def fit_validation_selected_probe(
             "val_mean_min_margin",
         )
     }
+    train_metrics = {
+        key: best_row[key]
+        for key in (
+            "train_pair_accuracy",
+            "train_row_strict_accuracy",
+            "train_k1_accuracy",
+            "train_k2_accuracy",
+        )
+    }
     return SelectedProbe(
         estimator=best_estimator,
         layer_index=int(best_row["layer_index"]),
         layer_position=int(best_row["layer_position"]),
         C=float(best_row["C"]),
+        train_metrics=train_metrics,
         validation_metrics=validation_metrics,
         test_metrics=test_metrics,
         validation_table=tuple(table_rows),
@@ -202,6 +232,7 @@ def run_shuffle_controls(
     c_grid: Sequence[float],
     repeats: int,
     seed: int,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[dict, ...]:
     if repeats <= 0:
         return ()
@@ -209,6 +240,14 @@ def run_shuffle_controls(
     train_mask = _split_mask(split_labels, "train")
     controls: list[dict] = []
     for repeat in range(int(repeats)):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "repeat": int(repeat + 1),
+                    "total_repeats": int(repeats),
+                    "event": "start",
+                }
+            )
         rng = np.random.default_rng(int(seed) + repeat + 1)
         shuffled = labels.copy()
         shuffled_train = shuffled[train_mask].copy()
@@ -237,6 +276,18 @@ def run_shuffle_controls(
                 "test_k2_accuracy": float(selected.test_metrics["k2_accuracy"]),
             }
         )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "repeat": int(repeat + 1),
+                    "total_repeats": int(repeats),
+                    "event": "complete",
+                    "selected_layer_index": int(selected.layer_index),
+                    "selected_C": float(selected.C),
+                    "val_row_strict_accuracy": float(selected.validation_metrics["val_row_strict_accuracy"]),
+                    "test_row_strict_accuracy": float(selected.test_metrics["row_strict_accuracy"]),
+                }
+            )
     return tuple(controls)
 
 

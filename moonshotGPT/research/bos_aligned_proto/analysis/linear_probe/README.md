@@ -25,6 +25,12 @@ By default, the runner also writes the standard figure set to
 `--skip-layer-domain-plots` when you want the lightweight figures without
 refitting the per-layer domain curves from the saved activation cache.
 
+During long model runs, the CLI prints activation/probe progress and updates
+`run_status.json` in the output directory. After fitting, `layer_validation_table.csv`
+contains both `train_*` diagnostic metrics and `val_*` selection metrics for every
+layer/C candidate. `selected_probe_summary.json` records the selected probe's
+train, validation, and test metrics together.
+
 ## Plotting
 
 You can regenerate the standard figure set from an existing run at any time:
@@ -44,6 +50,7 @@ This writes:
 - `layer_domain_directional_avg_4x3.png/.svg`
 - `layer_domain_scores.csv`
 - `plot_manifest.json`
+- `run_status.json`
 
 The layer-domain plot retrains small probes from the saved activation cache only;
 it does not rerun the language model.

@@ -142,6 +142,7 @@ def test_validation_selection_uses_validation_not_test() -> None:
     )
 
     assert selected.layer_index == 1
+    assert selected.train_metrics["train_row_strict_accuracy"] == 1.0
     assert selected.test_metrics["row_strict_accuracy"] == 1.0
     assert all("test_pair_accuracy" not in row for row in selected.validation_table)
 
@@ -224,12 +225,19 @@ def test_cli_smoke_reuses_fake_activation_cache(tmp_path) -> None:
         "probe_vs_lm_bucket_counts.csv",
         "domain_bucket_counts.csv",
         "shuffle_controls.csv",
+        "run_status.json",
     ]
     for name in expected:
         assert (tmp_path / name).exists()
     metrics = json.loads((tmp_path / "test_metrics.json").read_text(encoding="utf-8"))
     assert metrics["score_view"] == "ewok_context_sensitivity"
     assert metrics["selected_layer_index"] == 1
+    summary = json.loads((tmp_path / "selected_probe_summary.json").read_text(encoding="utf-8"))
+    assert "train_metrics" in summary
+    table = pd.read_csv(tmp_path / "layer_validation_table.csv")
+    assert {"train_pair_accuracy", "train_row_strict_accuracy", "val_pair_accuracy"}.issubset(table.columns)
+    status = json.loads((tmp_path / "run_status.json").read_text(encoding="utf-8"))
+    assert status["stage"] == "complete"
     assert (tmp_path / "plots" / "layer_validation_curve.png").exists()
     assert (tmp_path / "plots" / "layer_domain_directional_avg_4x3.png").exists()
     assert (tmp_path / "plots" / "plot_manifest.json").exists()

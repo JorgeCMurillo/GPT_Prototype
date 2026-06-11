@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -144,6 +146,8 @@ def extract_activation_cache(
     batch_size: int,
     layers: tuple[int, ...] | None,
     cache_dtype: str = "float16",
+    progress_every: int = 25,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> ActivationCache:
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -159,10 +163,13 @@ def extract_activation_cache(
     lm_sum_batches: list[np.ndarray] = []
     resolved_layers: tuple[int, ...] | None = None
     dtype = _cache_dtype(cache_dtype)
+    total_batches = int(math.ceil(len(pairs) / batch_size))
+    progress_every = max(0, int(progress_every))
 
     model.eval()
     with torch.no_grad():
         for start in range(0, len(pairs), batch_size):
+            batch_number = int(start // batch_size + 1)
             batch_pairs = pairs[start : start + batch_size]
             encoded = [_encode_pair(tokenizer, pair) for pair in batch_pairs]
             input_ids, attention_mask, target_starts, text_lengths = _pad_encoded_batch(
@@ -204,6 +211,24 @@ def extract_activation_cache(
             )
             lm_mean_batches.append(lm_mean.detach().float().cpu().numpy().astype(np.float32, copy=False))
             lm_sum_batches.append(lm_sum.detach().float().cpu().numpy().astype(np.float32, copy=False))
+            should_report = (
+                progress_callback is not None
+                and (
+                    batch_number == 1
+                    or batch_number == total_batches
+                    or (progress_every > 0 and batch_number % progress_every == 0)
+                )
+            )
+            if should_report:
+                progress_callback(
+                    {
+                        "completed_batches": batch_number,
+                        "total_batches": total_batches,
+                        "processed_pairs": min(start + batch_size, len(pairs)),
+                        "total_pairs": len(pairs),
+                        "layer_indices": tuple(resolved_layers or ()),
+                    }
+                )
 
     assert resolved_layers is not None
     return ActivationCache(
