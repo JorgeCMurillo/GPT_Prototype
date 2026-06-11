@@ -9,6 +9,7 @@ def test_bos_core_config_defaults_and_overrides() -> None:
     assert defaults.llama_num_key_value_heads == 0
     assert defaults.llama_tie_word_embeddings is True
     assert defaults.rope_theta == 10000.0
+    assert defaults.use_liger_kernel is False
     assert defaults.tokenizer_name_or_path == ""
     assert defaults.rho_granularity == "token"
     assert defaults.core_every == 2000
@@ -37,6 +38,7 @@ def test_bos_core_config_defaults_and_overrides() -> None:
             "--no-llama_tie_word_embeddings",
             "--rope_theta",
             "500000",
+            "--use_liger_kernel",
             "--rho_granularity",
             "sequence",
             "--core_every",
@@ -59,6 +61,7 @@ def test_bos_core_config_defaults_and_overrides() -> None:
     assert overridden.llama_num_key_value_heads == 4
     assert overridden.llama_tie_word_embeddings is False
     assert overridden.rope_theta == 500000
+    assert overridden.use_liger_kernel is True
     assert overridden.tokenizer_name_or_path == "/tmp/tokenizer"
     assert overridden.rho_granularity == "sequence"
     assert overridden.core_every == 100

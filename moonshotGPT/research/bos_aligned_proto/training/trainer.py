@@ -47,6 +47,11 @@ except ImportError:
     from config import DEFAULT_EXPERIMENTS_DIR, TrainConfig, parse_args
 
 try:
+    from research.bos_aligned_proto.training.liger import apply_liger_kernel_if_requested
+except ImportError:
+    from liger import apply_liger_kernel_if_requested
+
+try:
     from research.bos_aligned_proto.evaluation.ewok import (
         evaluate,
         ewok_df as EWOK_DF,
@@ -705,6 +710,7 @@ def main(cfg: TrainConfig) -> None:
     llama_num_key_value_heads = cfg.llama_num_key_value_heads
     llama_tie_word_embeddings = cfg.llama_tie_word_embeddings
     rope_theta = cfg.rope_theta
+    use_liger_kernel = bool(cfg.use_liger_kernel)
     num_workers = cfg.num_workers
     shuffle_blocks = cfg.shuffle_blocks
     grad_clip = cfg.grad_clip
@@ -766,6 +772,8 @@ def main(cfg: TrainConfig) -> None:
         raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
     if optimizer_name not in {"adamw", "muon_pe"}:
         raise ValueError(f"Unsupported optimizer={optimizer_name!r}.")
+    if use_liger_kernel and model_arch != "llama":
+        raise ValueError("--use_liger_kernel is only supported for --model_arch llama.")
     if muon_ns_steps <= 0:
         raise ValueError(f"--muon_ns_steps must be > 0, got {muon_ns_steps}.")
 
@@ -1094,6 +1102,7 @@ def main(cfg: TrainConfig) -> None:
         print(f"tokenizer_artifact_dir      = {tokenizer_artifact_dir}")
         print(f"tokenizer source            = {tokenizer_source}")
         print(f"model_arch                  = {model_arch}")
+        print(f"use_liger_kernel            = {use_liger_kernel}")
         print(f"resolved vocab_size         = {vocab_size}")
         if model_arch == "llama":
             print(f"llama_model_pad_token_id    = <none>")
@@ -1247,6 +1256,10 @@ def main(cfg: TrainConfig) -> None:
         raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
 
     # Model
+    liger_kernel_applied = apply_liger_kernel_if_requested(
+        use_liger_kernel=use_liger_kernel,
+        model_arch=model_arch,
+    )
     if model_init_ckpt_dir:
         model = AutoModelForCausalLM.from_pretrained(
             model_init_ckpt_dir,
@@ -1274,6 +1287,8 @@ def main(cfg: TrainConfig) -> None:
     if accelerator.is_local_main_process:
         if model_init_ckpt_dir:
             print(f"model init source            = {model_init_ckpt_dir}")
+        if use_liger_kernel:
+            print(f"liger_kernel_applied        = {liger_kernel_applied}")
         print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Optimizer (llm.c-style AdamW baseline, or Muon for hidden matrices + aux AdamW)
@@ -1501,6 +1516,8 @@ def main(cfg: TrainConfig) -> None:
     # Training loop
     model.train()
     autocast_ctx = accelerator.autocast if hasattr(accelerator, "autocast") else nullcontext
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     total_loss_sum = 0.0
     total_tokens = 0
@@ -1635,10 +1652,16 @@ def main(cfg: TrainConfig) -> None:
     opt_step_loss_count = 0
     rho_accum = Rho1OptStepAccumulator()
     rho_gap_accum = None
+    opt_step_wall_start = None
 
     for micro_step, (fixed_batch_index, batch) in enumerate(pbar, start=start_micro_step):
         if opt_step >= max_train_steps:
             break
+
+        if profile_optimizer_steps and opt_step_loss_count == 0:
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            opt_step_wall_start = time.perf_counter()
 
         # Support both (x,y) and (x,y,meta)
         if isinstance(batch, (list, tuple)) and len(batch) == 3:
@@ -1794,6 +1817,12 @@ def main(cfg: TrainConfig) -> None:
                         torch.cuda.synchronize(device)
                     optimizer_step_seconds = time.perf_counter() - optimizer_step_start
                 optimizer.zero_grad(set_to_none=True)
+                step_wall_seconds = None
+                if profile_optimizer_steps and opt_step_wall_start is not None:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize(device)
+                    step_wall_seconds = time.perf_counter() - opt_step_wall_start
+                    opt_step_wall_start = None
                 opt_step += 1
 
                 lr_after = get_current_lr(optimizer)
@@ -1873,6 +1902,24 @@ def main(cfg: TrainConfig) -> None:
 
                 # Step-level scalars record (main only)
                 if accelerator.is_main_process:
+                    cuda_memory_allocated_mb = None
+                    cuda_memory_reserved_mb = None
+                    cuda_max_memory_allocated_mb = None
+                    cuda_max_memory_reserved_mb = None
+                    if device.type == "cuda":
+                        bytes_per_mb = 1024.0 * 1024.0
+                        cuda_memory_allocated_mb = float(
+                            torch.cuda.memory_allocated(device) / bytes_per_mb
+                        )
+                        cuda_memory_reserved_mb = float(
+                            torch.cuda.memory_reserved(device) / bytes_per_mb
+                        )
+                        cuda_max_memory_allocated_mb = float(
+                            torch.cuda.max_memory_allocated(device) / bytes_per_mb
+                        )
+                        cuda_max_memory_reserved_mb = float(
+                            torch.cuda.max_memory_reserved(device) / bytes_per_mb
+                        )
                     append_jsonl(scalars_path, {
                         "type": "scalars",
                         "step": opt_step,
@@ -1895,6 +1942,14 @@ def main(cfg: TrainConfig) -> None:
                             float(optimizer_step_seconds * 1000.0)
                             if optimizer_step_seconds is not None else None
                         ),
+                        "step_wall_ms": (
+                            float(step_wall_seconds * 1000.0)
+                            if step_wall_seconds is not None else None
+                        ),
+                        "cuda_memory_allocated_mb": cuda_memory_allocated_mb,
+                        "cuda_memory_reserved_mb": cuda_memory_reserved_mb,
+                        "cuda_max_memory_allocated_mb": cuda_max_memory_allocated_mb,
+                        "cuda_max_memory_reserved_mb": cuda_max_memory_reserved_mb,
                         "world_size": accelerator.num_processes,
                         "grad_accum_steps": int(grad_accum_steps),
                         "micro_batch_size": int(micro_batch_size),

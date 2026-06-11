@@ -49,11 +49,18 @@ class OptimizerVariant:
 
 
 @dataclass(frozen=True)
+class KernelVariant:
+    label: str
+    use_liger_kernel: bool
+
+
+@dataclass(frozen=True)
 class ThroughputSummary:
     label: str
     run_dir: str
     model_arch: str
     optimizer: str
+    use_liger_kernel: bool | None
     muon_lr: float | None
     muon_momentum: float | None
     muon_weight_decay: float | None
@@ -69,12 +76,26 @@ class ThroughputSummary:
     max_step: int | None
     measured_steps: int
     warmup_steps: int
+    compile_window_steps: int
     elapsed_seconds: float | None
     tokens_delta: int | None
     tokens_per_sec: float | None
     median_step_tokens_per_sec: float | None
     mean_step_seconds: float | None
     mean_optimizer_step_ms: float | None
+    max_cuda_memory_allocated_mb: float | None
+    max_cuda_memory_reserved_mb: float | None
+    compile_window_measured_steps: int
+    compile_window_total_step_wall_seconds: float | None
+    compile_window_mean_step_wall_ms: float | None
+    compile_window_median_step_wall_ms: float | None
+    compile_window_p95_step_wall_ms: float | None
+    compile_window_mean_optimizer_step_ms: float | None
+    post_warmup_measured_steps: int
+    post_warmup_total_step_wall_seconds: float | None
+    post_warmup_mean_step_wall_ms: float | None
+    post_warmup_median_step_wall_ms: float | None
+    post_warmup_p95_step_wall_ms: float | None
     final_train_loss: float | None
 
 
@@ -161,7 +182,78 @@ def _median(values: Sequence[float]) -> float | None:
     return float((sorted_values[mid - 1] + sorted_values[mid]) / 2.0)
 
 
-def summarize_run(run_dir: str | Path, *, label: str | None = None, warmup_steps: int = 20) -> ThroughputSummary:
+def _mean(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    return float(sum(float(v) for v in values) / len(values))
+
+
+def _p95(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(float(v) for v in values)
+    index = int(round(0.95 * (len(sorted_values) - 1)))
+    return float(sorted_values[index])
+
+
+def _bool_or_none(value) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    try:
+        return bool(int(value))
+    except Exception:
+        return None
+
+
+def _step_wall_stats(rows: Sequence[dict]) -> dict[str, float | int | None]:
+    step_wall_ms = [
+        value
+        for value in (_float_or_none(row.get("step_wall_ms")) for row in rows)
+        if value is not None
+    ]
+    optimizer_step_ms = [
+        value
+        for value in (_float_or_none(row.get("optimizer_step_ms")) for row in rows)
+        if value is not None
+    ]
+    return {
+        "measured_steps": len(step_wall_ms),
+        "total_step_wall_seconds": (
+            float(sum(step_wall_ms) / 1000.0) if step_wall_ms else None
+        ),
+        "mean_step_wall_ms": _mean(step_wall_ms),
+        "median_step_wall_ms": _median(step_wall_ms),
+        "p95_step_wall_ms": _p95(step_wall_ms),
+        "mean_optimizer_step_ms": _mean(optimizer_step_ms),
+    }
+
+
+def _max_scalar(rows: Sequence[dict], key: str) -> float | None:
+    values = [
+        value
+        for value in (_float_or_none(row.get(key)) for row in rows)
+        if value is not None
+    ]
+    if not values:
+        return None
+    return float(max(values))
+
+
+def summarize_run(
+    run_dir: str | Path,
+    *,
+    label: str | None = None,
+    warmup_steps: int = 20,
+    compile_window_steps: int = 20,
+) -> ThroughputSummary:
     run_path = Path(run_dir).expanduser().resolve()
     scalars_path = run_path / "scalars.jsonl"
     if not scalars_path.exists():
@@ -174,6 +266,12 @@ def summarize_run(run_dir: str | Path, *, label: str | None = None, warmup_steps
 
     cfg = config_from_run(run_path)
     resolved_label = label or str(cfg.get("model_arch") or run_path.name)
+    compile_window_rows = [
+        row for row in rows if int(row.get("step", 0)) <= int(compile_window_steps)
+    ]
+    post_warmup_rows = [row for row in rows if int(row.get("step", 0)) > int(warmup_steps)]
+    compile_window_stats = _step_wall_stats(compile_window_rows)
+    post_warmup_stats = _step_wall_stats(post_warmup_rows)
 
     elapsed_seconds = None
     tokens_delta = None
@@ -226,6 +324,7 @@ def summarize_run(run_dir: str | Path, *, label: str | None = None, warmup_steps
         run_dir=str(run_path),
         model_arch=str(cfg.get("model_arch") or last_row.get("model_arch") or ""),
         optimizer=str(cfg.get("optimizer") or "adamw"),
+        use_liger_kernel=_bool_or_none(cfg.get("use_liger_kernel")),
         muon_lr=_float_or_none(cfg.get("muon_lr")),
         muon_momentum=_float_or_none(cfg.get("muon_momentum")),
         muon_weight_decay=_float_or_none(cfg.get("muon_weight_decay")),
@@ -241,12 +340,44 @@ def summarize_run(run_dir: str | Path, *, label: str | None = None, warmup_steps
         max_step=_int_or_none(last_row.get("step")),
         measured_steps=len(measured),
         warmup_steps=int(warmup_steps),
+        compile_window_steps=int(compile_window_steps),
         elapsed_seconds=elapsed_seconds,
         tokens_delta=tokens_delta,
         tokens_per_sec=tokens_per_sec,
         median_step_tokens_per_sec=median_step_tokens_per_sec,
         mean_step_seconds=mean_step_seconds,
         mean_optimizer_step_ms=mean_optimizer_step_ms,
+        max_cuda_memory_allocated_mb=_max_scalar(rows, "cuda_max_memory_allocated_mb"),
+        max_cuda_memory_reserved_mb=_max_scalar(rows, "cuda_max_memory_reserved_mb"),
+        compile_window_measured_steps=int(compile_window_stats["measured_steps"] or 0),
+        compile_window_total_step_wall_seconds=_float_or_none(
+            compile_window_stats["total_step_wall_seconds"]
+        ),
+        compile_window_mean_step_wall_ms=_float_or_none(
+            compile_window_stats["mean_step_wall_ms"]
+        ),
+        compile_window_median_step_wall_ms=_float_or_none(
+            compile_window_stats["median_step_wall_ms"]
+        ),
+        compile_window_p95_step_wall_ms=_float_or_none(
+            compile_window_stats["p95_step_wall_ms"]
+        ),
+        compile_window_mean_optimizer_step_ms=_float_or_none(
+            compile_window_stats["mean_optimizer_step_ms"]
+        ),
+        post_warmup_measured_steps=int(post_warmup_stats["measured_steps"] or 0),
+        post_warmup_total_step_wall_seconds=_float_or_none(
+            post_warmup_stats["total_step_wall_seconds"]
+        ),
+        post_warmup_mean_step_wall_ms=_float_or_none(
+            post_warmup_stats["mean_step_wall_ms"]
+        ),
+        post_warmup_median_step_wall_ms=_float_or_none(
+            post_warmup_stats["median_step_wall_ms"]
+        ),
+        post_warmup_p95_step_wall_ms=_float_or_none(
+            post_warmup_stats["p95_step_wall_ms"]
+        ),
         final_train_loss=_float_or_none(last_row.get("train_loss_opt_step_mean")),
     )
 
@@ -334,6 +465,29 @@ def build_optimizer_variants(args: argparse.Namespace) -> list[OptimizerVariant]
     return variants
 
 
+def build_kernel_variants(args: argparse.Namespace, variant: Variant) -> list[KernelVariant]:
+    requested = [value.strip().lower() for value in args.liger_modes.split(",") if value.strip()]
+    variants: list[KernelVariant] = []
+    for name in requested:
+        if name in {"off", "false", "0", "none", "no"}:
+            variants.append(KernelVariant(label="noliger", use_liger_kernel=False))
+        elif name in {"on", "true", "1", "liger", "yes"}:
+            if variant.model_arch == "llama":
+                variants.append(KernelVariant(label="liger", use_liger_kernel=True))
+        else:
+            raise ValueError(f"Unknown Liger mode {name!r}; expected off,on.")
+    if not variants:
+        variants.append(KernelVariant(label="noliger", use_liger_kernel=False))
+    deduped: list[KernelVariant] = []
+    seen: set[bool] = set()
+    for item in variants:
+        if item.use_liger_kernel in seen:
+            continue
+        seen.add(item.use_liger_kernel)
+        deduped.append(item)
+    return deduped
+
+
 def launcher_prefix(args: argparse.Namespace) -> list[str]:
     if args.launcher == "python":
         return [sys.executable]
@@ -352,9 +506,12 @@ def build_trainer_command(
     *,
     experiments_dir: Path,
     optimizer_variant: OptimizerVariant | None = None,
+    kernel_variant: KernelVariant | None = None,
 ) -> list[str]:
     if optimizer_variant is None:
         optimizer_variant = build_optimizer_variants(args)[0]
+    if kernel_variant is None:
+        kernel_variant = KernelVariant(label="noliger", use_liger_kernel=False)
     cmd = launcher_prefix(args)
     cmd.append(str(TRAINER))
     cmd.extend(
@@ -442,6 +599,7 @@ def build_trainer_command(
         cmd.extend(["--tokenizer_name_or_path", args.tokenizer_name_or_path])
     if not variant.llama_tie_word_embeddings:
         cmd.append("--no-llama_tie_word_embeddings")
+    cmd.append("--use_liger_kernel" if kernel_variant.use_liger_kernel else "--no-use_liger_kernel")
     cmd.append("--muon_nesterov" if optimizer_variant.muon_nesterov else "--no-muon_nesterov")
     cmd.append("--muon_split_qkv" if optimizer_variant.muon_split_qkv else "--no-muon_split_qkv")
     cmd.append("--muon_batch_updates" if optimizer_variant.muon_batch_updates else "--no-muon_batch_updates")
@@ -483,6 +641,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output_dir", type=str, default=str(DEFAULT_RUN_ROOT / timestamp_slug()))
     parser.add_argument("--variants", type=str, default="gpt2,llama_shape,llama_param")
     parser.add_argument("--optimizers", type=str, default="adamw", help="Comma-separated optimizer variants: adamw,muon_pe.")
+    parser.add_argument(
+        "--liger_modes",
+        type=str,
+        default="off",
+        help=(
+            "Comma-separated Liger modes for Llama variants: off,on. "
+            "Use off,on to compare startup-inclusive Triton compile cost and steady-state speed."
+        ),
+    )
     parser.add_argument("--launcher", type=str, default="accelerate", choices=("accelerate", "python"))
     parser.add_argument("--num_processes", type=int, default=8)
     parser.add_argument("--main_process_port", type=int, default=0)
@@ -490,6 +657,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run_dir", action="append", default=[], help="Summarize an existing run dir, optionally LABEL=PATH.")
     parser.add_argument("--summarize_only", action="store_true", help="Only summarize --run_dir entries; do not launch training.")
     parser.add_argument("--warmup_steps", type=int, default=20)
+    parser.add_argument(
+        "--compile_window_steps",
+        type=int,
+        default=20,
+        help="First N optimizer steps summarized separately, including Triton first-use compile when present.",
+    )
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mixed_precision", type=str, default="bf16", choices=("no", "fp16", "bf16"))
@@ -550,7 +723,12 @@ def run_benchmark(args: argparse.Namespace) -> int:
     summaries: list[ThroughputSummary] = []
     for run_arg in args.run_dir:
         label, path = _parse_labeled_run(run_arg)
-        summary = summarize_run(path, label=label, warmup_steps=int(args.warmup_steps))
+        summary = summarize_run(
+            path,
+            label=label,
+            warmup_steps=int(args.warmup_steps),
+            compile_window_steps=int(args.compile_window_steps),
+        )
         summaries.append(summary)
         manifest["existing_runs"].append(asdict(summary))
 
@@ -561,39 +739,51 @@ def run_benchmark(args: argparse.Namespace) -> int:
         optimizer_variants = build_optimizer_variants(args)
         for variant in variants:
             for optimizer_variant in optimizer_variants:
-                label = (
-                    variant.label
-                    if len(optimizer_variants) == 1
-                    else f"{variant.label}_{optimizer_variant.label}"
-                )
-                variant_experiments_dir = output_dir / "runs" / label
-                cmd = build_trainer_command(
-                    args,
-                    variant,
-                    experiments_dir=variant_experiments_dir,
-                    optimizer_variant=optimizer_variant,
-                )
-                record = {
-                    "variant": asdict(variant),
-                    "optimizer_variant": asdict(optimizer_variant),
-                    "label": label,
-                    "experiments_dir": str(variant_experiments_dir),
-                    "command": cmd,
-                    "command_text": shlex.join(cmd),
-                    "returncode": None,
-                    "run_dir": None,
-                }
-                if args.dry_run:
-                    print(f"[{label}] dry run:")
-                    print("  " + record["command_text"])
-                    record["returncode"] = 0
-                else:
-                    record["returncode"] = run_command(cmd, cwd=REPO_ROOT, label=label)
-                    run_dir = find_single_run_dir(variant_experiments_dir)
-                    record["run_dir"] = str(run_dir) if run_dir is not None else None
-                    if int(record["returncode"]) == 0 and run_dir is not None:
-                        summaries.append(summarize_run(run_dir, label=label, warmup_steps=int(args.warmup_steps)))
-                manifest["variants"].append(record)
+                kernel_variants = build_kernel_variants(args, variant)
+                for kernel_variant in kernel_variants:
+                    label_parts = [variant.label]
+                    if len(optimizer_variants) > 1:
+                        label_parts.append(optimizer_variant.label)
+                    if len(kernel_variants) > 1 or kernel_variant.use_liger_kernel:
+                        label_parts.append(kernel_variant.label)
+                    label = "_".join(label_parts)
+                    variant_experiments_dir = output_dir / "runs" / label
+                    cmd = build_trainer_command(
+                        args,
+                        variant,
+                        experiments_dir=variant_experiments_dir,
+                        optimizer_variant=optimizer_variant,
+                        kernel_variant=kernel_variant,
+                    )
+                    record = {
+                        "variant": asdict(variant),
+                        "optimizer_variant": asdict(optimizer_variant),
+                        "kernel_variant": asdict(kernel_variant),
+                        "label": label,
+                        "experiments_dir": str(variant_experiments_dir),
+                        "command": cmd,
+                        "command_text": shlex.join(cmd),
+                        "returncode": None,
+                        "run_dir": None,
+                    }
+                    if args.dry_run:
+                        print(f"[{label}] dry run:")
+                        print("  " + record["command_text"])
+                        record["returncode"] = 0
+                    else:
+                        record["returncode"] = run_command(cmd, cwd=REPO_ROOT, label=label)
+                        run_dir = find_single_run_dir(variant_experiments_dir)
+                        record["run_dir"] = str(run_dir) if run_dir is not None else None
+                        if int(record["returncode"]) == 0 and run_dir is not None:
+                            summaries.append(
+                                summarize_run(
+                                    run_dir,
+                                    label=label,
+                                    warmup_steps=int(args.warmup_steps),
+                                    compile_window_steps=int(args.compile_window_steps),
+                                )
+                            )
+                    manifest["variants"].append(record)
 
     if summaries:
         write_summary(output_dir, summaries)

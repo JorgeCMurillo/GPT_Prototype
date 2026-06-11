@@ -47,6 +47,7 @@ class TrainConfig:
     llama_num_key_value_heads: int = 0
     llama_tie_word_embeddings: bool = True
     rope_theta: float = 10000.0
+    use_liger_kernel: bool = False
     num_workers: int = 0
     shuffle_blocks: bool = True
     grad_clip: float = 1.0
@@ -204,6 +205,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=10000.0,
         help="RoPE theta for --model_arch llama.",
+    )
+    parser.add_argument(
+        "--use_liger_kernel",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Patch Hugging Face Llama modules with Liger RoPE/RMSNorm/SwiGLU kernels. "
+            "Loss kernels stay disabled so token-wise training losses remain unchanged."
+        ),
     )
 
     parser.add_argument(

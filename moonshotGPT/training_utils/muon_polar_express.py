@@ -185,7 +185,7 @@ def _polar_express_orthogonalize_batched(
     steps: int,
     eps: float = 1e-7,
 ) -> torch.Tensor:
-    """Batched Polar Express for a stack of same-shaped matrices."""
+    """Batched Polar Express for a stack of same-oriented matrices."""
 
     if x.ndim != 3:
         raise ValueError("Batched Muon/Polar Express requires a 3D tensor.")
@@ -241,6 +241,8 @@ def _same_shape_batch_key(
     param: torch.nn.Parameter,
     grad: torch.Tensor,
 ) -> tuple[torch.device, torch.dtype, torch.dtype, tuple[int, ...]]:
+    # Exact-shape batching is intentional. The 2026-06 Llama benchmark showed
+    # transpose-compatible grouping did not improve speed and used more memory.
     return param.device, param.dtype, grad.dtype, tuple(param.shape)
 
 
@@ -399,9 +401,11 @@ class MuonWithAuxAdamPE(torch.optim.Optimizer):
         if update_stack.dtype != params[0].dtype:
             update_stack = update_stack.to(params[0].dtype)
 
+        updates = list(update_stack.unbind(0))
+
         if weight_decay:
             torch._foreach_mul_(params, 1.0 - lr * weight_decay)
-        torch._foreach_add_(params, list(update_stack.unbind(0)), alpha=-lr)
+        torch._foreach_add_(params, updates, alpha=-lr)
 
     @torch.no_grad()
     def _step_adamw_group(self, group: dict) -> None:

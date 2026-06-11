@@ -5,6 +5,7 @@ from torch import nn
 
 from training_utils.muon_polar_express import (
     MuonWithAuxAdamPE,
+    _same_shape_batch_key,
     build_muon_pe_param_groups,
     polar_express_orthogonalize,
 )
@@ -112,6 +113,28 @@ def test_muon_param_groups_handle_llama_style_projections() -> None:
     assert grouped.qkv_split_tensors == 0
 
 
+def test_same_shape_batch_key_keeps_llama_mlp_orientations_separate() -> None:
+    model = _TinyLlamaLike()
+    block = model.model.layers[0]
+
+    gate = block.mlp.gate_proj.weight
+    up = block.mlp.up_proj.weight
+    down = block.mlp.down_proj.weight
+
+    assert tuple(gate.shape) == (16, 8)
+    assert tuple(up.shape) == (16, 8)
+    assert tuple(down.shape) == (8, 16)
+
+    gate_key = _same_shape_batch_key(gate, torch.empty_like(gate))
+    up_key = _same_shape_batch_key(up, torch.empty_like(up))
+    down_key = _same_shape_batch_key(down, torch.empty_like(down))
+
+    assert gate_key == up_key
+    assert gate_key != down_key
+    assert gate_key[-1] == (16, 8)
+    assert down_key[-1] == (8, 16)
+
+
 def test_polar_express_and_optimizer_step_are_finite() -> None:
     torch.manual_seed(0)
     matrix = torch.randn(4, 8)
@@ -186,7 +209,17 @@ def test_batched_same_shape_muon_matches_scalar_llama_style_step() -> None:
         qkv_split_dims=scalar_groups.qkv_split_dims,
         batch_muon_updates=False,
     )
-    batched_optimizer = MuonWithAuxAdamPE(
+
+    class _RecordingMuon(MuonWithAuxAdamPE):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.batched_shapes: list[list[tuple[int, ...]]] = []
+
+        def _step_batched_muon_params(self, params, **kwargs) -> None:
+            self.batched_shapes.append([tuple(param.shape) for param in params])
+            return super()._step_batched_muon_params(params, **kwargs)
+
+    batched_optimizer = _RecordingMuon(
         batched_groups.param_groups,
         qkv_split_dims=batched_groups.qkv_split_dims,
         batch_muon_updates=True,
@@ -206,3 +239,16 @@ def test_batched_same_shape_muon_matches_scalar_llama_style_step() -> None:
             rtol=2e-3,
             atol=2e-3,
         )
+
+    assert any(
+        batch_shapes.count((16, 8)) >= 2
+        for batch_shapes in batched_optimizer.batched_shapes
+    )
+    assert any(
+        batch_shapes.count((8, 16)) >= 2
+        for batch_shapes in batched_optimizer.batched_shapes
+    )
+    assert not any(
+        (16, 8) in batch_shapes and (8, 16) in batch_shapes
+        for batch_shapes in batched_optimizer.batched_shapes
+    )

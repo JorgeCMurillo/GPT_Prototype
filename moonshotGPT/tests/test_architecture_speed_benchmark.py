@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from research.bos_aligned_proto.experiments import run_architecture_speed_benchmark as bench
 
 
@@ -67,6 +69,37 @@ def test_build_trainer_command_disables_noisy_hooks(tmp_path: Path) -> None:
     assert cmd[cmd.index("--eval_every") + 1] == "0"
     assert "--no-save_final_checkpoint" in cmd
     assert "--skip_final_ewok" in cmd
+    assert "--no-use_liger_kernel" in cmd
+
+
+def test_build_trainer_command_allows_liger_llama_variant(tmp_path: Path) -> None:
+    args = bench.build_parser().parse_args(
+        [
+            "--data_dir",
+            "/tmp/data",
+            "--launcher",
+            "python",
+            "--num_processes",
+            "1",
+            "--variants",
+            "llama_param",
+            "--liger_modes",
+            "off,on",
+        ]
+    )
+    variant = bench.build_variants(args)[0]
+    kernel_variants = bench.build_kernel_variants(args, variant)
+
+    assert [item.label for item in kernel_variants] == ["noliger", "liger"]
+
+    cmd = bench.build_trainer_command(
+        args,
+        variant,
+        experiments_dir=tmp_path / "runs",
+        kernel_variant=kernel_variants[1],
+    )
+    assert "--use_liger_kernel" in cmd
+    assert "--no-use_liger_kernel" not in cmd
 
 
 def test_build_trainer_command_allows_learning_probe_hooks(tmp_path: Path) -> None:
@@ -152,6 +185,7 @@ def test_summarize_run_uses_post_warmup_throughput(tmp_path: Path) -> None:
                 "llama_num_key_value_heads": 4,
                 "micro_batch_size": 2,
                 "seq_len": 8,
+                "use_liger_kernel": True,
             }
         },
     )
@@ -163,6 +197,10 @@ def test_summarize_run_uses_post_warmup_throughput(tmp_path: Path) -> None:
                 "step": 1,
                 "timestamp": "2026-05-21T00:00:00",
                 "tokens_seen_global_approx": 100,
+                "optimizer_step_ms": 1.0,
+                "step_wall_ms": 1000.0,
+                "cuda_max_memory_allocated_mb": 101.0,
+                "cuda_max_memory_reserved_mb": 151.0,
                 "world_size": 1,
                 "micro_batch_size": 2,
                 "seq_len": 8,
@@ -173,6 +211,10 @@ def test_summarize_run_uses_post_warmup_throughput(tmp_path: Path) -> None:
                 "step": 2,
                 "timestamp": "2026-05-21T00:00:10",
                 "tokens_seen_global_approx": 300,
+                "optimizer_step_ms": 2.0,
+                "step_wall_ms": 200.0,
+                "cuda_max_memory_allocated_mb": 202.0,
+                "cuda_max_memory_reserved_mb": 252.0,
                 "world_size": 1,
                 "micro_batch_size": 2,
                 "seq_len": 8,
@@ -183,6 +225,10 @@ def test_summarize_run_uses_post_warmup_throughput(tmp_path: Path) -> None:
                 "step": 3,
                 "timestamp": "2026-05-21T00:00:20",
                 "tokens_seen_global_approx": 500,
+                "optimizer_step_ms": 3.0,
+                "step_wall_ms": 300.0,
+                "cuda_max_memory_allocated_mb": 303.0,
+                "cuda_max_memory_reserved_mb": 353.0,
                 "world_size": 1,
                 "micro_batch_size": 2,
                 "seq_len": 8,
@@ -191,12 +237,23 @@ def test_summarize_run_uses_post_warmup_throughput(tmp_path: Path) -> None:
         ],
     )
 
-    summary = bench.summarize_run(run_dir, label="probe", warmup_steps=1)
+    summary = bench.summarize_run(run_dir, label="probe", warmup_steps=1, compile_window_steps=2)
     assert summary.label == "probe"
     assert summary.model_arch == "llama"
+    assert summary.use_liger_kernel is True
     assert summary.measured_steps == 2
     assert summary.tokens_delta == 200
     assert summary.elapsed_seconds == 10.0
     assert summary.tokens_per_sec == 20.0
     assert summary.median_step_tokens_per_sec == 20.0
+    assert summary.compile_window_steps == 2
+    assert summary.compile_window_measured_steps == 2
+    assert summary.compile_window_total_step_wall_seconds == pytest.approx(1.2)
+    assert summary.compile_window_mean_step_wall_ms == 600.0
+    assert summary.compile_window_mean_optimizer_step_ms == 1.5
+    assert summary.post_warmup_measured_steps == 2
+    assert summary.post_warmup_total_step_wall_seconds == pytest.approx(0.5)
+    assert summary.post_warmup_mean_step_wall_ms == 250.0
+    assert summary.max_cuda_memory_allocated_mb == 303.0
+    assert summary.max_cuda_memory_reserved_mb == 353.0
     assert summary.final_train_loss == 6.0
