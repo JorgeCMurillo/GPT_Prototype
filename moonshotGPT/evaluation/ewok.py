@@ -53,6 +53,14 @@ def _resolve_device(model, device_override=None):
         return device
 
 
+def resolve_bos_token_id(tokenizer) -> int:
+    for attr in ("bos_token_id", "eos_token_id", "pad_token_id"):
+        token_id = getattr(tokenizer, attr, None)
+        if token_id is not None:
+            return int(token_id)
+    raise RuntimeError("Tokenizer must define bos_token_id, eos_token_id, or pad_token_id for EWoK evaluation.")
+
+
 def per_token_log_likelihood(model, tokenizer, input_texts, device=None):
     device = _resolve_device(model, device)
     inputs = tokenizer(input_texts, add_special_tokens=False, return_tensors="pt", padding=True)
@@ -60,11 +68,11 @@ def per_token_log_likelihood(model, tokenizer, input_texts, device=None):
     attn_mask = inputs.attention_mask.to(device)
 
     batch_size = input_ids.shape[0]
-    bos_token_id = tokenizer.bos_token_id
-    bos_tensor = torch.full((batch_size, 1), bos_token_id, device=device)
+    bos_token_id = resolve_bos_token_id(tokenizer)
+    bos_tensor = torch.full((batch_size, 1), bos_token_id, device=device, dtype=input_ids.dtype)
     input_ids = torch.cat([bos_tensor, input_ids], dim=1)
 
-    ones_tensor = torch.ones((batch_size, 1), device=device)
+    ones_tensor = torch.ones((batch_size, 1), device=device, dtype=attn_mask.dtype)
     attn_mask = torch.cat([ones_tensor, attn_mask], dim=1)
 
     with torch.no_grad():
@@ -465,4 +473,5 @@ __all__ = [
     "ewok_per_item_records",
     "per_token_conditional_log_likelihood",
     "per_token_log_likelihood",
+    "resolve_bos_token_id",
 ]
