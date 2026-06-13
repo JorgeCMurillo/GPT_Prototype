@@ -327,6 +327,14 @@ class Item:
     difficulty_label: str
     template_id: int
     template_family: str
+    contrast_set_id: str = ""
+    equiv_class_id: str = ""
+    contrast_role: str = "none"
+    contrast_family: str = ""
+    negative_type: str = ""
+    is_plausible: int = 1
+    ntp_weight: float = 1.0
+    contrast_weight: float = 0.0
 
 
 def add(u: Vec, v: Vec) -> Vec:
@@ -657,6 +665,31 @@ def _build_item(
     )
     validate_item(item)
     return item
+
+
+def with_contrast_metadata(
+    item: Item,
+    *,
+    contrast_set_id: str,
+    equiv_class_id: str,
+    contrast_role: str,
+    contrast_family: str,
+    negative_type: str = "",
+    is_plausible: int = 1,
+    ntp_weight: float = 1.0,
+    contrast_weight: float = 1.0,
+) -> Item:
+    return replace(
+        item,
+        contrast_set_id=contrast_set_id,
+        equiv_class_id=equiv_class_id,
+        contrast_role=contrast_role,
+        contrast_family=contrast_family,
+        negative_type=negative_type,
+        is_plausible=is_plausible,
+        ntp_weight=ntp_weight,
+        contrast_weight=contrast_weight,
+    )
 
 
 def generate_vertical_implicit_item(
@@ -1791,30 +1824,70 @@ def generate_pass_by_implicit_item(
     agent: str,
     obj: str,
     example_id: int = 0,
+    start_relation: str = "front",
+    a_facing: str | None = None,
+    b_facing: str | None = None,
+    template_variant: int | None = None,
 ) -> Item:
-    """Generate a pass-by scene that flips front into behind without rule wording."""
-    a_facing = rng.choice(HORIZONTAL)
-    b_facing = rng.choice(HORIZONTAL)
-    step = WORLD_DIRS[a_facing]
+    """Generate a pass-by scene without explicit rule wording.
+
+    The default forward case keeps legacy behavior: the object starts in front
+    of the agent, the agent walks past it, and the object ends behind. The
+    optional behind-start case is less everyday but useful as a marked mirror:
+    the object starts behind, the agent backs past it without turning, and the
+    object ends in front.
+    """
+    if start_relation not in {"front", "behind"}:
+        raise ValueError(f"start_relation must be 'front' or 'behind', got {start_relation!r}")
+    a_facing = a_facing or rng.choice(HORIZONTAL)
+    b_facing = b_facing or rng.choice(HORIZONTAL)
+    if a_facing not in HORIZONTAL:
+        raise ValueError(f"a_facing must be one of {HORIZONTAL}, got {a_facing!r}")
+    if b_facing not in HORIZONTAL:
+        raise ValueError(f"b_facing must be one of {HORIZONTAL}, got {b_facing!r}")
+
+    step = WORLD_DIRS[a_facing] if start_relation == "front" else neg(WORLD_DIRS[a_facing])
     before = State((0, 0, 0), step, a_facing, b_facing)
     after = State(scale(step, 2), step, a_facing, b_facing)
     after_rel = compute_relations(after, "a")[1]
-    template_id = 300 + rng.randrange(3)
-    templates = [
-        (
-            "{agent} moved toward {obj}, went past it, and kept going without turning. "
-            "By the time {agent} stopped, {obj} was {after_rel}."
-        ),
-        (
-            "{agent} headed straight toward {obj} and continued beyond it. After that "
-            "short walk, {obj} was {after_rel}."
-        ),
-        (
-            "{obj} stayed put as {agent} walked straight past. When the motion was over, "
-            "{obj} was {after_rel}."
-        ),
-    ]
-    text = templates[template_id - 300].format(
+    if template_variant is None:
+        template_variant = rng.randrange(3)
+    if not 0 <= template_variant < 3:
+        raise ValueError(f"template_variant must be in [0, 2], got {template_variant}")
+    template_id = 300 + template_variant
+    if start_relation == "front":
+        templates = [
+            (
+                "{agent} moved toward {obj}, went past it, and kept going without turning. "
+                "By the time {agent} stopped, {obj} was {after_rel}."
+            ),
+            (
+                "{agent} headed straight toward {obj} and continued beyond it. After that "
+                "short walk, {obj} was {after_rel}."
+            ),
+            (
+                "{obj} stayed put as {agent} walked straight past. When the motion was over, "
+                "{obj} was {after_rel}."
+            ),
+        ]
+        operation = "implicit_pass_by_agent_forward"
+    else:
+        templates = [
+            (
+                "{agent} backed toward {obj}, went past it, and kept backing without turning. "
+                "By the time {agent} stopped, {obj} was {after_rel}."
+            ),
+            (
+                "{agent} stepped backward toward {obj} and continued beyond it. After that "
+                "backward walk, {obj} was {after_rel}."
+            ),
+            (
+                "{obj} stayed put as {agent} backed straight past. When the motion was over, "
+                "{obj} was {after_rel}."
+            ),
+        ]
+        operation = "implicit_pass_by_agent_backward"
+    text = templates[template_variant].format(
         agent=agent,
         obj=get_mention(obj, False),
         after_rel=rel_phrase(after_rel, agent),
@@ -1823,7 +1896,7 @@ def generate_pass_by_implicit_item(
         example_id=example_id,
         agent=agent,
         obj=obj,
-        operation="implicit_pass_by_agent_forward",
+        operation=operation,
         observer="a",
         before=before,
         after=after,
@@ -1855,18 +1928,50 @@ def generate_pass_through_implicit_item(
     obj: str,
     example_id: int = 0,
     relation_view: str | None = None,
+    motion_case: str = "agent_forward_past_object",
+    travel_dir: str | None = None,
+    b_facing: str | None = None,
     template_variant: int | None = None,
 ) -> Item:
     """Generate straight-line pass-through scenes with varied non-EWoK wording."""
-    travel_dir = rng.choice(HORIZONTAL)
-    step = WORLD_DIRS[travel_dir]
-    b_facing = rng.choice(HORIZONTAL)
-    before = State((0, 0, 0), step, travel_dir, b_facing)
-    after = State(scale(step, 2), step, travel_dir, b_facing)
+    motion_cases = {
+        "agent_forward_past_object",
+        "agent_backward_past_object",
+        "object_carried_forward_past_agent",
+    }
+    if motion_case not in motion_cases:
+        raise ValueError(f"motion_case must be one of {sorted(motion_cases)}, got {motion_case!r}")
+    travel_dir = travel_dir or rng.choice(HORIZONTAL)
+    b_facing = b_facing or rng.choice(HORIZONTAL)
+    if travel_dir not in HORIZONTAL:
+        raise ValueError(f"travel_dir must be one of {HORIZONTAL}, got {travel_dir!r}")
+    if b_facing not in HORIZONTAL:
+        raise ValueError(f"b_facing must be one of {HORIZONTAL}, got {b_facing!r}")
 
-    relation_view = relation_view or rng.choice(["object_egocentric", "object_world", "agent_world"])
+    step = WORLD_DIRS[travel_dir]
+    if motion_case == "agent_forward_past_object":
+        before = State((0, 0, 0), step, travel_dir, b_facing)
+        after = State(scale(step, 2), step, travel_dir, b_facing)
+        relation_view = relation_view or rng.choice(["object_egocentric", "object_world", "agent_world"])
+        template_id_base = 400
+        operation = f"implicit_pass_through_agent_{travel_dir}_{relation_view}"
+    elif motion_case == "agent_backward_past_object":
+        back_step = neg(step)
+        before = State((0, 0, 0), back_step, travel_dir, b_facing)
+        after = State(scale(back_step, 2), back_step, travel_dir, b_facing)
+        relation_view = relation_view or rng.choice(["object_egocentric", "object_world", "agent_world"])
+        template_id_base = 450
+        operation = f"implicit_pass_through_agent_backward_{travel_dir}_{relation_view}"
+    else:
+        before = State((0, 0, 0), neg(step), travel_dir, b_facing)
+        after = State((0, 0, 0), step, travel_dir, b_facing)
+        relation_view = relation_view or rng.choice(["object_egocentric", "object_world"])
+        template_id_base = 480
+        operation = f"implicit_pass_through_object_carried_{travel_dir}_{relation_view}"
+
     final_sentence, observer = _pass_through_final_sentence(agent, obj, after, relation_view)
     obj_mention = get_mention(obj, False)
+    move_dir = travel_dir if motion_case != "agent_backward_past_object" else inverse_relation(travel_dir)
 
     # Future pass-through ablations worth keeping separate:
     # - kept-going: "went by without stopping", "passed and carried on", "moved past without turning back"
@@ -1876,109 +1981,164 @@ def generate_pass_through_implicit_item(
     # - before/after relation: "was ahead at first", "began before it", "moved from one side to the other"
     # - inverse wording: "finished on the far side", "swapped sides along the path", "left it on the opposite side"
     # - everyday scenes: "walked down a hallway", "moved along a road", "ran along a path"
-    templates = [
-        (
-            "{agent} went by {obj} without stopping. {agent} kept the same heading, "
-            "and when the walk ended, {final_sentence}."
-        ),
-        (
-            "{agent} passed {obj} and carried on a little farther. By the end, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} moved past {obj} without turning back. After the movement, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} crossed the spot beside {obj} and stopped on the far side. "
-            "Afterward, {final_sentence}."
-        ),
-        (
-            "{agent} went farther than {obj} along the same path. When {agent} stopped, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} overshot {obj} on a straight route. At the finish, {final_sentence}."
-        ),
-        (
-            "{agent} used {obj} as a point on the path, went by it, and stopped beyond it. "
-            "Then {final_sentence}."
-        ),
-        (
-            "{obj} marked the middle of {agent_poss} route. {agent} crossed that mark and "
-            "stopped past it. In the final layout, {final_sentence}."
-        ),
-        (
-            "{agent} passed the marker made by {obj} and kept the same direction. "
-            "At the end, {final_sentence}."
-        ),
-        (
-            "{agent} moved {travel_dir} toward {obj}, then kept moving {travel_dir} past it. "
-            "Afterward, {final_sentence}."
-        ),
-        (
-            "{agent} followed a {travel_dir}-going line that crossed {obj_poss} place. "
-            "When the movement ended, {final_sentence}."
-        ),
-        (
-            "{agent} started on one side of {obj} and walked {travel_dir} to the other side. "
-            "After that, {final_sentence}."
-        ),
-        (
-            "{obj} was ahead of {agent} at first. {agent} went by without turning. "
-            "At the end, {final_sentence}."
-        ),
-        (
-            "{agent} began before {obj} on the path and finished after passing it. "
-            "In the new arrangement, {final_sentence}."
-        ),
-        (
-            "{agent} moved from one side of {obj} to the other. Once the move was over, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} finished on the far side of {obj}. From the final positions, "
-            "{final_sentence}."
-        ),
-        (
-            "After {agent} crossed past {obj}, the two had swapped sides along the path. "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} left {obj} on the opposite side from where the walk began. "
-            "In the final layout, {final_sentence}."
-        ),
-        (
-            "{agent} walked down a hallway past {obj}. When {agent} stopped, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} moved along a road past {obj}. After the short trip, "
-            "{final_sentence}."
-        ),
-        (
-            "{agent} ran along the path past {obj} and stopped beyond it. At the end, "
-            "{final_sentence}."
-        ),
-    ]
+    if motion_case == "agent_forward_past_object":
+        templates = [
+            (
+                "{agent} went by {obj} without stopping. {agent} kept the same heading, "
+                "and when the walk ended, {final_sentence}."
+            ),
+            (
+                "{agent} passed {obj} and carried on a little farther. By the end, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} moved past {obj} without turning back. After the movement, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} crossed the spot beside {obj} and stopped on the far side. "
+                "Afterward, {final_sentence}."
+            ),
+            (
+                "{agent} went farther than {obj} along the same path. When {agent} stopped, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} overshot {obj} on a straight route. At the finish, {final_sentence}."
+            ),
+            (
+                "{agent} used {obj} as a point on the path, went by it, and stopped beyond it. "
+                "Then {final_sentence}."
+            ),
+            (
+                "{obj} marked the middle of {agent_poss} route. {agent} crossed that mark and "
+                "stopped past it. In the final layout, {final_sentence}."
+            ),
+            (
+                "{agent} passed the marker made by {obj} and kept the same direction. "
+                "At the end, {final_sentence}."
+            ),
+            (
+                "{agent} moved {travel_dir} toward {obj}, then kept moving {travel_dir} past it. "
+                "Afterward, {final_sentence}."
+            ),
+            (
+                "{agent} followed a {travel_dir}-going line that crossed {obj_poss} place. "
+                "When the movement ended, {final_sentence}."
+            ),
+            (
+                "{agent} started on one side of {obj} and walked {travel_dir} to the other side. "
+                "After that, {final_sentence}."
+            ),
+            (
+                "{obj} was ahead of {agent} at first. {agent} went by without turning. "
+                "At the end, {final_sentence}."
+            ),
+            (
+                "{agent} began before {obj} on the path and finished after passing it. "
+                "In the new arrangement, {final_sentence}."
+            ),
+            (
+                "{agent} moved from one side of {obj} to the other. Once the move was over, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} finished on the far side of {obj}. From the final positions, "
+                "{final_sentence}."
+            ),
+            (
+                "After {agent} crossed past {obj}, the two had swapped sides along the path. "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} left {obj} on the opposite side from where the walk began. "
+                "In the final layout, {final_sentence}."
+            ),
+            (
+                "{agent} walked down a hallway past {obj}. When {agent} stopped, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} moved along a road past {obj}. After the short trip, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} ran along the path past {obj} and stopped beyond it. At the end, "
+                "{final_sentence}."
+            ),
+        ]
+    elif motion_case == "agent_backward_past_object":
+        templates = [
+            (
+                "{agent} backed by {obj} without turning around. {agent} kept facing "
+                "{travel_dir}, and when the backward walk ended, {final_sentence}."
+            ),
+            (
+                "{agent} stepped backward toward {obj} and continued past it. By the end, "
+                "{final_sentence}."
+            ),
+            (
+                "{agent} moved {move_dir} backward past {obj} while keeping the same stance. "
+                "After the movement, {final_sentence}."
+            ),
+            (
+                "{obj} marked a spot behind {agent}. {agent} backed across that spot and "
+                "stopped beyond it. In the final layout, {final_sentence}."
+            ),
+            (
+                "{agent} reversed along the path without turning to face the other way. "
+                "Once {agent} had passed {obj}, {final_sentence}."
+            ),
+            (
+                "{agent} backed down the path past {obj}. At the finish, {final_sentence}."
+            ),
+        ]
+    else:
+        templates = [
+            (
+                "Someone carried {obj} from behind {agent}, passed {agent}, and continued "
+                "{travel_dir}. By the end, {final_sentence}."
+            ),
+            (
+                "{agent} stayed facing {travel_dir} while someone carried {obj} past from "
+                "behind. After the carrier went ahead, {final_sentence}."
+            ),
+            (
+                "{obj} moved from the rear side of {agent} to the forward side as someone "
+                "carried it past. In the final layout, {final_sentence}."
+            ),
+            (
+                "A helper brought {obj} along the {travel_dir}-going path, passed {agent}, "
+                "and stopped ahead. At the finish, {final_sentence}."
+            ),
+            (
+                "{agent} did not turn or move. {obj} crossed from behind {agent} to the "
+                "space ahead, and afterward, {final_sentence}."
+            ),
+            (
+                "The path of {obj} went past {agent} from back to front. Once the motion "
+                "ended, {final_sentence}."
+            ),
+        ]
     if template_variant is None:
         template_variant = rng.randrange(len(templates))
     if not 0 <= template_variant < len(templates):
         raise ValueError(f"template_variant must be in [0, {len(templates) - 1}], got {template_variant}")
-    template_id = 400 + template_variant
+    template_id = template_id_base + template_variant
     text = templates[template_variant].format(
         agent=agent,
         agent_poss=get_possessive(agent, True),
         obj=obj_mention,
         obj_poss=get_possessive(obj, False),
         travel_dir=travel_dir,
+        move_dir=move_dir,
         final_sentence=final_sentence,
     )
     return _build_item(
         example_id=example_id,
         agent=agent,
         obj=obj,
-        operation=f"implicit_pass_through_agent_{travel_dir}_{relation_view}",
+        operation=operation,
         observer=observer,
         before=before,
         after=after,
@@ -1987,6 +2147,391 @@ def generate_pass_through_implicit_item(
         template_id=template_id,
         template_family="implicit_pass_through",
     )
+
+
+def _observer_mention_for_item(item: Item) -> str:
+    if item.observer == "a":
+        return get_mention(item.agent, True)
+    if item.observer == "b":
+        return get_mention(item.obj, False)
+    raise ValueError(f"Unknown observer: {item.observer!r}")
+
+
+def make_final_relation_negative(item: Item, *, negative_type: str = "wrong_final_relation") -> Item:
+    """Return an implausible near-miss row by corrupting only the final relation."""
+    if item.after_relative == "level":
+        wrong_rel = "above"
+    else:
+        wrong_rel = inverse_relation(item.after_relative)
+    observer_mention = _observer_mention_for_item(item)
+    correct_phrase = rel_phrase(item.after_relative, observer_mention)
+    wrong_phrase = rel_phrase(wrong_rel, observer_mention)
+    context, completion = split_context_completion(item.text)
+    if correct_phrase in completion:
+        wrong_completion = completion.replace(correct_phrase, wrong_phrase, 1)
+        wrong_text = f"{context} {wrong_completion}" if context else wrong_completion
+    elif correct_phrase in item.text:
+        wrong_text = item.text.replace(correct_phrase, wrong_phrase, 1)
+    else:
+        wrong_text = f"{context} The final relation was {wrong_phrase}." if context else f"The final relation was {wrong_phrase}."
+    return replace(
+        item,
+        text=_clean_text(wrong_text),
+        negative_type=negative_type,
+        is_plausible=0,
+        ntp_weight=0.0,
+        contrast_weight=1.0,
+    )
+
+
+def generate_rotated_latent_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate a strong positive pair: same egocentric transition under rotation."""
+    side = rng.choice(["left", "right"])
+    facing = rng.choice(HORIZONTAL)
+    rotated_facing = turn_facing(facing, rng.choice(["left", "right", "around"]))
+    agent_1 = rng.choice(AGENTS)
+    obj_1 = rng.choice(OBJECTS)
+    agent_2 = rng.choice([candidate for candidate in AGENTS if candidate != agent_1])
+    obj_2 = rng.choice([candidate for candidate in OBJECTS if candidate != obj_1])
+    anchor = generate_left_right_contrast_item(
+        rng,
+        agent=agent_1,
+        obj=obj_1,
+        example_id=example_id,
+        side=side,
+        before_facing=facing,
+        template_variant=0,
+    )
+    positive = generate_left_right_contrast_item(
+        rng,
+        agent=agent_2,
+        obj=obj_2,
+        example_id=example_id + 1,
+        side=side,
+        before_facing=rotated_facing,
+        template_variant=1,
+    )
+    negative = make_final_relation_negative(positive)
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"rotated_latent_turnaround_{side}_to_{inverse_relation(side)}"
+    contrast_family = "rotated_latent_transition"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="wrong_final_relation",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_role_reciprocal_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate a semi-equivalent pair from reciprocal observer viewpoints."""
+    side = rng.choice(["left", "right"])
+    facing = rng.choice(HORIZONTAL)
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    obj_mention = get_mention(obj, False)
+    obj_possessive = get_possessive(obj, False)
+    inverse_side = inverse_relation(side)
+    before = State((0, 0, 0), WORLD_DIRS[turn_facing(facing, side)], facing, facing)
+    text_a = (
+        f"{agent} and {obj_mention} held the same positions. From {agent}'s place, "
+        f"{obj_mention} was {rel_phrase(side, agent)}."
+    )
+    text_b = (
+        f"The same pair was viewed from {obj_possessive} place. From {obj_possessive} "
+        f"place, {agent} was {rel_phrase(inverse_side, obj_mention)}."
+    )
+    anchor = _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_role_reciprocal_{side}",
+        observer="a",
+        before=before,
+        after=before,
+        text=text_a,
+        difficulty=3,
+        template_id=1300,
+        template_family="contrastive_role_reciprocal",
+    )
+    positive = _build_item(
+        example_id=example_id + 1,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_role_reciprocal_{side}",
+        observer="b",
+        before=before,
+        after=before,
+        text=text_b,
+        difficulty=3,
+        template_id=1301,
+        template_family="contrastive_role_reciprocal",
+    )
+    negative = make_final_relation_negative(positive, negative_type="reciprocal_same_side_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"role_reciprocal_{side}_{inverse_side}"
+    contrast_family = "role_viewpoint_reciprocal"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="reciprocal_same_side_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_pass_by_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+    start_relation: str = "front",
+) -> List[Item]:
+    """Generate same-latent pass-by paraphrases plus a final-relation hard negative."""
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    a_facing = rng.choice(HORIZONTAL)
+    b_facing = rng.choice(HORIZONTAL)
+    anchor = generate_pass_by_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id,
+        start_relation=start_relation,
+        a_facing=a_facing,
+        b_facing=b_facing,
+        template_variant=0,
+    )
+    positive = generate_pass_by_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id + 1,
+        start_relation=start_relation,
+        a_facing=a_facing,
+        b_facing=b_facing,
+        template_variant=1,
+    )
+    negative = make_final_relation_negative(positive)
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    end_relation = anchor.after_relative
+    equiv_class_id = f"pass_by_{start_relation}_to_{end_relation}"
+    contrast_family = "pass_by_same_latent"
+    if start_relation == "behind":
+        contrast_family = "pass_by_backward_same_latent"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="wrong_final_relation",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_pass_through_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+    motion_case: str = "agent_forward_past_object",
+) -> List[Item]:
+    """Generate same-latent pass-through paraphrases plus a relation hard negative."""
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    travel_dir = rng.choice(HORIZONTAL)
+    b_facing = rng.choice(HORIZONTAL)
+    anchor = generate_pass_through_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id,
+        relation_view="object_egocentric",
+        motion_case=motion_case,
+        travel_dir=travel_dir,
+        b_facing=b_facing,
+        template_variant=0,
+    )
+    positive = generate_pass_through_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id + 1,
+        relation_view="object_egocentric",
+        motion_case=motion_case,
+        travel_dir=travel_dir,
+        b_facing=b_facing,
+        template_variant=1,
+    )
+    negative = make_final_relation_negative(positive)
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"pass_through_{anchor.before_relative}_to_{anchor.after_relative}"
+    family_by_motion = {
+        "agent_forward_past_object": "pass_through_forward_same_latent",
+        "agent_backward_past_object": "pass_through_backward_same_latent",
+        "object_carried_forward_past_agent": "pass_through_carried_object_same_latent",
+    }
+    contrast_family = family_by_motion[motion_case]
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="wrong_final_relation",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_contrastive_items(
+    *,
+    n_sets: int,
+    seed: int,
+    include_backing_past: bool = False,
+    include_pass_through_mirrors: bool = False,
+) -> List[Item]:
+    if n_sets <= 0:
+        return []
+    rng = random.Random(seed)
+    families = ["rotated_latent", "role_reciprocal", "pass_by_forward", "pass_through_forward"]
+    if include_backing_past:
+        families.append("pass_by_backward")
+    if include_pass_through_mirrors:
+        families.extend(["pass_through_backward", "pass_through_carried_object"])
+
+    out: List[Item] = []
+    for set_idx in range(n_sets):
+        family = rng.choice(families)
+        example_id = len(out)
+        if family == "rotated_latent":
+            group = generate_rotated_latent_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "role_reciprocal":
+            group = generate_role_reciprocal_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "pass_by_backward":
+            group = generate_pass_by_contrast_set(
+                rng,
+                set_idx=set_idx,
+                example_id=example_id,
+                start_relation="behind",
+            )
+        elif family == "pass_through_forward":
+            group = generate_pass_through_contrast_set(
+                rng,
+                set_idx=set_idx,
+                example_id=example_id,
+                motion_case="agent_forward_past_object",
+            )
+        elif family == "pass_through_backward":
+            group = generate_pass_through_contrast_set(
+                rng,
+                set_idx=set_idx,
+                example_id=example_id,
+                motion_case="agent_backward_past_object",
+            )
+        elif family == "pass_through_carried_object":
+            group = generate_pass_through_contrast_set(
+                rng,
+                set_idx=set_idx,
+                example_id=example_id,
+                motion_case="object_carried_forward_past_agent",
+            )
+        else:
+            group = generate_pass_by_contrast_set(
+                rng,
+                set_idx=set_idx,
+                example_id=example_id,
+                start_relation="front",
+            )
+        out.extend(group)
+    return [replace(item, example_id=idx) for idx, item in enumerate(out)]
 
 
 def validate_item(item: Item) -> None:
@@ -2161,6 +2706,14 @@ def item_to_row(item: Item, *, seed: int) -> Dict[str, object]:
         "after_relative": item.after_relative,
         "template_id": item.template_id,
         "template_family": item.template_family,
+        "contrast_set_id": item.contrast_set_id,
+        "equiv_class_id": item.equiv_class_id,
+        "contrast_role": item.contrast_role,
+        "contrast_family": item.contrast_family,
+        "negative_type": item.negative_type,
+        "is_plausible": item.is_plausible,
+        "ntp_weight": item.ntp_weight,
+        "contrast_weight": item.contrast_weight,
         "before_state": _state_json(item.before_state),
         "after_state": _state_json(item.after_state),
         "seed": seed,
@@ -2189,6 +2742,14 @@ def write_csv(items: Iterable[Item], out_path: Path, *, seed: int) -> None:
         "after_relative",
         "template_id",
         "template_family",
+        "contrast_set_id",
+        "equiv_class_id",
+        "contrast_role",
+        "contrast_family",
+        "negative_type",
+        "is_plausible",
+        "ntp_weight",
+        "contrast_weight",
         "before_state",
         "after_state",
         "seed",
@@ -2208,7 +2769,12 @@ def write_jsonl(items: Iterable[Item], out_path: Path, *, seed: int) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--n", type=int, default=10000, help="Number of examples to generate.")
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=10000,
+        help="Number of examples to generate; with --contrastive, this is the number of contrast sets.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--difficulty",
@@ -2238,17 +2804,40 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--jsonl-out", type=Path, default=None, help="Optional mirror JSONL output path.")
     parser.add_argument("--preview", type=int, default=3, help="Print this many generated examples.")
+    parser.add_argument(
+        "--contrastive",
+        action="store_true",
+        help="Generate contrastive triplets with anchor/positive/hard-negative metadata.",
+    )
+    parser.add_argument(
+        "--include-backing-past",
+        action="store_true",
+        help="In --contrastive mode, include the less common pass-by backing-past mirror.",
+    )
+    parser.add_argument(
+        "--include-pass-through-mirrors",
+        action="store_true",
+        help="In --contrastive mode, include backward-agent and carried-object pass-through mirrors.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    items = generate_items(
-        n=args.n,
-        seed=args.seed,
-        difficulty=args.difficulty,
-        template_preset=args.template_preset,
-    )
+    if args.contrastive:
+        items = generate_contrastive_items(
+            n_sets=args.n,
+            seed=args.seed,
+            include_backing_past=args.include_backing_past,
+            include_pass_through_mirrors=args.include_pass_through_mirrors,
+        )
+    else:
+        items = generate_items(
+            n=args.n,
+            seed=args.seed,
+            difficulty=args.difficulty,
+            template_preset=args.template_preset,
+        )
     write_csv(items, args.out, seed=args.seed)
     if args.jsonl_out is not None:
         write_jsonl(items, args.jsonl_out, seed=args.seed)
@@ -2256,8 +2845,14 @@ def main() -> None:
     counts = Counter(item.difficulty_label for item in items)
     print(f"Wrote {len(items)} examples to {args.out}")
     print(f"Difficulty counts: {dict(counts)}")
+    contrast_counts = Counter(item.contrast_role for item in items if item.contrast_set_id)
+    if contrast_counts:
+        family_counts = Counter(item.contrast_family for item in items if item.contrast_family)
+        print(f"Contrast role counts: {dict(contrast_counts)}")
+        print(f"Contrast family counts: {dict(family_counts)}")
     for item in items[: max(0, args.preview)]:
-        print(f"[{item.example_id} | {item.difficulty_label}] {item.text}")
+        role = f" | {item.contrast_role}" if item.contrast_set_id else ""
+        print(f"[{item.example_id} | {item.difficulty_label}{role}] {item.text}")
 
 
 if __name__ == "__main__":

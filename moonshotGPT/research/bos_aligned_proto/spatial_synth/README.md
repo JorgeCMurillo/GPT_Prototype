@@ -53,6 +53,98 @@ rows, per-run plots, and multi-run summary plots when more than one checkpoint
 or learning rate is provided. Final model saving is off by default; pass
 `--save-final` when you want to keep the fine-tuned checkpoint.
 
+## Contrastive Spatial Sets
+
+`generate_spatial_relations_csv.py` can also emit contrastive triplets for
+mixed NTP plus representation learning:
+
+```bash
+python research/bos_aligned_proto/spatial_synth/generate_spatial_relations_csv.py \
+  --contrastive \
+  --n 1000 \
+  --seed 42 \
+  --out runs/research/bos_aligned_proto/spatial_synth/spatial_relations_contrastive_n1000_seed42.csv
+```
+
+In contrastive mode, `--n` is the number of contrast sets, not the number of
+rows. Each set writes three rows:
+
+- `anchor`: a plausible scene text
+- `positive`: an equivalent or semi-equivalent plausible scene text
+- `hard_negative`: a near-miss text with the wrong final relation
+
+Rows include `contrast_set_id`, `equiv_class_id`, `contrast_role`,
+`contrast_family`, `negative_type`, `is_plausible`, `ntp_weight`, and
+`contrast_weight`. Hard negatives are marked `is_plausible=0` and
+`ntp_weight=0`, so the causal-LM objective does not train the model to continue
+with implausible scene descriptions. They are used only by the contrastive
+objective.
+
+Current contrastive families:
+
+- `rotated_latent_transition`: same abstract egocentric transition under a
+  rotation of the world axes.
+- `role_viewpoint_reciprocal`: same physical arrangement from reciprocal
+  observer/reference viewpoints, such as "the object is to Ava's left" paired
+  with "Ava is to the object's right."
+- `pass_by_same_latent`: same forward pass-by scene rendered with two
+  paraphrases, plus a wrong final-relation negative.
+- `pass_through_forward_same_latent`: same forward pass-through scene rendered
+  with two paraphrases, plus a wrong final-relation negative.
+
+Two less-common mirror families are optional because they are geometrically
+useful but less natural than ordinary forward walking past a landmark:
+
+```bash
+python research/bos_aligned_proto/spatial_synth/generate_spatial_relations_csv.py \
+  --contrastive \
+  --include-backing-past \
+  --include-pass-through-mirrors \
+  --n 1000 \
+  --seed 42 \
+  --out runs/research/bos_aligned_proto/spatial_synth/spatial_relations_contrastive_mirrors_n1000_seed42.csv
+```
+
+- `--include-backing-past` adds `pass_by_backward_same_latent`: the object starts
+  behind the agent, the agent backs past it without turning, and the object ends
+  in front.
+- `--include-pass-through-mirrors` adds:
+  - `pass_through_backward_same_latent`: the agent backs through/past the
+    object's position.
+  - `pass_through_carried_object_same_latent`: someone carries the object from
+    behind the agent to in front of the agent.
+
+For training, enable the auxiliary triplet objective with
+`--contrastive-loss-weight`. The trainer mean-pools final-layer hidden states
+and applies cosine triplet margin loss:
+
+```text
+loss = max(0, margin + sim(anchor, hard_negative) - sim(anchor, positive))
+```
+
+The total training loss is:
+
+```text
+causal_lm_loss + contrastive_loss_weight * contrastive_triplet_loss
+```
+
+Example:
+
+```bash
+python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_lm.py \
+  --data runs/research/bos_aligned_proto/spatial_synth/spatial_relations_contrastive_n1000_seed42.csv \
+  --checkpoints gpt2-medium \
+  --learning-rates 1e-5 \
+  --epochs 3 \
+  --loss-mode full \
+  --contrastive-loss-weight 0.1 \
+  --contrastive-margin 0.2
+```
+
+Useful first sweeps are `--contrastive-loss-weight 0.03/0.1/0.3` and
+`--contrastive-margin 0.1/0.2/0.4`. Group-aware train/val splitting keeps each
+anchor/positive/negative triplet together.
+
 ## EWoK Metric Conventions
 
 Unless explicitly stated otherwise, this project reports **EWoK BabyLM

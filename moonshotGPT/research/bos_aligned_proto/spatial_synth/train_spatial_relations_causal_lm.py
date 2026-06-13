@@ -75,6 +75,15 @@ class TextRow:
 
 
 @dataclass(frozen=True)
+class ContrastiveGroup:
+    set_id: str
+    anchor: TextRow
+    positive: TextRow
+    negatives: Tuple[TextRow, ...]
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
 class PackStats:
     examples: int
     tokens_with_eos: int
@@ -111,6 +120,17 @@ class PackedCausalDataset(Dataset):
             "labels": self.labels[idx],
             "loss_weights": self.loss_weights[idx],
         }
+
+
+class ContrastiveGroupDataset(Dataset):
+    def __init__(self, groups: Sequence[ContrastiveGroup]):
+        self.groups = list(groups)
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def __getitem__(self, idx: int) -> ContrastiveGroup:
+        return self.groups[idx]
 
 
 def to_jsonable(value):
@@ -212,6 +232,33 @@ def row_context_completion(row: Dict[str, object], text: str) -> Tuple[str, str]
     if completion:
         return context, completion
     return split_context_completion(text)
+
+
+def source_str(row: TextRow, key: str, default: str = "") -> str:
+    value = row.source.get(key, default)
+    if value is None:
+        return default
+    return str(value).strip()
+
+
+def source_float(row: TextRow, key: str, default: float = 0.0) -> float:
+    value = row.source.get(key, default)
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def row_ntp_weight(row: TextRow | str) -> float:
+    if isinstance(row, TextRow):
+        return source_float(row, "ntp_weight", 1.0)
+    return 1.0
+
+
+def row_contrast_weight(row: TextRow) -> float:
+    return source_float(row, "contrast_weight", 0.0)
 
 
 def load_text_rows(path: Path, *, text_column: str) -> List[TextRow]:
@@ -328,6 +375,28 @@ def select_rows(
 def split_train_val(rows: Sequence[TextRow], *, val_frac: float, seed: int) -> Tuple[List[TextRow], List[TextRow]]:
     if not 0.0 <= val_frac < 1.0:
         raise ValueError(f"val_frac must be in [0, 1), got {val_frac}")
+    if any(source_str(row, "contrast_set_id") for row in rows):
+        grouped: Dict[str, List[TextRow]] = defaultdict(list)
+        singleton_idx = 0
+        for row in rows:
+            set_id = source_str(row, "contrast_set_id")
+            if not set_id:
+                set_id = f"__singleton_{singleton_idx}"
+                singleton_idx += 1
+            grouped[set_id].append(row)
+        units = list(grouped.values())
+        random.Random(seed).shuffle(units)
+        val_unit_count = int(round(len(units) * val_frac))
+        if val_unit_count == 0 and val_frac > 0.0 and len(units) > 1:
+            val_unit_count = 1
+        val_units = units[:val_unit_count]
+        train_units = units[val_unit_count:]
+        if not train_units:
+            train_units, val_units = units, []
+        train_rows = [row for unit in train_units for row in unit]
+        val_rows = [row for unit in val_units for row in unit]
+        return train_rows, val_rows
+
     shuffled = list(rows)
     random.Random(seed).shuffle(shuffled)
     val_count = int(round(len(shuffled) * val_frac))
@@ -421,6 +490,9 @@ def pack_texts(
     weighted_loss_examples = 0
 
     for row_idx, row in enumerate(rows):
+        ntp_weight = row_ntp_weight(row)
+        if ntp_weight <= 0.0:
+            continue
         text, context, completion = text_and_loss_parts(row)
         example_loss_mode = loss_mode
         if loss_mode == "mixed":
@@ -433,7 +505,7 @@ def pack_texts(
                 token_ids.append(int(eos_id))
                 label_ids.extend(ids)
                 label_ids.append(int(eos_id))
-                loss_weight_ids.extend([1.0] * (len(ids) + 1))
+                loss_weight_ids.extend([ntp_weight] * (len(ids) + 1))
                 full_loss_examples += 1
             continue
 
@@ -452,7 +524,7 @@ def pack_texts(
             # above/below/left/right. The scenarios vary, but relation-token
             # weighting may still be worth testing explicitly later.
             labels = [-100] * len(context_ids) + completion_ids + [int(eos_id)]
-            weights = [0.0] * len(context_ids) + [1.0] * (len(completion_ids) + 1)
+            weights = [0.0] * len(context_ids) + [ntp_weight] * (len(completion_ids) + 1)
             completion_loss_examples += 1
         else:
             labels = ids
@@ -461,6 +533,7 @@ def pack_texts(
                 completion_token_count_with_eos=len(completion_ids) + 1,
                 completion_loss_ratio=completion_loss_ratio,
             )
+            weights = [weight * ntp_weight for weight in weights]
             weighted_loss_examples += 1
         token_ids.extend(ids)
         label_ids.extend(labels)
@@ -602,6 +675,98 @@ def batch_causal_lm_loss(model, batch: Dict[str, torch.Tensor]) -> Tuple[torch.T
     )
     weighted_loss = (token_losses * shift_weights.view(-1)).sum()
     return weighted_loss / shift_weights.sum(), loss_tokens, loss_weight_sum
+
+
+def build_contrastive_groups(rows: Sequence[TextRow]) -> List[ContrastiveGroup]:
+    rows_by_set: Dict[str, List[TextRow]] = defaultdict(list)
+    for row in rows:
+        set_id = source_str(row, "contrast_set_id")
+        if set_id and row_contrast_weight(row) > 0.0:
+            rows_by_set[set_id].append(row)
+
+    groups: List[ContrastiveGroup] = []
+    for set_id, group_rows in sorted(rows_by_set.items()):
+        anchors = [row for row in group_rows if source_str(row, "contrast_role") == "anchor"]
+        positives = [row for row in group_rows if source_str(row, "contrast_role") == "positive"]
+        negatives = [row for row in group_rows if source_str(row, "contrast_role") == "hard_negative"]
+        if not anchors or not positives or not negatives:
+            continue
+        weight = max(row_contrast_weight(row) for row in group_rows)
+        groups.append(
+            ContrastiveGroup(
+                set_id=set_id,
+                anchor=anchors[0],
+                positive=positives[0],
+                negatives=tuple(negatives),
+                weight=weight,
+            )
+        )
+    return groups
+
+
+def make_contrastive_collate_fn(tokenizer, *, max_length: int):
+    def collate(groups: Sequence[ContrastiveGroup]) -> Dict[str, torch.Tensor]:
+        texts: List[str] = []
+        triplets: List[Tuple[int, int, int]] = []
+        triplet_weights: List[float] = []
+        for group in groups:
+            anchor_idx = len(texts)
+            texts.append(group.anchor.text)
+            positive_idx = len(texts)
+            texts.append(group.positive.text)
+            for negative in group.negatives:
+                negative_idx = len(texts)
+                texts.append(negative.text)
+                triplets.append((anchor_idx, positive_idx, negative_idx))
+                triplet_weights.append(group.weight)
+        encoded = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_tensors="pt",
+        )
+        encoded["triplets"] = torch.tensor(triplets, dtype=torch.long)
+        encoded["triplet_weights"] = torch.tensor(triplet_weights, dtype=torch.float32)
+        return encoded
+
+    return collate
+
+
+def batch_contrastive_loss(
+    model,
+    batch: Dict[str, torch.Tensor],
+    *,
+    margin: float,
+) -> Tuple[torch.Tensor | None, int]:
+    triplets = batch.get("triplets")
+    if triplets is None or triplets.numel() == 0:
+        return None, 0
+    outputs = model(
+        input_ids=batch["input_ids"],
+        attention_mask=batch.get("attention_mask"),
+        output_hidden_states=True,
+    )
+    hidden = outputs.hidden_states[-1]
+    mask = batch["attention_mask"].unsqueeze(-1).to(dtype=hidden.dtype)
+    pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+    reps = F.normalize(pooled, dim=-1)
+
+    anchors = reps[triplets[:, 0]]
+    positives = reps[triplets[:, 1]]
+    negatives = reps[triplets[:, 2]]
+    positive_sim = (anchors * positives).sum(dim=-1)
+    negative_sim = (anchors * negatives).sum(dim=-1)
+    losses = F.relu(float(margin) + negative_sim - positive_sim)
+    weights = batch.get("triplet_weights")
+    if weights is None:
+        weights = torch.ones_like(losses)
+    else:
+        weights = weights.to(device=losses.device, dtype=losses.dtype)
+    weight_sum = weights.sum()
+    if weight_sum <= 0.0:
+        return None, 0
+    return (losses * weights).sum() / weight_sum, int(triplets.shape[0])
 
 
 @torch.no_grad()
@@ -1272,8 +1437,22 @@ def write_plots(run_infos: Sequence[Tuple[str, Path]], output_dir: Path, *, dpi:
 
 def save_selected_rows(rows: Sequence[TextRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "text",
+        "context",
+        "completion",
+        "difficulty",
+        "contrast_set_id",
+        "equiv_class_id",
+        "contrast_role",
+        "contrast_family",
+        "negative_type",
+        "is_plausible",
+        "ntp_weight",
+        "contrast_weight",
+    ]
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["text", "context", "completion", "difficulty"])
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
             writer.writerow(
@@ -1282,6 +1461,14 @@ def save_selected_rows(rows: Sequence[TextRow], path: Path) -> None:
                     "context": row.context,
                     "completion": row.completion,
                     "difficulty": row.difficulty or "",
+                    "contrast_set_id": source_str(row, "contrast_set_id"),
+                    "equiv_class_id": source_str(row, "equiv_class_id"),
+                    "contrast_role": source_str(row, "contrast_role"),
+                    "contrast_family": source_str(row, "contrast_family"),
+                    "negative_type": source_str(row, "negative_type"),
+                    "is_plausible": source_str(row, "is_plausible"),
+                    "ntp_weight": source_str(row, "ntp_weight"),
+                    "contrast_weight": source_str(row, "contrast_weight"),
                 }
             )
 
@@ -1311,6 +1498,8 @@ def train_one_run(
         loss_label = f"mixedfull{args.mixed_full_loss_ratio:g}"
     elif args.loss_mode == "weighted":
         loss_label = f"weighted{args.completion_loss_ratio:g}"
+    if args.contrastive_loss_weight > 0.0:
+        loss_label = f"{loss_label}_contrast{args.contrastive_loss_weight:g}"
     label = f"{safe_name(checkpoint)} lr={learning_rate:g} loss={loss_label}"
 
     train_dataset, train_pack_stats = pack_texts(
@@ -1356,6 +1545,21 @@ def train_one_run(
             num_workers=max(0, min(args.num_workers, 2)),
         )
     )
+    contrastive_groups = build_contrastive_groups(train_rows)
+    contrastive_loader = None
+    contrastive_batch_size = args.contrastive_batch_size or args.per_device_batch_size
+    if args.contrastive_loss_weight > 0.0:
+        if not contrastive_groups:
+            raise ValueError("--contrastive-loss-weight was set, but no complete contrastive groups were found.")
+        contrastive_dataset = ContrastiveGroupDataset(contrastive_groups)
+        contrastive_loader = DataLoader(
+            contrastive_dataset,
+            batch_size=contrastive_batch_size,
+            shuffle=True,
+            generator=generator,
+            num_workers=args.num_workers,
+            collate_fn=make_contrastive_collate_fn(tokenizer, max_length=args.block_size),
+        )
 
     run_dir.mkdir(parents=True, exist_ok=True)
     save_selected_rows(train_rows, run_dir / "selected_train_rows.csv")
@@ -1400,6 +1604,10 @@ def train_one_run(
             "args": vars(args),
             "train_pack_stats": train_pack_stats.__dict__,
             "val_pack_stats": None if val_pack_stats is None else val_pack_stats.__dict__,
+            "contrastive_groups": len(contrastive_groups),
+            "contrastive_loss_weight": args.contrastive_loss_weight,
+            "contrastive_margin": args.contrastive_margin,
+            "contrastive_batch_size": contrastive_batch_size,
             "synthetic_spatial_eval_items": len(synthetic_spatial_items),
             "synthetic_spatial_eval_batch_size": synthetic_spatial_batch_size,
         },
@@ -1443,7 +1651,8 @@ def train_one_run(
         f"updates_per_epoch={updates_per_epoch}, total_steps={total_steps}, eval_every={eval_interval_steps} steps, "
         f"train_loss_token_fraction={train_pack_stats.loss_token_fraction:.3f}, "
         f"loss_examples(full={train_pack_stats.full_loss_examples}, "
-        f"completion={train_pack_stats.completion_loss_examples}, weighted={train_pack_stats.weighted_loss_examples})"
+        f"completion={train_pack_stats.completion_loss_examples}, weighted={train_pack_stats.weighted_loss_examples}), "
+        f"contrastive_groups={len(contrastive_groups)}"
     )
 
     if args.eval_at_start:
@@ -1484,6 +1693,9 @@ def train_one_run(
 
     model.train()
     stop_training = False
+    contrastive_iter = iter(contrastive_loader) if contrastive_loader is not None else None
+    contrastive_triplets_seen = 0
+    last_contrastive_loss = None
     for epoch_idx in range(int(math.ceil(args.epochs))):
         if stop_training:
             break
@@ -1495,12 +1707,30 @@ def train_one_run(
             loss_mean, batch_loss_tokens, batch_loss_weight = batch_causal_lm_loss(model, batch)
             if loss_mean is None:
                 continue
-            loss = loss_mean / max(1, args.grad_accum_steps)
+            total_loss_mean = loss_mean
+            if contrastive_loader is not None and contrastive_iter is not None:
+                try:
+                    contrastive_batch = next(contrastive_iter)
+                except StopIteration:
+                    contrastive_iter = iter(contrastive_loader)
+                    contrastive_batch = next(contrastive_iter)
+                contrastive_batch = {key: value.to(device) for key, value in contrastive_batch.items()}
+                contrastive_loss, triplets = batch_contrastive_loss(
+                    model,
+                    contrastive_batch,
+                    margin=args.contrastive_margin,
+                )
+                if contrastive_loss is not None:
+                    total_loss_mean = total_loss_mean + args.contrastive_loss_weight * contrastive_loss
+                    contrastive_triplets_seen += triplets
+                    last_contrastive_loss = float(contrastive_loss.item())
+
+            loss = total_loss_mean / max(1, args.grad_accum_steps)
             loss.backward()
             accum_count += 1
             loss_tokens_seen += batch_loss_tokens
             loss_weight_seen += batch_loss_weight
-            last_train_loss = float(loss_mean.item())
+            last_train_loss = float(total_loss_mean.item())
 
             should_step = accum_count >= args.grad_accum_steps or batch_idx == len(train_loader) - 1
             if not should_step:
@@ -1525,10 +1755,16 @@ def train_one_run(
 
             epoch_float = update_step / float(updates_per_epoch)
             if update_step % args.log_every == 0:
+                contrastive_part = (
+                    f" contrast={last_contrastive_loss:.4f} triplets={contrastive_triplets_seen}"
+                    if last_contrastive_loss is not None
+                    else ""
+                )
                 print(
                     f"{label} step {update_step}/{total_steps} "
                     f"epoch={epoch_float:.3f} loss={last_train_loss:.4f} lr={next_lr:.3e} "
                     f"loss_tokens={loss_tokens_seen} loss_frac={loss_tokens_seen / max(1, tokens_seen):.3f}"
+                    f"{contrastive_part}"
                 )
 
             due_for_eval = update_step % eval_interval_steps == 0
@@ -1664,6 +1900,24 @@ def parse_args() -> argparse.Namespace:
         default=0.7,
         help="For --loss-mode weighted, fraction of each example's loss mass assigned to completion tokens.",
     )
+    parser.add_argument(
+        "--contrastive-loss-weight",
+        type=float,
+        default=0.0,
+        help="Weight for triplet contrastive loss over contrast_set_id groups. Zero disables contrastive training.",
+    )
+    parser.add_argument(
+        "--contrastive-margin",
+        type=float,
+        default=0.2,
+        help="Cosine triplet margin: anchor-positive similarity should exceed anchor-negative by this amount.",
+    )
+    parser.add_argument(
+        "--contrastive-batch-size",
+        type=int,
+        default=None,
+        help="Number of contrastive groups per batch; defaults to --per-device-batch-size.",
+    )
     parser.add_argument("--epochs", type=float, default=3.0)
     parser.add_argument(
         "--epoch-eval",
@@ -1738,6 +1992,12 @@ def main() -> None:
         raise ValueError("--completion-loss-ratio must be in [0, 1]")
     if not 0.0 <= args.mixed_full_loss_ratio <= 1.0:
         raise ValueError("--mixed-full-loss-ratio must be in [0, 1]")
+    if args.contrastive_loss_weight < 0.0:
+        raise ValueError("--contrastive-loss-weight must be non-negative")
+    if args.contrastive_margin < 0.0:
+        raise ValueError("--contrastive-margin must be non-negative")
+    if args.contrastive_batch_size is not None and args.contrastive_batch_size <= 0:
+        raise ValueError("--contrastive-batch-size must be positive")
     if args.synthetic_spatial_eval_n_per_tier <= 0:
         raise ValueError("--synthetic-spatial-eval-n-per-tier must be positive")
     if args.synthetic_spatial_eval_batch_size is not None and args.synthetic_spatial_eval_batch_size <= 0:
@@ -1770,6 +2030,8 @@ def main() -> None:
                 loss_name = f"mixedfull{args.mixed_full_loss_ratio:g}"
             elif args.loss_mode == "weighted":
                 loss_name = f"weighted{args.completion_loss_ratio:g}"
+            if args.contrastive_loss_weight > 0.0:
+                loss_name = f"{loss_name}_contrast{args.contrastive_loss_weight:g}"
             run_name = f"{safe_name(checkpoint)}_lr{learning_rate:g}_loss{loss_name}_seed{args.seed}"
             run_dir = args.output_dir / run_name
             run_infos.append(
