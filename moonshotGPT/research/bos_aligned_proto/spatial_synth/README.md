@@ -87,6 +87,12 @@ Current contrastive families:
 - `role_viewpoint_reciprocal`: same physical arrangement from reciprocal
   observer/reference viewpoints, such as "the object is to Ava's left" paired
   with "Ava is to the object's right."
+- `vertical_reciprocal_equivalence`: same above/below arrangement from
+  reciprocal subject/reference views, such as "Ava is above the box" paired with
+  "the box is below Ava."
+- `vertical_motion_same_latent`: same vertical motion event rendered as direct
+  and inverse final relations, such as "Ava moved higher, so Ava is above the
+  box" paired with "the box is below Ava."
 - `pass_by_same_latent`: same forward pass-by scene rendered with two
   paraphrases, plus a wrong final-relation negative.
 - `pass_through_forward_same_latent`: same forward pass-through scene rendered

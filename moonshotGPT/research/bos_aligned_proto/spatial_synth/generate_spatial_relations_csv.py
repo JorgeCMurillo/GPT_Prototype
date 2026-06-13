@@ -2331,6 +2331,147 @@ def generate_role_reciprocal_contrast_set(
     ]
 
 
+def generate_vertical_reciprocal_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate equivalent above/below descriptions from reciprocal viewpoints."""
+    relation = rng.choice(["above", "below"])
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    obj_mention = get_mention(obj, False)
+    obj_possessive = get_possessive(obj, False)
+    inverse_rel = inverse_relation(relation)
+    state = State(WORLD_DIRS[relation], (0, 0, 0), rng.choice(HORIZONTAL), rng.choice(HORIZONTAL))
+    anchor = _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_vertical_reciprocal_{relation}",
+        observer="b",
+        before=state,
+        after=state,
+        text=(
+            f"{agent} and {obj_mention} held fixed positions at two different heights. From {obj_possessive} place, "
+            f"{agent} was {world_phrase(relation, obj_mention)}."
+        ),
+        difficulty=3,
+        template_id=1320,
+        template_family="contrastive_vertical_reciprocal",
+    )
+    positive = _build_item(
+        example_id=example_id + 1,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_vertical_reciprocal_{relation}",
+        observer="a",
+        before=state,
+        after=state,
+        text=(
+            f"The same height relation was described from {agent}'s place. "
+            f"{obj_mention} was {world_phrase(inverse_rel, agent)}."
+        ),
+        difficulty=3,
+        template_id=1321,
+        template_family="contrastive_vertical_reciprocal",
+    )
+    negative = make_final_relation_negative(positive, negative_type="vertical_reciprocal_inverse_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"vertical_reciprocal_{relation}_{inverse_rel}"
+    contrast_family = "vertical_reciprocal_equivalence"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="vertical_reciprocal_inverse_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_vertical_motion_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate equivalent vertical motion descriptions plus a relation hard negative."""
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    mover = rng.choice(["a", "b"])
+    direction = rng.choice(["up", "down"])
+    anchor = generate_vertical_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id,
+        mover=mover,
+        direction=direction,
+        relation_view="direct",
+    )
+    positive = generate_vertical_implicit_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id + 1,
+        mover=mover,
+        direction=direction,
+        relation_view="inverse",
+    )
+    negative = make_final_relation_negative(positive, negative_type="vertical_motion_inverse_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"vertical_motion_{'agent' if mover == 'a' else 'object'}_{direction}"
+    contrast_family = "vertical_motion_same_latent"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="vertical_motion_inverse_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
 def generate_pass_by_contrast_set(
     rng: random.Random,
     *,
@@ -2481,7 +2622,14 @@ def generate_contrastive_items(
     if n_sets <= 0:
         return []
     rng = random.Random(seed)
-    families = ["rotated_latent", "role_reciprocal", "pass_by_forward", "pass_through_forward"]
+    families = [
+        "rotated_latent",
+        "role_reciprocal",
+        "vertical_reciprocal",
+        "vertical_motion",
+        "pass_by_forward",
+        "pass_through_forward",
+    ]
     if include_backing_past:
         families.append("pass_by_backward")
     if include_pass_through_mirrors:
@@ -2495,6 +2643,10 @@ def generate_contrastive_items(
             group = generate_rotated_latent_contrast_set(rng, set_idx=set_idx, example_id=example_id)
         elif family == "role_reciprocal":
             group = generate_role_reciprocal_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "vertical_reciprocal":
+            group = generate_vertical_reciprocal_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "vertical_motion":
+            group = generate_vertical_motion_contrast_set(rng, set_idx=set_idx, example_id=example_id)
         elif family == "pass_by_backward":
             group = generate_pass_by_contrast_set(
                 rng,
