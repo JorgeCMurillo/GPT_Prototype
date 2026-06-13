@@ -1022,7 +1022,7 @@ def run_ewok_eval_record(
     spatial_acc = pair_to_scalar(full.get(SPATIAL_DOMAIN))
     spatial_margin = None
     if isinstance(margins.get(SPATIAL_DOMAIN), dict):
-        spatial_margin = margins[SPATIAL_DOMAIN].get("mean_signed_m")
+        spatial_margin = signed_margin_scalar(margins[SPATIAL_DOMAIN])
     print(
         f"EWoK {primary_metric_resolved} mean @ epoch {epoch:.3f}, step {step}: "
         f"avg={avg if avg is not None else float('nan'):.4f}, "
@@ -1128,6 +1128,16 @@ def pair_to_scalar(value) -> float | None:
     return None
 
 
+def signed_margin_scalar(stats: Dict | None) -> float | None:
+    if not isinstance(stats, dict):
+        return None
+    for key in ("mean_signed_m", "mean_signed_k"):
+        value = stats.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
 def metric_records(path: Path) -> List[Dict]:
     if not path.exists():
         return []
@@ -1189,7 +1199,7 @@ def extract_margin_series(records: Sequence[Dict], domain: str) -> List[Tuple[fl
         stats = margins.get(domain)
         if not isinstance(stats, dict):
             continue
-        y = stats.get("mean_signed_m")
+        y = signed_margin_scalar(stats)
         x = record.get("epoch", record.get("step"))
         if isinstance(y, (int, float)) and isinstance(x, (int, float)):
             out.append((float(x), float(y)))
