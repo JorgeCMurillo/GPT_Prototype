@@ -4,7 +4,7 @@
 This script intentionally keeps the data path simple: read generated text,
 tokenize with the default GPT-2 tokenizer, pack examples into fixed-length
 causal-LM blocks, fine-tune one or more checkpoints, and periodically evaluate
-using the repo's EWoK BabyLM completion-choice full-mean metric.
+using the repo's EWoK metrics.
 """
 
 from __future__ import annotations
@@ -704,21 +704,80 @@ def build_contrastive_groups(rows: Sequence[TextRow]) -> List[ContrastiveGroup]:
     return groups
 
 
+def encode_rank_candidate(
+    tokenizer,
+    *,
+    context: str,
+    completion: str,
+    max_length: int,
+) -> Tuple[List[int], List[int]]:
+    eos_id = tokenizer.eos_token_id
+    if eos_id is None:
+        raise RuntimeError("Tokenizer must expose eos_token_id for rank contrastive scoring.")
+    context = str(context or "").strip()
+    completion = str(completion or "").strip()
+    completion_text = completion
+    if context and completion_text and not completion_text.startswith((" ", "\n", "\t")):
+        completion_text = " " + completion_text
+    context_ids = tokenizer.encode(context, add_special_tokens=False) if context else [int(eos_id)]
+    completion_ids = tokenizer.encode(completion_text, add_special_tokens=False)
+    if not completion_ids:
+        completion_ids = [int(eos_id)]
+
+    max_length = max(2, int(max_length))
+    if len(context_ids) + len(completion_ids) > max_length:
+        available_context = max_length - len(completion_ids)
+        if available_context < 1:
+            completion_ids = completion_ids[-(max_length - 1) :]
+            available_context = 1
+        context_ids = context_ids[-available_context:]
+
+    input_ids = context_ids + completion_ids
+    labels = [-100] * len(context_ids) + completion_ids
+    return input_ids, labels
+
+
 def make_contrastive_collate_fn(tokenizer, *, max_length: int):
     def collate(groups: Sequence[ContrastiveGroup]) -> Dict[str, torch.Tensor]:
         texts: List[str] = []
         triplets: List[Tuple[int, int, int]] = []
         triplet_weights: List[float] = []
+        rank_input_ids: List[List[int]] = []
+        rank_labels: List[List[int]] = []
+        rank_pairs: List[Tuple[int, int]] = []
+        rank_weights: List[float] = []
         for group in groups:
             anchor_idx = len(texts)
             texts.append(group.anchor.text)
             positive_idx = len(texts)
             texts.append(group.positive.text)
+            _positive_text, positive_context, positive_completion = text_and_loss_parts(group.positive)
             for negative in group.negatives:
                 negative_idx = len(texts)
                 texts.append(negative.text)
                 triplets.append((anchor_idx, positive_idx, negative_idx))
                 triplet_weights.append(group.weight)
+                _negative_text, _negative_context, negative_completion = text_and_loss_parts(negative)
+                pos_ids, pos_labels = encode_rank_candidate(
+                    tokenizer,
+                    context=positive_context,
+                    completion=positive_completion,
+                    max_length=max_length,
+                )
+                neg_ids, neg_labels = encode_rank_candidate(
+                    tokenizer,
+                    context=positive_context,
+                    completion=negative_completion,
+                    max_length=max_length,
+                )
+                pos_idx = len(rank_input_ids)
+                rank_input_ids.append(pos_ids)
+                rank_labels.append(pos_labels)
+                neg_idx = len(rank_input_ids)
+                rank_input_ids.append(neg_ids)
+                rank_labels.append(neg_labels)
+                rank_pairs.append((pos_idx, neg_idx))
+                rank_weights.append(group.weight)
         encoded = tokenizer(
             texts,
             padding=True,
@@ -728,6 +787,21 @@ def make_contrastive_collate_fn(tokenizer, *, max_length: int):
         )
         encoded["triplets"] = torch.tensor(triplets, dtype=torch.long)
         encoded["triplet_weights"] = torch.tensor(triplet_weights, dtype=torch.float32)
+        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        rank_max_len = max((len(ids) for ids in rank_input_ids), default=0)
+        padded_rank_ids = []
+        padded_rank_masks = []
+        padded_rank_labels = []
+        for ids, labels in zip(rank_input_ids, rank_labels):
+            pad_count = rank_max_len - len(ids)
+            padded_rank_ids.append(ids + [int(pad_id)] * pad_count)
+            padded_rank_masks.append([1] * len(ids) + [0] * pad_count)
+            padded_rank_labels.append(labels + [-100] * pad_count)
+        encoded["rank_input_ids"] = torch.tensor(padded_rank_ids, dtype=torch.long)
+        encoded["rank_attention_mask"] = torch.tensor(padded_rank_masks, dtype=torch.long)
+        encoded["rank_labels"] = torch.tensor(padded_rank_labels, dtype=torch.long)
+        encoded["rank_pairs"] = torch.tensor(rank_pairs, dtype=torch.long)
+        encoded["rank_weights"] = torch.tensor(rank_weights, dtype=torch.float32)
         return encoded
 
     return collate
@@ -767,6 +841,50 @@ def batch_contrastive_loss(
     if weight_sum <= 0.0:
         return None, 0
     return (losses * weights).sum() / weight_sum, int(triplets.shape[0])
+
+
+def batch_rank_contrastive_loss(
+    model,
+    batch: Dict[str, torch.Tensor],
+    *,
+    temperature: float,
+) -> Tuple[torch.Tensor | None, int]:
+    pairs = batch.get("rank_pairs")
+    if pairs is None or pairs.numel() == 0:
+        return None, 0
+    if temperature <= 0.0:
+        raise ValueError(f"temperature must be positive, got {temperature}")
+
+    input_ids = batch["rank_input_ids"]
+    attention_mask = batch.get("rank_attention_mask")
+    labels = batch["rank_labels"]
+    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+    logits = outputs.logits
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+    valid_mask = shift_labels != -100
+    if not bool(valid_mask.any()):
+        return None, 0
+
+    gather_labels = shift_labels.masked_fill(~valid_mask, 0)
+    log_probs = F.log_softmax(shift_logits, dim=-1)
+    token_log_probs = log_probs.gather(-1, gather_labels.unsqueeze(-1)).squeeze(-1)
+    token_log_probs = token_log_probs * valid_mask.to(dtype=token_log_probs.dtype)
+    lengths = valid_mask.sum(dim=-1).clamp_min(1).to(dtype=token_log_probs.dtype)
+    scores = token_log_probs.sum(dim=-1) / lengths
+
+    positive_scores = scores[pairs[:, 0]]
+    negative_scores = scores[pairs[:, 1]]
+    losses = F.softplus((negative_scores - positive_scores) / float(temperature))
+    weights = batch.get("rank_weights")
+    if weights is None:
+        weights = torch.ones_like(losses)
+    else:
+        weights = weights.to(device=losses.device, dtype=losses.dtype)
+    weight_sum = weights.sum()
+    if weight_sum <= 0.0:
+        return None, 0
+    return (losses * weights).sum() / weight_sum, int(pairs.shape[0])
 
 
 @torch.no_grad()
@@ -811,6 +929,7 @@ def run_ewok_eval_record(
     loss_weight_seen: float,
     ewok_items_path: Path,
     show_progress: bool,
+    primary_ewok_metric: str,
 ) -> Dict:
     model.eval()
     with torch.no_grad():
@@ -827,6 +946,14 @@ def run_ewok_eval_record(
     timestamp = datetime.now().isoformat()
     babylm = metrics_by_method[BABYLM_COMPLETION_CHOICE]
     context = metrics_by_method.get(EWOK_CONTEXT_SENSITIVITY)
+    primary_metrics = babylm
+    primary_metric_resolved = "completion"
+    if primary_ewok_metric == "context":
+        if context is not None:
+            primary_metrics = context
+            primary_metric_resolved = "context"
+        else:
+            print("[warn] EWoK context sensitivity was not returned; using completion-choice as primary.")
 
     for rec in per_item:
         item_record = dict(rec)
@@ -857,6 +984,11 @@ def run_ewok_eval_record(
         "loss_weight_seen": float(loss_weight_seen),
         "ewok_reductions": ["mean"],
         "ewok_primary_reduction": "mean",
+        "ewok_primary_metric": primary_ewok_metric,
+        "ewok_primary_metric_resolved": primary_metric_resolved,
+        "eval_primary_official_mean": to_jsonable(primary_metrics["domain_scores_official"]),
+        "eval_primary_full_mean": to_jsonable(primary_metrics["domain_scores_full"]),
+        "eval_primary_margin_stats_mean": to_jsonable(primary_metrics.get("domain_margin_stats")),
         "eval_official": to_jsonable(babylm["domain_scores_official"]),
         "eval_full": to_jsonable(babylm["domain_scores_full"]),
         "eval_margin_stats": to_jsonable(babylm.get("domain_margin_stats")),
@@ -884,15 +1016,15 @@ def run_ewok_eval_record(
             }
         )
 
-    full = babylm["domain_scores_full"]
-    margins = babylm.get("domain_margin_stats") or {}
+    full = primary_metrics["domain_scores_full"]
+    margins = primary_metrics.get("domain_margin_stats") or {}
     avg = pair_to_scalar(full.get("average"))
     spatial_acc = pair_to_scalar(full.get(SPATIAL_DOMAIN))
     spatial_margin = None
     if isinstance(margins.get(SPATIAL_DOMAIN), dict):
         spatial_margin = margins[SPATIAL_DOMAIN].get("mean_signed_m")
     print(
-        f"EWoK mean @ epoch {epoch:.3f}, step {step}: "
+        f"EWoK {primary_metric_resolved} mean @ epoch {epoch:.3f}, step {step}: "
         f"avg={avg if avg is not None else float('nan'):.4f}, "
         f"spatial={spatial_acc if spatial_acc is not None else float('nan'):.4f}, "
         f"spatial_margin={spatial_margin if spatial_margin is not None else float('nan'):.4f}"
@@ -1005,15 +1137,31 @@ def metric_records(path: Path) -> List[Dict]:
     return [record for record in payload if isinstance(record, dict)]
 
 
+def ewok_full_metric(record: Dict) -> Dict | None:
+    full = record.get("eval_primary_full_mean")
+    if isinstance(full, dict):
+        return full
+    full = record.get("eval_babylm_completion_choice_full_mean", record.get("eval_full_mean"))
+    return full if isinstance(full, dict) else None
+
+
+def ewok_margin_metric(record: Dict) -> Dict | None:
+    margins = record.get("eval_primary_margin_stats_mean")
+    if isinstance(margins, dict):
+        return margins
+    margins = record.get("eval_babylm_completion_choice_margin_stats_mean", record.get("eval_margin_stats_mean"))
+    return margins if isinstance(margins, dict) else None
+
+
 def ordered_domains_from_runs(run_records: Sequence[Tuple[str, List[Dict]]]) -> List[str]:
     seen = set()
     for _, records in run_records:
         for record in records:
-            full = record.get("eval_babylm_completion_choice_full_mean", record.get("eval_full_mean"))
-            if isinstance(full, dict):
+            full = ewok_full_metric(record)
+            if full is not None:
                 seen.update(str(domain) for domain in full if str(domain) != "average")
-            margins = record.get("eval_babylm_completion_choice_margin_stats_mean", record.get("eval_margin_stats_mean"))
-            if isinstance(margins, dict):
+            margins = ewok_margin_metric(record)
+            if margins is not None:
                 seen.update(str(domain) for domain in margins if str(domain) != "average")
     ordered = [domain for domain in DOMAIN_ORDER if domain in seen]
     return ordered + sorted(seen.difference(ordered))
@@ -1022,8 +1170,8 @@ def ordered_domains_from_runs(run_records: Sequence[Tuple[str, List[Dict]]]) -> 
 def extract_accuracy_series(records: Sequence[Dict], domain: str) -> List[Tuple[float, float]]:
     out = []
     for record in records:
-        full = record.get("eval_babylm_completion_choice_full_mean", record.get("eval_full_mean"))
-        if not isinstance(full, dict):
+        full = ewok_full_metric(record)
+        if full is None:
             continue
         y = pair_to_scalar(full.get(domain))
         x = record.get("epoch", record.get("step"))
@@ -1035,8 +1183,8 @@ def extract_accuracy_series(records: Sequence[Dict], domain: str) -> List[Tuple[
 def extract_margin_series(records: Sequence[Dict], domain: str) -> List[Tuple[float, float]]:
     out = []
     for record in records:
-        margins = record.get("eval_babylm_completion_choice_margin_stats_mean", record.get("eval_margin_stats_mean"))
-        if not isinstance(margins, dict):
+        margins = ewok_margin_metric(record)
+        if margins is None:
             continue
         stats = margins.get(domain)
         if not isinstance(stats, dict):
@@ -1218,7 +1366,7 @@ def plot_synthetic_spatial_transfer_gap(
         xs = sorted(set(ewok).intersection(in_format).intersection(paraphrase))
         if not xs:
             continue
-        axes[0].plot(xs, [ewok[x] for x in xs], color=color, linewidth=1.6, linestyle="-", label=f"{label} / EWoK")
+        axes[0].plot(xs, [ewok[x] for x in xs], color=color, linewidth=1.6, linestyle="-", label=f"{label} / Primary EWoK")
         axes[0].plot(
             xs,
             [in_format[x] for x in xs],
@@ -1241,7 +1389,7 @@ def plot_synthetic_spatial_transfer_gap(
             color=color,
             linewidth=1.4,
             linestyle="--",
-            label=f"{label} / in_format-EWoK",
+            label=f"{label} / in_format-primary",
         )
         axes[1].plot(
             xs,
@@ -1249,7 +1397,7 @@ def plot_synthetic_spatial_transfer_gap(
             color=color,
             linewidth=1.4,
             linestyle=":",
-            label=f"{label} / paraphrase-EWoK",
+            label=f"{label} / paraphrase-primary",
         )
         plotted += 1
     if not plotted:
@@ -1258,12 +1406,12 @@ def plot_synthetic_spatial_transfer_gap(
     axes[0].axhline(0.5, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
     axes[0].set_ylim(0.0, 1.0)
     axes[0].set_ylabel("Accuracy")
-    axes[0].set_title("Synthetic vs EWoK Spatial Accuracy")
+    axes[0].set_title("Synthetic vs Primary EWoK Spatial Accuracy")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend(fontsize=7)
     axes[1].axhline(0.0, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
     axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("Synthetic - EWoK")
+    axes[1].set_ylabel("Synthetic - primary")
     axes[1].set_title("Transfer Gap")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend(fontsize=7)
@@ -1328,7 +1476,7 @@ def plot_domain_grid(
     for idx in range(len(domains), len(flat_axes)):
         flat_axes[idx].axis("off")
 
-    title = "EWoK BabyLM Completion Full Mean"
+    title = "EWoK Primary Full Mean"
     title += " Accuracy by Domain" if metric == "accuracy" else " Margin by Domain"
     fig.suptitle(title, fontsize=14)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1369,14 +1517,14 @@ def plot_spatial_main(run_records: Sequence[Tuple[str, List[Dict]]], out_path: P
     axes[0].axhline(0.5, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
     axes[0].set_ylim(0.0, 1.0)
     axes[0].set_ylabel("Full mean acc")
-    axes[0].set_title("Spatial Relations EWoK Accuracy")
+    axes[0].set_title("Spatial Relations Primary EWoK Accuracy")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend(fontsize=8)
 
     axes[1].axhline(0.0, color="#999999", linewidth=0.9, linestyle=(0, (4, 2)))
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("Mean signed margin")
-    axes[1].set_title("Spatial Relations EWoK Margin")
+    axes[1].set_title("Spatial Relations Primary EWoK Margin")
     axes[1].grid(True, alpha=0.25)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1393,8 +1541,8 @@ def write_plots(run_infos: Sequence[Tuple[str, Path]], output_dir: Path, *, dpi:
 
     created = []
     for metric, filename in (
-        ("accuracy", "ewok_completion_full_mean_accuracy_domains_4x3_by_epoch.png"),
-        ("margin", "ewok_completion_full_mean_margin_domains_4x3_by_epoch.png"),
+        ("accuracy", "ewok_primary_full_mean_accuracy_domains_4x3_by_epoch.png"),
+        ("margin", "ewok_primary_full_mean_margin_domains_4x3_by_epoch.png"),
     ):
         path = plot_domain_grid(run_records, output_dir / filename, metric=metric, dpi=dpi)
         if path is not None:
@@ -1499,7 +1647,7 @@ def train_one_run(
     elif args.loss_mode == "weighted":
         loss_label = f"weighted{args.completion_loss_ratio:g}"
     if args.contrastive_loss_weight > 0.0:
-        loss_label = f"{loss_label}_contrast{args.contrastive_loss_weight:g}"
+        loss_label = f"{loss_label}_contrast{args.contrastive_objective}{args.contrastive_loss_weight:g}"
     label = f"{safe_name(checkpoint)} lr={learning_rate:g} loss={loss_label}"
 
     train_dataset, train_pack_stats = pack_texts(
@@ -1605,8 +1753,10 @@ def train_one_run(
             "train_pack_stats": train_pack_stats.__dict__,
             "val_pack_stats": None if val_pack_stats is None else val_pack_stats.__dict__,
             "contrastive_groups": len(contrastive_groups),
+            "contrastive_objective": args.contrastive_objective,
             "contrastive_loss_weight": args.contrastive_loss_weight,
             "contrastive_margin": args.contrastive_margin,
+            "rank_temperature": args.rank_temperature,
             "contrastive_batch_size": contrastive_batch_size,
             "synthetic_spatial_eval_items": len(synthetic_spatial_items),
             "synthetic_spatial_eval_batch_size": synthetic_spatial_batch_size,
@@ -1674,6 +1824,7 @@ def train_one_run(
             loss_weight_seen=loss_weight_seen,
             ewok_items_path=ewok_items_path,
             show_progress=args.ewok_progress,
+            primary_ewok_metric=args.primary_ewok_metric,
         )
         record = maybe_add_synthetic_spatial_eval(
             record=record,
@@ -1695,7 +1846,10 @@ def train_one_run(
     stop_training = False
     contrastive_iter = iter(contrastive_loader) if contrastive_loader is not None else None
     contrastive_triplets_seen = 0
+    rank_pairs_seen = 0
     last_contrastive_loss = None
+    last_representation_loss = None
+    last_rank_loss = None
     for epoch_idx in range(int(math.ceil(args.epochs))):
         if stop_training:
             break
@@ -1715,14 +1869,30 @@ def train_one_run(
                     contrastive_iter = iter(contrastive_loader)
                     contrastive_batch = next(contrastive_iter)
                 contrastive_batch = {key: value.to(device) for key, value in contrastive_batch.items()}
-                contrastive_loss, triplets = batch_contrastive_loss(
-                    model,
-                    contrastive_batch,
-                    margin=args.contrastive_margin,
-                )
-                if contrastive_loss is not None:
+                contrastive_terms = []
+                if args.contrastive_objective in {"representation", "both"}:
+                    representation_loss, triplets = batch_contrastive_loss(
+                        model,
+                        contrastive_batch,
+                        margin=args.contrastive_margin,
+                    )
+                    if representation_loss is not None:
+                        contrastive_terms.append(representation_loss)
+                        contrastive_triplets_seen += triplets
+                        last_representation_loss = float(representation_loss.item())
+                if args.contrastive_objective in {"rank", "both"}:
+                    rank_loss, rank_pairs = batch_rank_contrastive_loss(
+                        model,
+                        contrastive_batch,
+                        temperature=args.rank_temperature,
+                    )
+                    if rank_loss is not None:
+                        contrastive_terms.append(rank_loss)
+                        rank_pairs_seen += rank_pairs
+                        last_rank_loss = float(rank_loss.item())
+                if contrastive_terms:
+                    contrastive_loss = sum(contrastive_terms) / float(len(contrastive_terms))
                     total_loss_mean = total_loss_mean + args.contrastive_loss_weight * contrastive_loss
-                    contrastive_triplets_seen += triplets
                     last_contrastive_loss = float(contrastive_loss.item())
 
             loss = total_loss_mean / max(1, args.grad_accum_steps)
@@ -1755,11 +1925,13 @@ def train_one_run(
 
             epoch_float = update_step / float(updates_per_epoch)
             if update_step % args.log_every == 0:
-                contrastive_part = (
-                    f" contrast={last_contrastive_loss:.4f} triplets={contrastive_triplets_seen}"
-                    if last_contrastive_loss is not None
-                    else ""
-                )
+                contrastive_part = ""
+                if last_contrastive_loss is not None:
+                    contrastive_part = f" contrast={last_contrastive_loss:.4f}"
+                    if last_representation_loss is not None:
+                        contrastive_part += f" repr={last_representation_loss:.4f} triplets={contrastive_triplets_seen}"
+                    if last_rank_loss is not None:
+                        contrastive_part += f" rank={last_rank_loss:.4f} rank_pairs={rank_pairs_seen}"
                 print(
                     f"{label} step {update_step}/{total_steps} "
                     f"epoch={epoch_float:.3f} loss={last_train_loss:.4f} lr={next_lr:.3e} "
@@ -1787,6 +1959,7 @@ def train_one_run(
                     loss_weight_seen=loss_weight_seen,
                     ewok_items_path=ewok_items_path,
                     show_progress=args.ewok_progress,
+                    primary_ewok_metric=args.primary_ewok_metric,
                 )
                 record = maybe_add_synthetic_spatial_eval(
                     record=record,
@@ -1833,6 +2006,7 @@ def train_one_run(
             loss_weight_seen=loss_weight_seen,
             ewok_items_path=ewok_items_path,
             show_progress=args.ewok_progress,
+            primary_ewok_metric=args.primary_ewok_metric,
         )
         record = maybe_add_synthetic_spatial_eval(
             record=record,
@@ -1904,13 +2078,28 @@ def parse_args() -> argparse.Namespace:
         "--contrastive-loss-weight",
         type=float,
         default=0.0,
-        help="Weight for triplet contrastive loss over contrast_set_id groups. Zero disables contrastive training.",
+        help="Weight for the selected contrastive loss over contrast_set_id groups. Zero disables contrastive training.",
+    )
+    parser.add_argument(
+        "--contrastive-objective",
+        choices=("representation", "rank", "both"),
+        default="representation",
+        help=(
+            "representation uses cosine triplet margin over pooled hidden states; "
+            "rank uses length-normalized log P(T+|C) vs P(T-|C); both averages the two."
+        ),
     )
     parser.add_argument(
         "--contrastive-margin",
         type=float,
         default=0.2,
         help="Cosine triplet margin: anchor-positive similarity should exceed anchor-negative by this amount.",
+    )
+    parser.add_argument(
+        "--rank-temperature",
+        type=float,
+        default=1.0,
+        help="Temperature tau for rank loss softplus((s_minus - s_plus) / tau).",
     )
     parser.add_argument(
         "--contrastive-batch-size",
@@ -1940,7 +2129,16 @@ def parse_args() -> argparse.Namespace:
         "--ewok-variant",
         choices=("fast", "full"),
         default="full",
-        help="Dataset variant; scoring is BabyLM completion full mean.",
+        help="Dataset variant.",
+    )
+    parser.add_argument(
+        "--primary-ewok-metric",
+        choices=("completion", "context"),
+        default="completion",
+        help=(
+            "Metric used for primary EWoK logs and plots. completion uses BabyLM completion choice; "
+            "context uses EWoK context sensitivity when available."
+        ),
     )
     parser.add_argument("--ewok-progress", action="store_true")
     parser.add_argument(
@@ -1996,6 +2194,8 @@ def main() -> None:
         raise ValueError("--contrastive-loss-weight must be non-negative")
     if args.contrastive_margin < 0.0:
         raise ValueError("--contrastive-margin must be non-negative")
+    if args.rank_temperature <= 0.0:
+        raise ValueError("--rank-temperature must be positive")
     if args.contrastive_batch_size is not None and args.contrastive_batch_size <= 0:
         raise ValueError("--contrastive-batch-size must be positive")
     if args.synthetic_spatial_eval_n_per_tier <= 0:
@@ -2031,7 +2231,7 @@ def main() -> None:
             elif args.loss_mode == "weighted":
                 loss_name = f"weighted{args.completion_loss_ratio:g}"
             if args.contrastive_loss_weight > 0.0:
-                loss_name = f"{loss_name}_contrast{args.contrastive_loss_weight:g}"
+                loss_name = f"{loss_name}_contrast{args.contrastive_objective}{args.contrastive_loss_weight:g}"
             run_name = f"{safe_name(checkpoint)}_lr{learning_rate:g}_loss{loss_name}_seed{args.seed}"
             run_dir = args.output_dir / run_name
             run_infos.append(

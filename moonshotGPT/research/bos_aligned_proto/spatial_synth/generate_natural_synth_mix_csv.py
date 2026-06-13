@@ -8,6 +8,7 @@ import csv
 import json
 import random
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -60,9 +61,71 @@ def select_token_prefix(
     *,
     target_tokens: int,
     rng: random.Random,
-) -> Tuple[List[Dict[str, str]], int]:
+) -> Tuple[List[Dict[str, str]], int, Dict[str, object]]:
     if target_tokens <= 0:
-        return [], 0
+        return [], 0, {"synthetic_grouped_selection": False}
+
+    has_contrast_sets = any(str(row.get("contrast_set_id", "")).strip() for row in rows)
+    if has_contrast_sets:
+        groups: List[Tuple[str, List[Dict[str, str]]]] = []
+        grouped: Dict[str, List[Dict[str, str]]] = {}
+        singleton_idx = 0
+        for row in rows:
+            contrast_set_id = str(row.get("contrast_set_id", "")).strip()
+            if contrast_set_id:
+                key = f"contrast:{contrast_set_id}"
+            else:
+                key = f"row:{singleton_idx}"
+                singleton_idx += 1
+            if key not in grouped:
+                grouped[key] = []
+                groups.append((key, grouped[key]))
+            grouped[key].append(row)
+
+        rng.shuffle(groups)
+        selected: List[Dict[str, str]] = []
+        selected_keys: List[str] = []
+        total = 0
+        for key, group_rows in groups:
+            selected.extend(dict(row) for row in group_rows)
+            selected_keys.append(key)
+            total += sum(int(row["mix_token_estimate"]) for row in group_rows)
+            if total >= target_tokens:
+                role_counts = Counter(
+                    str(row.get("contrast_role", "")).strip()
+                    for row in selected
+                    if str(row.get("contrast_role", "")).strip()
+                )
+                family_counts = Counter(
+                    str(row.get("contrast_family", "")).strip()
+                    for row in selected
+                    if str(row.get("contrast_family", "")).strip()
+                )
+                stats = {
+                    "synthetic_grouped_selection": True,
+                    "synthetic_groups_available": len(groups),
+                    "synthetic_groups_selected": len(selected_keys),
+                    "synthetic_contrastive_groups_available": sum(
+                        1 for group_key, _ in groups if group_key.startswith("contrast:")
+                    ),
+                    "synthetic_contrastive_groups_selected": sum(
+                        1 for group_key in selected_keys if group_key.startswith("contrast:")
+                    ),
+                    "synthetic_singleton_groups_available": sum(
+                        1 for group_key, _ in groups if group_key.startswith("row:")
+                    ),
+                    "synthetic_singleton_groups_selected": sum(
+                        1 for group_key in selected_keys if group_key.startswith("row:")
+                    ),
+                    "synthetic_contrast_role_counts_selected": dict(role_counts),
+                    "synthetic_contrast_family_counts_selected": dict(family_counts),
+                }
+                return selected, total, stats
+
+        raise ValueError(
+            f"Synthetic rows only provide {total} grouped tokens, below requested target {target_tokens}."
+        )
+
     shuffled = list(rows)
     rng.shuffle(shuffled)
     selected: List[Dict[str, str]] = []
@@ -71,7 +134,11 @@ def select_token_prefix(
         selected.append(dict(row))
         total += int(row["mix_token_estimate"])
         if total >= target_tokens:
-            return selected, total
+            return selected, total, {
+                "synthetic_grouped_selection": False,
+                "synthetic_groups_available": len(rows),
+                "synthetic_groups_selected": len(selected),
+            }
     raise ValueError(
         f"Synthetic rows only provide {total} tokens, below requested target {target_tokens}."
     )
@@ -235,7 +302,7 @@ def main() -> None:
     synthetic_target = int(round(args.target_tokens * args.synthetic_token_ratio))
     natural_target = max(0, int(args.target_tokens) - synthetic_target)
 
-    synthetic_rows, synthetic_tokens = select_token_prefix(
+    synthetic_rows, synthetic_tokens, synthetic_selection_stats = select_token_prefix(
         synthetic_rows_all,
         target_tokens=synthetic_target,
         rng=random.Random(args.seed + 101),
@@ -280,6 +347,7 @@ def main() -> None:
         "synthetic_rows": len(synthetic_rows),
         "natural_rows": len(natural_rows),
         "total_rows": len(mixed_rows),
+        "synthetic_selection": synthetic_selection_stats,
         "seed": args.seed,
         "natural_split": args.natural_split,
         "natural_skip_docs": args.natural_skip_docs,

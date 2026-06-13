@@ -21,7 +21,7 @@ include `context` and `completion`, where `completion` is the final sentence
 used by optional completion-only loss masking.
 
 Fine-tune one or more checkpoints with the default GPT-2 tokenizer and EWoK
-BabyLM completion full-mean evaluation:
+evaluation:
 
 ```bash
 python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_lm.py \
@@ -114,18 +114,31 @@ python research/bos_aligned_proto/spatial_synth/generate_spatial_relations_csv.p
   - `pass_through_carried_object_same_latent`: someone carries the object from
     behind the agent to in front of the agent.
 
-For training, enable the auxiliary triplet objective with
-`--contrastive-loss-weight`. The trainer mean-pools final-layer hidden states
-and applies cosine triplet margin loss:
+For training, enable an auxiliary contrastive objective with
+`--contrastive-loss-weight`. The default is
+`--contrastive-objective representation`: the trainer mean-pools final-layer
+hidden states and applies cosine triplet margin loss:
 
 ```text
-loss = max(0, margin + sim(anchor, hard_negative) - sim(anchor, positive))
+L_repr = max(0, margin + sim(anchor, hard_negative) - sim(anchor, positive))
 ```
+
+An alternative is `--contrastive-objective rank`, which directly ranks the
+positive and negative completions under the same context:
+
+```text
+s+ = length_normalized_log P_theta(T+ | C)
+s- = length_normalized_log P_theta(T- | C)
+L_rank = softplus((s- - s+) / tau)
+```
+
+Use `--rank-temperature` for `tau`. The `both` objective averages `L_repr` and
+`L_rank` before applying `--contrastive-loss-weight`.
 
 The total training loss is:
 
 ```text
-causal_lm_loss + contrastive_loss_weight * contrastive_triplet_loss
+causal_lm_loss + contrastive_loss_weight * selected_contrastive_loss
 ```
 
 Example:
@@ -138,18 +151,48 @@ python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_l
   --epochs 3 \
   --loss-mode full \
   --contrastive-loss-weight 0.1 \
+  --contrastive-objective rank \
+  --rank-temperature 1.0 \
   --contrastive-margin 0.2
 ```
 
 Useful first sweeps are `--contrastive-loss-weight 0.03/0.1/0.3` and
-`--contrastive-margin 0.1/0.2/0.4`. Group-aware train/val splitting keeps each
-anchor/positive/negative triplet together.
+`--contrastive-margin 0.1/0.2/0.4` for representation loss, and
+`--rank-temperature 0.3/1.0/3.0` for rank loss. Group-aware train/val splitting
+keeps each anchor/positive/negative triplet together.
+
+For natural-text dose sweeps, build mixed CSVs with
+`generate_natural_synth_mix_csv.py`. When the synthetic CSV contains
+`contrast_set_id`, the mixer samples whole contrast sets together, so an
+anchor/positive/hard-negative triplet is never split across the synthetic dose.
+This can overshoot the requested synthetic token budget by up to one contrast
+set, and the manifest records the selected group, role, and family counts.
+
+For the contrastive dose-sweep runs, use EWoK context sensitivity as the primary
+metric:
+
+```bash
+python research/bos_aligned_proto/spatial_synth/train_spatial_relations_causal_lm.py \
+  --data runs/research/bos_aligned_proto/spatial_synth/natural_contrastive_mix_10pct.csv \
+  --checkpoints /path/to/checkpoint_16000 \
+  --learning-rates 1e-5 \
+  --epochs 1 \
+  --loss-mode full \
+  --contrastive-loss-weight 0.03 \
+  --contrastive-objective rank \
+  --rank-temperature 1.0 \
+  --primary-ewok-metric context
+```
 
 ## EWoK Metric Conventions
 
-Unless explicitly stated otherwise, this project reports **EWoK BabyLM
-completion full-mean** scores with `score_reduction=mean`. For each EWoK item,
-the scorer compares both directions of the paired completion task:
+By default, this project reports **EWoK BabyLM completion full-mean** scores
+with `score_reduction=mean`. Pass `--primary-ewok-metric context` to make EWoK
+context sensitivity drive the console logs and primary training plots instead.
+Both methods are still saved in `step_metrics.json`.
+
+For each EWoK item, the completion-choice scorer compares both directions of
+the paired completion task:
 
 ```text
 m1 = logp(Target1 | Context1) - logp(Target2 | Context1)
@@ -157,8 +200,8 @@ m2 = logp(Target2 | Context2) - logp(Target1 | Context2)
 m  = 0.5 * (m1 + m2)
 ```
 
-The reported EWoK accuracy in the training plots is the **combined completion
-accuracy**:
+When completion-choice is the primary metric, the reported EWoK accuracy in the
+training plots is the **combined completion accuracy**:
 
 ```text
 combined_acc = 0.5 * (1[m1 > 0] + 1[m2 > 0])
@@ -170,11 +213,19 @@ not strict both-right accuracy. Strict both-right would require `m1 > 0` and
 
 Naming conventions in the saved files:
 
+- `eval_primary_full_mean`: the selected primary metric for plots, either
+  completion-choice by default or context sensitivity with
+  `--primary-ewok-metric context`.
+- `eval_primary_margin_stats_mean`: margin stats for the selected primary
+  metric.
 - `eval_babylm_completion_choice_official_mean`: only the `m1` side.
 - `eval_babylm_completion_choice_full_mean`: the `(m1_acc, m2_acc)` pair; plots
-  average the two sides into combined accuracy.
+  average the two sides into combined accuracy when completion is primary.
 - `eval_babylm_completion_choice_margin_stats_mean`: includes `mean_signed_m`,
   the mean of `m = 0.5 * (m1 + m2)`.
+- `eval_context_sensitivity_full_mean`: EWoK context-sensitivity scores.
+- `eval_context_sensitivity_margin_stats_mean`: context-sensitivity margin
+  stats.
 - `ewok_items.jsonl`: per-item rows include `correct_official`,
   `correct_symmetric`, `correct_combined`, `margin_official_m1`,
   `margin_symmetric_m2`, and `margin_combined`.
