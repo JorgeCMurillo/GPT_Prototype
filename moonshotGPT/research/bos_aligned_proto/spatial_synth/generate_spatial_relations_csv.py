@@ -2472,6 +2472,324 @@ def generate_vertical_motion_contrast_set(
     ]
 
 
+def generate_front_behind_reciprocal_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate equivalent front/behind descriptions from reciprocal viewpoints."""
+    relation = rng.choice(["front", "behind"])
+    facing = rng.choice(HORIZONTAL)
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    obj_mention = get_mention(obj, False)
+    obj_possessive = get_possessive(obj, False)
+    inverse_rel = inverse_relation(relation)
+    delta = WORLD_DIRS[facing] if relation == "front" else neg(WORLD_DIRS[facing])
+    state = State(delta, (0, 0, 0), facing, facing)
+    anchor = _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_front_behind_reciprocal_{relation}",
+        observer="b",
+        before=state,
+        after=state,
+        text=(
+            f"{agent} and {obj_mention} faced the same direction and held fixed positions. "
+            f"From {obj_possessive} place, {agent} was {rel_phrase(relation, obj_mention)}."
+        ),
+        difficulty=3,
+        template_id=1330,
+        template_family="contrastive_front_behind_reciprocal",
+    )
+    positive = _build_item(
+        example_id=example_id + 1,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_front_behind_reciprocal_{relation}",
+        observer="a",
+        before=state,
+        after=state,
+        text=(
+            f"The same arrangement was described from {agent}'s place. "
+            f"{obj_mention} was {rel_phrase(inverse_rel, agent)}."
+        ),
+        difficulty=3,
+        template_id=1331,
+        template_family="contrastive_front_behind_reciprocal",
+    )
+    negative = make_final_relation_negative(positive, negative_type="front_behind_reciprocal_inverse_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"front_behind_reciprocal_{relation}_{inverse_rel}"
+    contrast_family = "front_behind_reciprocal_equivalence"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="front_behind_reciprocal_inverse_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_step_touch_front_behind_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int,
+    relation: str,
+    facing: str,
+    template_variant: int,
+) -> Item:
+    if relation not in {"front", "behind"}:
+        raise ValueError(f"relation must be 'front' or 'behind', got {relation!r}")
+    if facing not in HORIZONTAL:
+        raise ValueError(f"facing must be one of {HORIZONTAL}, got {facing!r}")
+    if template_variant not in {0, 1}:
+        raise ValueError(f"template_variant must be 0 or 1, got {template_variant}")
+
+    delta = WORLD_DIRS[facing] if relation == "front" else neg(WORLD_DIRS[facing])
+    state = State((0, 0, 0), delta, facing, facing)
+    obj_mention = get_mention(obj, False)
+    step_word = "forward" if relation == "front" else "backward"
+    templates = [
+        (
+            "{agent} could touch {obj} after taking one step {step_word}. "
+            "That clue placed {obj} {relation}."
+        ),
+        (
+            "A single step {step_word} from {agent} would reach {obj}. "
+            "So {obj} was {relation}."
+        ),
+    ]
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        step_word=step_word,
+        relation=rel_phrase(relation, agent),
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_step_touch_{relation}",
+        observer="a",
+        before=state,
+        after=state,
+        text=text,
+        difficulty=3,
+        template_id=1340 + template_variant,
+        template_family="contrastive_step_touch_front_behind",
+    )
+
+
+def generate_step_touch_front_behind_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate step-forward/backward reachability cues for front/behind."""
+    relation = rng.choice(["front", "behind"])
+    facing = rng.choice(HORIZONTAL)
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    anchor = generate_step_touch_front_behind_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id,
+        relation=relation,
+        facing=facing,
+        template_variant=0,
+    )
+    positive = generate_step_touch_front_behind_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id + 1,
+        relation=relation,
+        facing=facing,
+        template_variant=1,
+    )
+    negative = make_final_relation_negative(positive, negative_type="step_touch_front_behind_inverse_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"step_touch_{relation}"
+    contrast_family = "front_behind_step_touch_same_latent"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="step_touch_front_behind_inverse_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
+def generate_turn_to_front_behind_item(
+    rng: random.Random,
+    *,
+    agent: str,
+    obj: str,
+    example_id: int,
+    start_side: str,
+    turn: str,
+    before_facing: str,
+    template_variant: int,
+) -> Item:
+    if start_side not in {"left", "right"}:
+        raise ValueError(f"start_side must be 'left' or 'right', got {start_side!r}")
+    if turn not in {"left", "right"}:
+        raise ValueError(f"turn must be 'left' or 'right', got {turn!r}")
+    if before_facing not in HORIZONTAL:
+        raise ValueError(f"before_facing must be one of {HORIZONTAL}, got {before_facing!r}")
+    if template_variant not in {0, 1}:
+        raise ValueError(f"template_variant must be 0 or 1, got {template_variant}")
+
+    initial_delta = WORLD_DIRS[turn_facing(before_facing, start_side)]
+    before = State((0, 0, 0), initial_delta, before_facing, rng.choice(HORIZONTAL))
+    after = State(before.a_pos, before.b_pos, turn_facing(before_facing, turn), before.b_facing)
+    before_rel = compute_relations(before, "a")[1]
+    after_rel = compute_relations(after, "a")[1]
+    obj_mention = get_mention(obj, False)
+    templates = [
+        (
+            "{obj} started {before_rel}. {agent} turned {turn} in place while "
+            "{obj} stayed fixed. After the turn, {obj} was {after_rel}."
+        ),
+        (
+            "With {obj} still {before_rel}, {agent} made a {turn} turn. "
+            "From the new stance, {obj} was {after_rel}."
+        ),
+    ]
+    text = templates[template_variant].format(
+        agent=agent,
+        obj=obj_mention,
+        turn=turn,
+        before_rel=rel_phrase(before_rel, agent),
+        after_rel=rel_phrase(after_rel, agent),
+    )
+    return _build_item(
+        example_id=example_id,
+        agent=agent,
+        obj=obj,
+        operation=f"contrastive_turn_{start_side}_to_{after_rel}",
+        observer="a",
+        before=before,
+        after=after,
+        text=text,
+        difficulty=3,
+        template_id=1350 + template_variant,
+        template_family="contrastive_turn_to_front_behind",
+    )
+
+
+def generate_turn_to_front_behind_contrast_set(
+    rng: random.Random,
+    *,
+    set_idx: int,
+    example_id: int,
+) -> List[Item]:
+    """Generate left/right-start turn updates whose answer is front/behind."""
+    start_side = rng.choice(["left", "right"])
+    turn = rng.choice(["left", "right"])
+    before_facing = rng.choice(HORIZONTAL)
+    agent = rng.choice(AGENTS)
+    obj = rng.choice(OBJECTS)
+    anchor = generate_turn_to_front_behind_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id,
+        start_side=start_side,
+        turn=turn,
+        before_facing=before_facing,
+        template_variant=0,
+    )
+    positive = generate_turn_to_front_behind_item(
+        rng,
+        agent=agent,
+        obj=obj,
+        example_id=example_id + 1,
+        start_side=start_side,
+        turn=turn,
+        before_facing=before_facing,
+        template_variant=1,
+    )
+    negative = make_final_relation_negative(positive, negative_type="turn_to_front_behind_inverse_error")
+
+    contrast_set_id = f"contrast_{set_idx:06d}"
+    equiv_class_id = f"turn_{start_side}_{turn}_to_{anchor.after_relative}"
+    contrast_family = "turn_to_front_behind_same_latent"
+    return [
+        with_contrast_metadata(
+            anchor,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="anchor",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            positive,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="positive",
+            contrast_family=contrast_family,
+        ),
+        with_contrast_metadata(
+            negative,
+            contrast_set_id=contrast_set_id,
+            equiv_class_id=equiv_class_id,
+            contrast_role="hard_negative",
+            contrast_family=contrast_family,
+            negative_type="turn_to_front_behind_inverse_error",
+            is_plausible=0,
+            ntp_weight=0.0,
+        ),
+    ]
+
+
 def generate_pass_by_contrast_set(
     rng: random.Random,
     *,
@@ -2627,6 +2945,9 @@ def generate_contrastive_items(
         "role_reciprocal",
         "vertical_reciprocal",
         "vertical_motion",
+        "front_behind_reciprocal",
+        "front_behind_step_touch",
+        "turn_to_front_behind",
         "pass_by_forward",
         "pass_through_forward",
     ]
@@ -2647,6 +2968,12 @@ def generate_contrastive_items(
             group = generate_vertical_reciprocal_contrast_set(rng, set_idx=set_idx, example_id=example_id)
         elif family == "vertical_motion":
             group = generate_vertical_motion_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "front_behind_reciprocal":
+            group = generate_front_behind_reciprocal_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "front_behind_step_touch":
+            group = generate_step_touch_front_behind_contrast_set(rng, set_idx=set_idx, example_id=example_id)
+        elif family == "turn_to_front_behind":
+            group = generate_turn_to_front_behind_contrast_set(rng, set_idx=set_idx, example_id=example_id)
         elif family == "pass_by_backward":
             group = generate_pass_by_contrast_set(
                 rng,

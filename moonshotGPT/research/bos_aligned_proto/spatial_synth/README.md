@@ -93,6 +93,15 @@ Current contrastive families:
 - `vertical_motion_same_latent`: same vertical motion event rendered as direct
   and inverse final relations, such as "Ava moved higher, so Ava is above the
   box" paired with "the box is below Ava."
+- `front_behind_reciprocal_equivalence`: same front/behind arrangement from
+  reciprocal subject/reference views, such as "Ava is in front of the box"
+  paired with "the box is behind Ava."
+- `front_behind_step_touch_same_latent`: step-forward/backward reachability cues
+  that imply front/behind, such as "one step forward would reach the box" paired
+  with "the box is in front of Ava."
+- `turn_to_front_behind_same_latent`: left/right-start turn updates whose final
+  answer is front/behind, such as "the box started left; Ava turned left; the
+  box was in front."
 - `pass_by_same_latent`: same forward pass-by scene rendered with two
   paraphrases, plus a wrong final-relation negative.
 - `pass_through_forward_same_latent`: same forward pass-through scene rendered
