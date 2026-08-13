@@ -8,6 +8,10 @@ def test_bos_core_config_defaults_and_overrides() -> None:
     assert defaults.llama_intermediate_size == 0
     assert defaults.llama_num_key_value_heads == 0
     assert defaults.llama_tie_word_embeddings is True
+    assert defaults.qwen_intermediate_size == 0
+    assert defaults.qwen_num_key_value_heads == 0
+    assert defaults.qwen_head_dim == 0
+    assert defaults.qwen_tie_word_embeddings is True
     assert defaults.rope_theta == 10000.0
     assert defaults.use_liger_kernel is False
     assert defaults.tokenizer_name_or_path == ""
@@ -72,3 +76,29 @@ def test_bos_core_config_defaults_and_overrides() -> None:
     assert overridden.save_final_checkpoint is False
     assert overridden.muon_batch_updates is False
     assert overridden.profile_optimizer_steps is True
+
+    qwen = parse_args(
+        [
+            "--data_dir",
+            "/tmp/bos_rows",
+            "--model_arch",
+            "qwen3",
+            "--qwen_intermediate_size",
+            "3152",
+            "--qwen_num_key_value_heads",
+            "8",
+            "--qwen_head_dim",
+            "64",
+            "--qwen_tie_word_embeddings",
+            "--rope_theta",
+            "1000000",
+            "--use_liger_kernel",
+        ]
+    )
+    assert qwen.model_arch == "qwen3"
+    assert qwen.qwen_intermediate_size == 3152
+    assert qwen.qwen_num_key_value_heads == 8
+    assert qwen.qwen_head_dim == 64
+    assert qwen.qwen_tie_word_embeddings is True
+    assert qwen.rope_theta == 1_000_000
+    assert qwen.use_liger_kernel is True

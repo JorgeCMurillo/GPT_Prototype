@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from transformers import GPT2Config, LlamaConfig
+from transformers import GPT2Config, LlamaConfig, Qwen3Config
 
 
-SUPPORTED_MODEL_ARCHES = ("gpt2", "llama")
+SUPPORTED_MODEL_ARCHES = ("gpt2", "llama", "qwen3")
 
 
 def normalize_model_arch(model_arch: str) -> str:
@@ -20,6 +20,8 @@ def normalize_model_arch(model_arch: str) -> str:
         "llama-2": "llama",
         "llama3": "llama",
         "llama-3": "llama",
+        "qwen3": "qwen3",
+        "qwen-3": "qwen3",
     }
     if arch not in aliases:
         raise ValueError(f"Unsupported model_arch={model_arch!r}; expected one of {SUPPORTED_MODEL_ARCHES}.")
@@ -28,6 +30,10 @@ def normalize_model_arch(model_arch: str) -> str:
 
 def default_llama_intermediate_size(n_embd: int) -> int:
     return int(4 * int(n_embd))
+
+
+def default_qwen3_intermediate_size(n_embd: int) -> int:
+    return int(3 * int(n_embd))
 
 
 def build_causal_lm_config(
@@ -44,6 +50,10 @@ def build_causal_lm_config(
     llama_intermediate_size: int = 0,
     llama_num_key_value_heads: int = 0,
     llama_tie_word_embeddings: bool = True,
+    qwen_intermediate_size: int = 0,
+    qwen_num_key_value_heads: int = 0,
+    qwen_head_dim: int = 0,
+    qwen_tie_word_embeddings: bool = True,
     rope_theta: float = 10000.0,
 ):
     """Build a from-scratch causal-LM config while keeping trainer knobs stable."""
@@ -91,6 +101,39 @@ def build_causal_lm_config(
             tie_word_embeddings=bool(llama_tie_word_embeddings),
             rope_theta=float(rope_theta),
         )
+    elif arch == "qwen3":
+        intermediate_size = (
+            int(qwen_intermediate_size)
+            if int(qwen_intermediate_size) > 0
+            else default_qwen3_intermediate_size(int(n_embd))
+        )
+        num_key_value_heads = (
+            int(qwen_num_key_value_heads)
+            if int(qwen_num_key_value_heads) > 0
+            else max(1, int(n_head) // 2)
+        )
+        head_dim = int(qwen_head_dim) if int(qwen_head_dim) > 0 else int(n_embd) // int(n_head)
+        if int(n_head) % int(num_key_value_heads) != 0:
+            raise ValueError(
+                "qwen_num_key_value_heads must divide n_head, "
+                f"got n_head={n_head}, qwen_num_key_value_heads={num_key_value_heads}."
+            )
+        config = Qwen3Config(
+            vocab_size=int(vocab_size),
+            hidden_size=int(n_embd),
+            intermediate_size=int(intermediate_size),
+            num_hidden_layers=int(n_layer),
+            num_attention_heads=int(n_head),
+            num_key_value_heads=int(num_key_value_heads),
+            head_dim=int(head_dim),
+            max_position_embeddings=int(seq_len),
+            bos_token_id=int(bos_token_id),
+            eos_token_id=int(eos_token_id),
+            pad_token_id=None if pad_token_id is None else int(pad_token_id),
+            attention_dropout=0.0,
+            tie_word_embeddings=bool(qwen_tie_word_embeddings),
+            rope_theta=float(rope_theta),
+        )
     else:  # pragma: no cover - normalize_model_arch guards this.
         raise AssertionError(f"Unhandled model_arch={arch!r}")
 
@@ -108,6 +151,9 @@ def expected_config_values(
     n_layer: int,
     llama_intermediate_size: int = 0,
     llama_num_key_value_heads: int = 0,
+    qwen_intermediate_size: int = 0,
+    qwen_num_key_value_heads: int = 0,
+    qwen_head_dim: int = 0,
 ) -> dict[str, Any]:
     arch = normalize_model_arch(model_arch)
     if arch == "gpt2":
@@ -119,14 +165,36 @@ def expected_config_values(
             "n_layer": int(n_layer),
             "n_positions": int(seq_len),
         }
+    if arch == "llama":
+        intermediate_size = (
+            int(llama_intermediate_size)
+            if int(llama_intermediate_size) > 0
+            else default_llama_intermediate_size(int(n_embd))
+        )
+        num_key_value_heads = int(llama_num_key_value_heads) if int(llama_num_key_value_heads) > 0 else int(n_head)
+        return {
+            "model_type": "llama",
+            "vocab_size": int(vocab_size),
+            "hidden_size": int(n_embd),
+            "num_attention_heads": int(n_head),
+            "num_hidden_layers": int(n_layer),
+            "max_position_embeddings": int(seq_len),
+            "intermediate_size": int(intermediate_size),
+            "num_key_value_heads": int(num_key_value_heads),
+        }
     intermediate_size = (
-        int(llama_intermediate_size)
-        if int(llama_intermediate_size) > 0
-        else default_llama_intermediate_size(int(n_embd))
+        int(qwen_intermediate_size)
+        if int(qwen_intermediate_size) > 0
+        else default_qwen3_intermediate_size(int(n_embd))
     )
-    num_key_value_heads = int(llama_num_key_value_heads) if int(llama_num_key_value_heads) > 0 else int(n_head)
+    num_key_value_heads = (
+        int(qwen_num_key_value_heads)
+        if int(qwen_num_key_value_heads) > 0
+        else max(1, int(n_head) // 2)
+    )
+    head_dim = int(qwen_head_dim) if int(qwen_head_dim) > 0 else int(n_embd) // int(n_head)
     return {
-        "model_type": "llama",
+        "model_type": "qwen3",
         "vocab_size": int(vocab_size),
         "hidden_size": int(n_embd),
         "num_attention_heads": int(n_head),
@@ -134,6 +202,7 @@ def expected_config_values(
         "max_position_embeddings": int(seq_len),
         "intermediate_size": int(intermediate_size),
         "num_key_value_heads": int(num_key_value_heads),
+        "head_dim": int(head_dim),
     }
 
 
@@ -148,6 +217,9 @@ def validate_checkpoint_config_alignment(
     n_layer: int,
     llama_intermediate_size: int = 0,
     llama_num_key_value_heads: int = 0,
+    qwen_intermediate_size: int = 0,
+    qwen_num_key_value_heads: int = 0,
+    qwen_head_dim: int = 0,
 ) -> list[str]:
     """Return human-readable architecture mismatches for a saved HF config."""
 
@@ -160,6 +232,9 @@ def validate_checkpoint_config_alignment(
         n_layer=n_layer,
         llama_intermediate_size=llama_intermediate_size,
         llama_num_key_value_heads=llama_num_key_value_heads,
+        qwen_intermediate_size=qwen_intermediate_size,
+        qwen_num_key_value_heads=qwen_num_key_value_heads,
+        qwen_head_dim=qwen_head_dim,
     )
     arch = normalize_model_arch(model_arch)
     mismatches: list[str] = []
@@ -191,8 +266,10 @@ def validate_checkpoint_config_alignment(
         check(("num_attention_heads",), expected["num_attention_heads"], "n_head/num_attention_heads")
         check(("num_hidden_layers",), expected["num_hidden_layers"], "n_layer/num_hidden_layers")
         check(("max_position_embeddings",), expected["max_position_embeddings"], "seq_len/max_position_embeddings")
-        check(("intermediate_size",), expected["intermediate_size"], "llama_intermediate_size")
-        check(("num_key_value_heads",), expected["num_key_value_heads"], "llama_num_key_value_heads")
+        check(("intermediate_size",), expected["intermediate_size"], f"{arch}_intermediate_size")
+        check(("num_key_value_heads",), expected["num_key_value_heads"], f"{arch}_num_key_value_heads")
+        if arch == "qwen3":
+            check(("head_dim",), expected["head_dim"], "qwen_head_dim")
 
     return mismatches
 
@@ -201,6 +278,7 @@ __all__ = [
     "SUPPORTED_MODEL_ARCHES",
     "build_causal_lm_config",
     "default_llama_intermediate_size",
+    "default_qwen3_intermediate_size",
     "expected_config_values",
     "normalize_model_arch",
     "validate_checkpoint_config_alignment",

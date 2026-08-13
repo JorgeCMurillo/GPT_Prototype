@@ -46,6 +46,10 @@ class TrainConfig:
     llama_intermediate_size: int = 0
     llama_num_key_value_heads: int = 0
     llama_tie_word_embeddings: bool = True
+    qwen_intermediate_size: int = 0
+    qwen_num_key_value_heads: int = 0
+    qwen_head_dim: int = 0
+    qwen_tie_word_embeddings: bool = True
     rope_theta: float = 10000.0
     use_liger_kernel: bool = False
     num_workers: int = 0
@@ -161,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model_arch",
         type=str,
         default="gpt2",
-        choices=("gpt2", "llama"),
+        choices=("gpt2", "llama", "qwen3"),
         help="From-scratch causal-LM architecture. Tokenizer/data are unchanged.",
     )
     parser.add_argument(
@@ -201,17 +205,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tie Llama input/output embeddings to keep GPT-2-tokenized architecture ablations cleaner.",
     )
     parser.add_argument(
+        "--qwen_intermediate_size",
+        type=int,
+        default=0,
+        help="Qwen3 MLP intermediate size; 0 uses 3*n_embd.",
+    )
+    parser.add_argument(
+        "--qwen_num_key_value_heads",
+        type=int,
+        default=0,
+        help="Qwen3 KV heads for GQA; 0 uses half of n_head.",
+    )
+    parser.add_argument(
+        "--qwen_head_dim",
+        type=int,
+        default=0,
+        help="Qwen3 attention head dimension; 0 uses n_embd/n_head.",
+    )
+    parser.add_argument(
+        "--qwen_tie_word_embeddings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Tie Qwen3 input/output embeddings for the GPT-2-tokenized architecture comparison.",
+    )
+    parser.add_argument(
         "--rope_theta",
         type=float,
         default=10000.0,
-        help="RoPE theta for --model_arch llama.",
+        help="RoPE theta for --model_arch llama or qwen3.",
     )
     parser.add_argument(
         "--use_liger_kernel",
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "Patch Hugging Face Llama modules with Liger RoPE/RMSNorm/SwiGLU kernels. "
+            "Patch Hugging Face Llama/Qwen3 modules with Liger RoPE/RMSNorm/SwiGLU kernels. "
             "Loss kernels stay disabled so token-wise training losses remain unchanged."
         ),
     )

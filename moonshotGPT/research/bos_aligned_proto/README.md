@@ -189,6 +189,17 @@ parameter-matched `llama_param` runs by default, then writes:
 
 Use `--dry_run` to print the exact trainer commands without launching them.
 
+The trainer also supports a from-scratch Qwen3 decoder through
+`--model_arch qwen3`, including configurable MLP width, grouped-query KV heads,
+attention head dimension, tied embeddings, RoPE theta, and optional Qwen3 Liger
+kernels. The parameter-matched comparison used here is `d1024`, 24 layers, 16
+query heads, 8 KV heads, head dimension 64, and MLP width 3152 (359,404,544
+parameters). Run the four-GPU microbatch probe with
+`scripts/run_qwen3_liger_muon_microbatch_ws4.sh`, or launch a paired 5k-step
+Qwen3/Llama seed with `scripts/run_qwen3_llama_paired_seed_ws3.sh`. Both scripts
+accept environment overrides for GPU IDs, data, output, and executable paths;
+the paired launcher also supports `DRY_RUN=1`.
+
 If you use `/home/jorge/tokenPred/moonshotGPT/data/processed/fineweb_edu_100B`,
 also pass `--tokenizer_name_or_path gpt2`; that older shard directory does not
 have a `meta.json` tokenizer field for the trainer to read.

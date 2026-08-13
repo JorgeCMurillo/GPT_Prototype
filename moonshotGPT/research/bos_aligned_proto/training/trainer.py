@@ -709,6 +709,10 @@ def main(cfg: TrainConfig) -> None:
     llama_intermediate_size = cfg.llama_intermediate_size
     llama_num_key_value_heads = cfg.llama_num_key_value_heads
     llama_tie_word_embeddings = cfg.llama_tie_word_embeddings
+    qwen_intermediate_size = cfg.qwen_intermediate_size
+    qwen_num_key_value_heads = cfg.qwen_num_key_value_heads
+    qwen_head_dim = cfg.qwen_head_dim
+    qwen_tie_word_embeddings = cfg.qwen_tie_word_embeddings
     rope_theta = cfg.rope_theta
     use_liger_kernel = bool(cfg.use_liger_kernel)
     num_workers = cfg.num_workers
@@ -772,8 +776,8 @@ def main(cfg: TrainConfig) -> None:
         raise ValueError(f"Unsupported loader_kind={loader_kind!r}.")
     if optimizer_name not in {"adamw", "muon_pe"}:
         raise ValueError(f"Unsupported optimizer={optimizer_name!r}.")
-    if use_liger_kernel and model_arch != "llama":
-        raise ValueError("--use_liger_kernel is only supported for --model_arch llama.")
+    if use_liger_kernel and model_arch not in {"llama", "qwen3"}:
+        raise ValueError("--use_liger_kernel is only supported for --model_arch llama or qwen3.")
     if muon_ns_steps <= 0:
         raise ValueError(f"--muon_ns_steps must be > 0, got {muon_ns_steps}.")
 
@@ -859,12 +863,12 @@ def main(cfg: TrainConfig) -> None:
     vocab_size = resolve_model_vocab_size(vocab_size, tokenizer_vocab_size)
     EOS_ID = tokenizer.pad_token_id
     # Bug fix: GPT-2-tokenized streams use token 50256 as real BOS/EOS data.
-    # Passing that id as Llama's pad_token_id makes nn.Embedding treat row
+    # Passing that id as a Llama/Qwen3 pad_token_id makes nn.Embedding treat row
     # 50256 as padding_idx, zeroing a real token embedding and triggering NaN
     # gradients. The 4GPU gas5 smoke with pad_token_id=None was finite at
-    # step 1 (loss 11.0478), so Llama stream training keeps no model padding
-    # index. GPT-2 keeps the tokenizer pad/eos convention.
-    model_pad_token_id = None if model_arch == "llama" else EOS_ID
+    # step 1 (loss 11.0478), so RoPE-family stream training keeps no model
+    # padding index. GPT-2 keeps the tokenizer pad/eos convention.
+    model_pad_token_id = None if model_arch in {"llama", "qwen3"} else EOS_ID
 
     # [FIX 1] Initialize Accelerator FIRST so we know the real world_size
     dataloader_config = DataLoaderConfiguration(dispatch_batches=False, split_batches=False)
@@ -949,6 +953,9 @@ def main(cfg: TrainConfig) -> None:
             n_layer=n_layer,
             llama_intermediate_size=llama_intermediate_size,
             llama_num_key_value_heads=llama_num_key_value_heads,
+            qwen_intermediate_size=qwen_intermediate_size,
+            qwen_num_key_value_heads=qwen_num_key_value_heads,
+            qwen_head_dim=qwen_head_dim,
         )
         _validate_ckpt_tokenizer_alignment(model_init_ckpt_dir, tokenizer)
     if debug_cfg.enabled and debug_cfg.overfit_batches > 0 and resume_mode:
@@ -1104,8 +1111,8 @@ def main(cfg: TrainConfig) -> None:
         print(f"model_arch                  = {model_arch}")
         print(f"use_liger_kernel            = {use_liger_kernel}")
         print(f"resolved vocab_size         = {vocab_size}")
-        if model_arch == "llama":
-            print(f"llama_model_pad_token_id    = <none>")
+        if model_arch in {"llama", "qwen3"}:
+            print(f"model_pad_token_id          = <none>")
         if rho_enabled:
             print(f"rho_ref_loss_dir            = {rho_ref_loss_dir}")
             print(f"rho_mode                    = {rho_mode}")
@@ -1170,6 +1177,15 @@ def main(cfg: TrainConfig) -> None:
             raise ValueError(f"llama_intermediate_size must be >= 0, got {llama_intermediate_size}")
         if int(llama_num_key_value_heads) < 0:
             raise ValueError(f"llama_num_key_value_heads must be >= 0, got {llama_num_key_value_heads}")
+        if float(rope_theta) <= 0:
+            raise ValueError(f"rope_theta must be > 0, got {rope_theta}")
+    if model_arch == "qwen3":
+        if int(qwen_intermediate_size) < 0:
+            raise ValueError(f"qwen_intermediate_size must be >= 0, got {qwen_intermediate_size}")
+        if int(qwen_num_key_value_heads) < 0:
+            raise ValueError(f"qwen_num_key_value_heads must be >= 0, got {qwen_num_key_value_heads}")
+        if int(qwen_head_dim) < 0:
+            raise ValueError(f"qwen_head_dim must be >= 0, got {qwen_head_dim}")
         if float(rope_theta) <= 0:
             raise ValueError(f"rope_theta must be > 0, got {rope_theta}")
     loss_vocab_size = tokenizer_vocab_size
@@ -1279,6 +1295,10 @@ def main(cfg: TrainConfig) -> None:
             llama_intermediate_size=llama_intermediate_size,
             llama_num_key_value_heads=llama_num_key_value_heads,
             llama_tie_word_embeddings=llama_tie_word_embeddings,
+            qwen_intermediate_size=qwen_intermediate_size,
+            qwen_num_key_value_heads=qwen_num_key_value_heads,
+            qwen_head_dim=qwen_head_dim,
+            qwen_tie_word_embeddings=qwen_tie_word_embeddings,
             rope_theta=rope_theta,
         )
         model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
@@ -1355,7 +1375,9 @@ def main(cfg: TrainConfig) -> None:
             "shuffle_blocks": bool(shuffle_blocks),
             "num_workers": int(num_workers),
             "world_size": int(world_size),
-            "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
+            "llama_model_pad_token_id": (
+                None if model_arch in {"llama", "qwen3"} else int(model_pad_token_id)
+            ),
             "data_dir": os.path.abspath(data_dir),
             "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
             "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
@@ -1490,7 +1512,9 @@ def main(cfg: TrainConfig) -> None:
                     "shuffle_blocks": bool(shuffle_blocks),
                     "num_workers": int(num_workers),
                     "world_size": int(world_size),
-                    "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
+                    "llama_model_pad_token_id": (
+                        None if model_arch in {"llama", "qwen3"} else int(model_pad_token_id)
+                    ),
                     "data_dir": os.path.abspath(data_dir),
                     "source_data_dir": (os.path.abspath(source_data_dir) if source_data_dir else None),
                     "source_shards_fingerprint": (str(source_shards_fingerprint) if source_shards_fingerprint else None),
@@ -1954,7 +1978,9 @@ def main(cfg: TrainConfig) -> None:
                         "grad_accum_steps": int(grad_accum_steps),
                         "micro_batch_size": int(micro_batch_size),
                         "seq_len": int(seq_len),
-                        "llama_model_pad_token_id": (None if model_arch == "llama" else int(model_pad_token_id)),
+                        "llama_model_pad_token_id": (
+                            None if model_arch in {"llama", "qwen3"} else int(model_pad_token_id)
+                        ),
                         "rho_enabled": bool(rho_enabled),
                         "rho_mode": (rho_mode if rho_enabled else None),
                         "rho_granularity": (rho_granularity if rho_enabled else None),

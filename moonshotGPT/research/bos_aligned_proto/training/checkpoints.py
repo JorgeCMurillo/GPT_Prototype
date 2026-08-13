@@ -10,6 +10,8 @@ try:
 except ImportError:
     from reporting import atomic_write_json, load_json
 
+from training_utils.model_config import validate_checkpoint_config_alignment
+
 
 def checkpoint_step_from_dirname(path: str):
     name = os.path.basename(os.path.normpath(path))
@@ -55,11 +57,17 @@ def resolve_resume_paths(resume_from_run: str):
 
 def validate_ckpt_model_config_alignment(
     ckpt_dir: str,
+    model_arch: str,
     seq_len: int,
     vocab_size: int,
     n_embd: int,
     n_head: int,
     n_layer: int,
+    llama_intermediate_size: int = 0,
+    llama_num_key_value_heads: int = 0,
+    qwen_intermediate_size: int = 0,
+    qwen_num_key_value_heads: int = 0,
+    qwen_head_dim: int = 0,
 ) -> None:
     cfg_path = os.path.join(ckpt_dir, "config.json")
     if not os.path.exists(cfg_path):
@@ -70,24 +78,20 @@ def validate_ckpt_model_config_alignment(
     except Exception as exc:
         raise RuntimeError(f"Failed to parse checkpoint config: {cfg_path}: {exc}") from exc
 
-    mismatches = []
-
-    def check(keys, expected: int, label: str) -> None:
-        got = None
-        for key in keys:
-            if key in cfg:
-                got = int(cfg[key])
-                break
-        if got is None:
-            return
-        if int(got) != int(expected):
-            mismatches.append(f"{label}: ckpt={got}, requested={int(expected)}")
-
-    check(["vocab_size"], vocab_size, "vocab_size")
-    check(["n_embd"], n_embd, "n_embd")
-    check(["n_head"], n_head, "n_head")
-    check(["n_layer"], n_layer, "n_layer")
-    check(["n_positions", "n_ctx"], seq_len, "seq_len")
+    mismatches = validate_checkpoint_config_alignment(
+        cfg,
+        model_arch=model_arch,
+        seq_len=seq_len,
+        vocab_size=vocab_size,
+        n_embd=n_embd,
+        n_head=n_head,
+        n_layer=n_layer,
+        llama_intermediate_size=llama_intermediate_size,
+        llama_num_key_value_heads=llama_num_key_value_heads,
+        qwen_intermediate_size=qwen_intermediate_size,
+        qwen_num_key_value_heads=qwen_num_key_value_heads,
+        qwen_head_dim=qwen_head_dim,
+    )
 
     if mismatches:
         raise ValueError(
