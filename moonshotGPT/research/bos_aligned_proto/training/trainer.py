@@ -4,7 +4,7 @@ from dataclasses import asdict
 import hashlib
 import json
 import os, random, math, inspect, subprocess, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import nullcontext
 
 import torch
@@ -24,7 +24,7 @@ from torch.optim import AdamW
 
 from transformers import AutoTokenizer
 
-from accelerate.utils import DataLoaderConfiguration
+from accelerate.utils import DataLoaderConfiguration, InitProcessGroupKwargs
 from accelerate import Accelerator
 
 # Allow running from locations where the repo root is not already on sys.path.
@@ -872,9 +872,20 @@ def main(cfg: TrainConfig) -> None:
 
     # [FIX 1] Initialize Accelerator FIRST so we know the real world_size
     dataloader_config = DataLoaderConfiguration(dispatch_batches=False, split_batches=False)
+    distributed_timeout_minutes = float(
+        os.environ.get("DISTRIBUTED_TIMEOUT_MINUTES", "0") or 0
+    )
+    accelerator_kwargs_handlers = []
+    if distributed_timeout_minutes > 0:
+        accelerator_kwargs_handlers.append(
+            InitProcessGroupKwargs(
+                timeout=timedelta(minutes=distributed_timeout_minutes),
+            )
+        )
     accelerator = Accelerator(
         dataloader_config=dataloader_config,
         mixed_precision=effective_mixed_precision,
+        kwargs_handlers=accelerator_kwargs_handlers,
         # We will set gradient_accumulation_steps manually below after calculation
     )
     device = accelerator.device
@@ -1103,6 +1114,10 @@ def main(cfg: TrainConfig) -> None:
         print(f"loader_kind                 = {loader_kind}")
         print(f"mixed_precision requested   = {mixed_precision}")
         print(f"mixed_precision effective   = {effective_mixed_precision}")
+        print(
+            "distributed timeout (min)   = "
+            f"{distributed_timeout_minutes if distributed_timeout_minutes > 0 else 'default'}"
+        )
         print(f"data_dir                    = {data_dir}")
         if source_data_dir:
             print(f"source_data_dir             = {source_data_dir}")

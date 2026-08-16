@@ -7,6 +7,7 @@ and CORE evaluations, then merge the resulting metrics into run logs.
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from typing import Any, Tuple
 
 import numpy as np
@@ -261,20 +262,34 @@ def run_core_eval_step(
     release_eval_memory_fn,
     final: bool = False,
 ) -> bool:
-    """Run CORE eval on main process and synchronize all ranks."""
+    """Run CORE eval and synchronize all ranks.
+
+    Set ``CORE_DISTRIBUTED=0`` to reproduce the historical training-time
+    behavior where only the main process scores CORE and other ranks wait.
+    The default keeps the newer distributed scoring path.
+    """
     accelerator.wait_for_everyone()
     model.eval()
     release_eval_memory_fn()
 
-    if accelerator.is_main_process:
-        if core_disabled:
-            pass
-        elif core_eval_module is None:
+    core_distributed = bool(accelerator.num_processes > 1) and str(
+        os.environ.get("CORE_DISTRIBUTED", "1")
+    ).strip().lower() not in {"0", "false", "no", "off"}
+    should_evaluate = bool(core_distributed or accelerator.is_main_process)
+
+    if core_disabled:
+        pass
+    elif core_eval_module is None:
+        if accelerator.is_main_process:
             print("[warn] core_eval import failed; skipping CORE eval.")
-            core_disabled = True
-        else:
-            try:
-                print("starting CORE evaluation on main process")
+        core_disabled = True
+    else:
+        try:
+            if accelerator.is_main_process:
+                mode = "across ranks" if core_distributed else "on main process"
+                print(f"starting CORE evaluation {mode}")
+            core_results = None
+            if should_evaluate:
                 core_model = accelerator.unwrap_model(model)
                 core_model.eval()
                 with torch.no_grad():
@@ -285,9 +300,12 @@ def run_core_eval_step(
                         max_per_task=core_max_per_task,
                         bundle_dir=(core_bundle_dir or None),
                         local_files_only=core_local_files_only,
-                        distributed=False,
+                        distributed=core_distributed,
                     )
 
+            if accelerator.is_main_process:
+                if core_results is None:
+                    raise RuntimeError("main-process CORE evaluation returned no results")
                 core_record = {
                     "step": int(opt_step),
                     "timestamp": datetime.now().isoformat(),
@@ -336,9 +354,10 @@ def run_core_eval_step(
                     f"core_metric={core_results['core_metric']:.4f}, "
                     f"tasks={int(core_results['num_tasks'])}"
                 )
-            except Exception as exc:
+        except Exception as exc:
+            if accelerator.is_main_process:
                 print(f"[warn] failed to run CORE eval: {exc}")
-                core_disabled = True
+            core_disabled = True
 
     accelerator.wait_for_everyone()
     model.train()

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import torch
 
 from evaluation.runner import run_core_eval_step
@@ -61,7 +62,21 @@ class _RaisingCoreModule:
         raise FileNotFoundError("missing eval bundle")
 
 
-def test_run_core_eval_step_writes_step_and_jsonl_logs(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("core_distributed_env", "expected_distributed"),
+    [(None, True), ("0", False)],
+)
+def test_run_core_eval_step_writes_step_and_jsonl_logs(
+    tmp_path,
+    monkeypatch,
+    core_distributed_env,
+    expected_distributed,
+) -> None:
+    if core_distributed_env is None:
+        monkeypatch.delenv("CORE_DISTRIBUTED", raising=False)
+    else:
+        monkeypatch.setenv("CORE_DISTRIBUTED", core_distributed_env)
+
     accelerator = _FakeAccelerator()
     model = _FakeModel()
     tokenizer = object()
@@ -114,7 +129,8 @@ def test_run_core_eval_step_writes_step_and_jsonl_logs(tmp_path) -> None:
     assert accelerator.wait_calls == 2
     assert release_calls == ["released"]
     assert model.mode == "train"
-    assert fake_core.calls and fake_core.calls[0]["distributed"] is False
+    assert fake_core.calls
+    assert fake_core.calls[0]["distributed"] is expected_distributed
 
     saved_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     assert len(saved_metrics) == 1
