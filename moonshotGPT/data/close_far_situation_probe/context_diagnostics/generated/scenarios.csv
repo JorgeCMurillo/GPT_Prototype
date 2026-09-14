@@ -1,0 +1,9 @@
+id,setting_prefix,close,far,body_reference_type,body_reference
+person_gym,{name} stands in a gym.,The {object} rests immediately beside {name}'s shoes.,The {object} rests across the full length of a long gym from {name}.,worn_item,shoes
+person_dining,{name} sits on a chair in a dining room.,The {object} rests on the floor between the legs of the chair where {name} sits.,The {object} rests across the full length of a large dining room from {name}.,,
+person_field,{name} stands on a playing field.,The {object} rests immediately beside {name}'s feet.,The entire length of a large playing field separates the {object} from {name}.,body_part,feet
+person_platform,{name} stands on a train platform.,The {object} rests immediately beside {name}'s ankle.,The full length of a long train platform separates the {object} from {name}.,body_part,ankle
+person_auditorium,{name} sits in an auditorium.,The {object} rests on the seat immediately next to {name}.,The {object} rests on a seat across the full depth of a large auditorium from {name}.,,
+objects_gym,The {anchor_object} is in a gym.,The {object} rests immediately beside the edge of the {anchor_object}.,The full length of a long gym separates the {object} from the {anchor_object}.,,
+objects_kitchen,The {anchor_object} rests on a table in a kitchen.,The {object} rests on a table immediately beside the {anchor_object}.,The {object} rests across the full length of a large kitchen from the {anchor_object}.,,
+objects_workshop,The {anchor_object} rests on the floor in a workshop.,The {object} rests immediately beside the {anchor_object}.,The full length of a long workshop separates the {object} from the {anchor_object}.,,

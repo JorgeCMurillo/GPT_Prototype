@@ -1,0 +1,18 @@
+{
+  "source_kind": "closer_farther_event",
+  "n_unique_pairs": 4068,
+  "source_sha256": {
+    "binary_pair_scores.csv": "b8e13c65fc8f4a2838cfbe5a4efe84b67d8c2d134bd99c9c5fcdcfb6b9567489",
+    "item_scores.csv": "5e79650d49ad419e4238f6741c6f2d18a63048c47d0df3ac039c34aa11f5c991"
+  },
+  "primary_grouping": "contrast+mode",
+  "groupings": [
+    "contrast+mode",
+    "contrast+mode+length_band",
+    "contrast+mode+context_entity_order",
+    "contrast+mode+first_event_family+second_event_family"
+  ],
+  "n_table_rows": 96,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

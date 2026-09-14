@@ -1,0 +1,3 @@
+id,template
+plain,{subject} is {phrase} {reference}.
+positioned,{subject} is positioned {phrase} {reference}.

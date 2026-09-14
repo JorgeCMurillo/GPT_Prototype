@@ -1,0 +1,10 @@
+scene_id,role,evidence_type,close_context,far_context,eligible_objects
+between_feet,main,body_part,The ball is between Maya's feet.,The ball is across the full length of a long gym from Maya.,"ball,bag,book,cone"
+in_hand,main,held_object,The ball is in Maya's hand.,The ball is across the full width of a large courtyard from Maya.,"ball,cup,key,book"
+on_lap,main,body_part,The book is on Maya's lap.,The book is across the full depth of a large auditorium from Maya.,"book,bag,ball,helmet"
+against_elbow,main,body_contact,The ball is against Maya's elbow.,The ball is across the full length of a large workshop from Maya.,"ball,book,cup,bag"
+neighboring_seat,main,adjacent_surface,The bag is on the seat immediately beside Maya.,The bag is across the full width of a large waiting room from Maya.,"bag,book,helmet,ball"
+shared_floor_tile,main,shared_small_surface,The ball is on the small floor tile under Maya's feet.,The ball is across the full length of a large hall from Maya.,"ball,bag,book,cone"
+worn_jacket_pocket,main,explicit_worn_clothing,The key is inside the pocket of the jacket Maya is wearing.,The key is across the full length of a long hallway from Maya.,"key,coin,marble,pebble"
+between_owned_shoes,ambiguity_control,owned_clothing_unanchored,The ball is between Maya's shoes.,The ball is across the full length of a long gym from Maya.,"ball,bag,book,cone"
+between_worn_shoes,explicit_clothing_control,explicit_worn_clothing,The ball is between the shoes Maya is wearing.,The ball is across the full length of a long gym from Maya.,"ball,bag,book,cone"

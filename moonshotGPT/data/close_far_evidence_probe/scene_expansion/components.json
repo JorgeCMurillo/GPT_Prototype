@@ -1,0 +1,91 @@
+{
+  "probe_name": "close_far_scene_expansion",
+  "version": "1.0",
+  "parent_components": "../components.json",
+  "objects": [
+    {"id":"obj_ball","text":"ball"}, {"id":"obj_bag","text":"bag"},
+    {"id":"obj_book","text":"book"}, {"id":"obj_cone","text":"cone"},
+    {"id":"obj_helmet","text":"helmet"}, {"id":"obj_cup","text":"cup"},
+    {"id":"obj_key","text":"key"}, {"id":"obj_coin","text":"coin"},
+    {"id":"obj_marble","text":"marble"}, {"id":"obj_pebble","text":"pebble"}
+  ],
+  "context_orders": [
+    {"id":"object_subject","condition_id":"physical_placement","entity_order":"object_first"},
+    {"id":"fronted_location","condition_id":"physical_placement_fronted","entity_order":"person_first"},
+    {"id":"person_subject","condition_id":"physical_placement_person_subject","entity_order":"person_first"}
+  ],
+  "scenes": [
+    {
+      "id":"between_feet", "role":"main", "evidence_type":"body_part", "setting":"gym",
+      "object_ids":["obj_ball","obj_bag","obj_book","obj_cone"],
+      "close_location":"between {name}'s feet",
+      "person_close":"{name} has the {object} between their feet.",
+      "far_location":"across the full length of a long gym from",
+      "assumption":"Body-part location anchors the object to the person."
+    },
+    {
+      "id":"in_hand", "role":"main", "evidence_type":"held_object", "setting":"courtyard",
+      "object_ids":["obj_ball","obj_cup","obj_key","obj_book"],
+      "close_location":"in {name}'s hand",
+      "person_close":"{name} holds the {object} in their hand.",
+      "far_location":"across the full width of a large courtyard from",
+      "assumption":"The object is held in the person's hand."
+    },
+    {
+      "id":"on_lap", "role":"main", "evidence_type":"body_part", "setting":"auditorium",
+      "object_ids":["obj_book","obj_bag","obj_ball","obj_helmet"],
+      "close_location":"on {name}'s lap",
+      "person_close":"{name} has the {object} on their lap.",
+      "far_location":"across the full depth of a large auditorium from",
+      "assumption":"The object rests on the person's lap."
+    },
+    {
+      "id":"against_elbow", "role":"main", "evidence_type":"body_contact", "setting":"workshop",
+      "object_ids":["obj_ball","obj_book","obj_cup","obj_bag"],
+      "close_location":"against {name}'s elbow",
+      "person_close":"{name} has the {object} against their elbow.",
+      "far_location":"across the full length of a large workshop from",
+      "assumption":"Against indicates contact with the person's elbow."
+    },
+    {
+      "id":"neighboring_seat", "role":"main", "evidence_type":"adjacent_surface", "setting":"waiting_room",
+      "object_ids":["obj_bag","obj_book","obj_helmet","obj_ball"],
+      "close_location":"on the seat immediately beside {name}",
+      "person_close":"{name} sits immediately beside the seat holding the {object}.",
+      "far_location":"across the full width of a large waiting room from",
+      "assumption":"The seat is immediately beside the person; this scene contains the proximity cue beside."
+    },
+    {
+      "id":"shared_floor_tile", "role":"main", "evidence_type":"shared_small_surface", "setting":"hall",
+      "object_ids":["obj_ball","obj_bag","obj_book","obj_cone"],
+      "close_location":"on the small floor tile under {name}'s feet",
+      "person_close":"{name} stands on the same small floor tile as the {object}.",
+      "far_location":"across the full length of a large hall from",
+      "assumption":"The small tile under the person's feet is their standing location."
+    },
+    {
+      "id":"worn_jacket_pocket", "role":"main", "evidence_type":"explicit_worn_clothing", "setting":"hallway",
+      "object_ids":["obj_key","obj_coin","obj_marble","obj_pebble"],
+      "close_location":"inside the pocket of the jacket {name} is wearing",
+      "person_close":"{name} is wearing the jacket with the {object} inside its pocket.",
+      "far_location":"across the full length of a long hallway from",
+      "assumption":"Wearing is stated explicitly; only pocket-sized objects are eligible."
+    },
+    {
+      "id":"between_owned_shoes", "role":"ambiguity_control", "evidence_type":"owned_clothing_unanchored", "setting":"gym",
+      "object_ids":["obj_ball","obj_bag","obj_book","obj_cone"],
+      "close_location":"between {name}'s shoes",
+      "person_close":"{name} has the {object} between their shoes.",
+      "far_location":"across the full length of a long gym from",
+      "assumption":"Close is the intended label only under an unstated worn-shoes assumption; ownership alone does not entail proximity to the person."
+    },
+    {
+      "id":"between_worn_shoes", "role":"explicit_clothing_control", "evidence_type":"explicit_worn_clothing", "setting":"gym",
+      "object_ids":["obj_ball","obj_bag","obj_book","obj_cone"],
+      "close_location":"between the shoes {name} is wearing",
+      "person_close":"{name} is wearing the shoes with the {object} between them.",
+      "far_location":"across the full length of a long gym from",
+      "assumption":"Wearing is stated explicitly, anchoring the shoes to the person."
+    }
+  ]
+}

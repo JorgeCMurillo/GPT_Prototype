@@ -1,0 +1,16 @@
+{
+  "version": "1.1",
+  "original_probes": 72,
+  "new_naming_probes": 18,
+  "total_probes": 90,
+  "total_individual_judgments": 180,
+  "original_probe_sha256": "8d3a29ee0d509274369c991e90ff1acfabbdd98780af5e7785342c4a1a1d4eb3",
+  "naming_context_word_counts": {
+    "name_0": 9,
+    "name_1": 11,
+    "name_2": 12
+  },
+  "validation": "passed",
+  "new_probes_evaluated": false,
+  "note": "probe_row_index refers to combined probes.jsonl; naming_probes.jsonl retains those indices."
+}

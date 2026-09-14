@@ -1,0 +1,3 @@
+id,context_entity_order,closer,farther,unchanged
+direct_person_first,person_first,"Compared with before, {name} is now closer to the {object}.","Compared with before, {name} is now farther from the {object}.","Compared with before, {name} is now at the same distance from the {object}."
+direct_object_first,object_first,"Compared with before, the {object} is now closer to {name}.","Compared with before, the {object} is now farther from {name}.","Compared with before, the {object} is now at the same distance from {name}."

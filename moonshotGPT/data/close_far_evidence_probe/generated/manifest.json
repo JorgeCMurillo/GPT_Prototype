@@ -1,0 +1,13 @@
+{
+  "probe_name": "close_far_matched_evidence",
+  "version": "1.1",
+  "matched_pairs": 200,
+  "context_judgments": 400,
+  "unique_context_texts": 200,
+  "conditional_scores_required": 800,
+  "matches": 260,
+  "default_score_reduction": "mean",
+  "tokenizer": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "components_sha256": "92287debb372bf4513fb542c9808879f01bb992160523f2fb34f8fb634ebb68e",
+  "validation": "passed"
+}

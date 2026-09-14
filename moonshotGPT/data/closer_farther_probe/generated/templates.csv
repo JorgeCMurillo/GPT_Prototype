@@ -1,0 +1,10 @@
+condition_id,evidence_type,id,length_band,text
+explicit_distance,explicit_distance_comparison,distance_compact,compact,"{name}'s distance from the stationary {object}: initially {initial} {initial_unit}, now {final} {final_unit}."
+explicit_distance,explicit_distance_comparison,distance_standard,standard,{name} was {initial} {initial_unit} from a stationary {object}. {name} is now {final} {final_unit} from the {object}.
+explicit_distance,explicit_distance_comparison,distance_expanded,expanded,"Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. The distance between {name} and that {object} is now {final} {final_unit}."
+movement_description,directed_movement_inference,movement_compact,compact,"Starting {initial} {initial_unit} from a stationary {object}, {name} walked {movement} {movement_unit} directly {direction} it."
+movement_description,directed_movement_inference,movement_standard,standard,{name} was {initial} {initial_unit} from a stationary {object}. {name} walked {movement} {movement_unit} directly {direction} the {object}.
+movement_description,directed_movement_inference,movement_expanded,expanded,"Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. From that starting position, {name} walked {movement} {movement_unit} directly {direction} the {object}."
+orientation_control,rotation_without_translation_inference,orientation_compact,compact,"{name}, {initial} {initial_unit} from a stationary {object}, turned around in place."
+orientation_control,rotation_without_translation_inference,orientation_standard,standard,{name} was {initial} {initial_unit} from a stationary {object}. {name} turned around without changing position.
+orientation_control,rotation_without_translation_inference,orientation_expanded,expanded,"Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. {name} then turned to face the opposite direction, keeping both feet in the same place."

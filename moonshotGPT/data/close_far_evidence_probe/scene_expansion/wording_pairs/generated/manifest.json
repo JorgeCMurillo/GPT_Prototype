@@ -1,0 +1,23 @@
+{
+  "probe_name": "close_far_symmetric_wording",
+  "version": "1.0",
+  "matched_pairs": 4320,
+  "context_judgments": 8640,
+  "baseline_pairs": 672,
+  "close_only_pairs_per_family": 672,
+  "symmetric_pairs_per_family": 240,
+  "wording_families": 4,
+  "modes": {
+    "original_baseline": 672,
+    "close_only": 2688,
+    "symmetric_pair": 960
+  },
+  "matches": 6288,
+  "unique_conditional_sequences": 6528,
+  "source_probes_sha256": "50ea28ff80ed98989c5c3156bb76d4c5e69e1da144494f30d3248593054b367e",
+  "components_sha256": "491471bb40edad7c6324d093bac3123bb2271ad174def5c348bcd98761b70630",
+  "tokenizer_source": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "default_score_reduction": "mean",
+  "new_forms_evaluated": false,
+  "validation": "passed"
+}

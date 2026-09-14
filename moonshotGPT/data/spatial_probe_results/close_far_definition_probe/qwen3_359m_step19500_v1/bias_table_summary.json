@@ -1,0 +1,18 @@
+{
+  "source_kind": "close_far_definition",
+  "n_unique_pairs": 72,
+  "source_sha256": {
+    "item_scores.csv": "b4ff79ec92ef254307792ce2fc3e3a552685643cfc88bc9c8da2d0bb58f42284"
+  },
+  "primary_grouping": "direction",
+  "groupings": [
+    "direction",
+    "direction+adjective_pair_id",
+    "direction+modifier_id",
+    "direction+definition_structure_id",
+    "direction+context_stem_id"
+  ],
+  "n_table_rows": 22,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

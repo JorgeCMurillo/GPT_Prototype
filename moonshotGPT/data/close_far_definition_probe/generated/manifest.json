@@ -1,0 +1,15 @@
+{
+  "probe_name": "close_far_literal_definition",
+  "version": "1.0",
+  "paired_probes": 72,
+  "individual_completion_choice_judgments": 144,
+  "conditional_likelihoods_to_compute": 288,
+  "by_direction": {
+    "word_to_definition": 54,
+    "definition_to_word": 18
+  },
+  "definition_variants": 18,
+  "matched_direction_groups": 18,
+  "validation": "passed",
+  "model_evaluation_performed": false
+}

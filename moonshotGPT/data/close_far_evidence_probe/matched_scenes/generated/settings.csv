@@ -1,0 +1,7 @@
+id,text,person_endpoint,far_endpoint,geometry
+gym,gym,at one end,at the other end,ends
+hallway,hallway,at one end,at the opposite end,ends
+courtyard,courtyard,at one edge,at the opposite edge,edges
+field,field,at one sideline,at the opposite sideline,sidelines
+platform,platform,at one end,at the other end,ends
+auditorium,auditorium,at one side,at the opposite side,sides

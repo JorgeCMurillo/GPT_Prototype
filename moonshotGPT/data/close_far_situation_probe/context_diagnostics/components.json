@@ -1,0 +1,64 @@
+{
+  "version": "1.0",
+  "probe_name": "close_far_context_and_body_reference",
+  "context_forms": [
+    {"id": "compact", "description": "Location sentence only", "prefix_source": "none"},
+    {"id": "setting", "description": "Setting prefix followed by the identical location sentence", "prefix_source": "setting_prefix"},
+    {"id": "endpoint", "description": "Original endpoint-detail prefix followed by the identical location sentence", "prefix_source": "original_setup"}
+  ],
+  "reference_forms": [
+    {"id": "placement", "description": "Placement description; body or worn-item reference where available"},
+    {"id": "person_direct", "description": "Same immediately-beside relation, directly referencing the person"}
+  ],
+  "person_direct_close": "The {object} rests immediately beside {name}.",
+  "scenarios": [
+    {
+      "id": "person_gym", "setting_prefix": "{name} stands in a gym.",
+      "close": "The {object} rests immediately beside {name}'s shoes.",
+      "far": "The {object} rests across the full length of a long gym from {name}.",
+      "body_reference_type": "worn_item", "body_reference": "shoes"
+    },
+    {
+      "id": "person_dining", "setting_prefix": "{name} sits on a chair in a dining room.",
+      "close": "The {object} rests on the floor between the legs of the chair where {name} sits.",
+      "far": "The {object} rests across the full length of a large dining room from {name}.",
+      "body_reference_type": null, "body_reference": null
+    },
+    {
+      "id": "person_field", "setting_prefix": "{name} stands on a playing field.",
+      "close": "The {object} rests immediately beside {name}'s feet.",
+      "far": "The entire length of a large playing field separates the {object} from {name}.",
+      "body_reference_type": "body_part", "body_reference": "feet"
+    },
+    {
+      "id": "person_platform", "setting_prefix": "{name} stands on a train platform.",
+      "close": "The {object} rests immediately beside {name}'s ankle.",
+      "far": "The full length of a long train platform separates the {object} from {name}.",
+      "body_reference_type": "body_part", "body_reference": "ankle"
+    },
+    {
+      "id": "person_auditorium", "setting_prefix": "{name} sits in an auditorium.",
+      "close": "The {object} rests on the seat immediately next to {name}.",
+      "far": "The {object} rests on a seat across the full depth of a large auditorium from {name}.",
+      "body_reference_type": null, "body_reference": null
+    },
+    {
+      "id": "objects_gym", "setting_prefix": "The {anchor_object} is in a gym.",
+      "close": "The {object} rests immediately beside the edge of the {anchor_object}.",
+      "far": "The full length of a long gym separates the {object} from the {anchor_object}.",
+      "body_reference_type": null, "body_reference": null
+    },
+    {
+      "id": "objects_kitchen", "setting_prefix": "The {anchor_object} rests on a table in a kitchen.",
+      "close": "The {object} rests on a table immediately beside the {anchor_object}.",
+      "far": "The {object} rests across the full length of a large kitchen from the {anchor_object}.",
+      "body_reference_type": null, "body_reference": null
+    },
+    {
+      "id": "objects_workshop", "setting_prefix": "The {anchor_object} rests on the floor in a workshop.",
+      "close": "The {object} rests immediately beside the {anchor_object}.",
+      "far": "The full length of a long workshop separates the {object} from the {anchor_object}.",
+      "body_reference_type": null, "body_reference": null
+    }
+  ]
+}

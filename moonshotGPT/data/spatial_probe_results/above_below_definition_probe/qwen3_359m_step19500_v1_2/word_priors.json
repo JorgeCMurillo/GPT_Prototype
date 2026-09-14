@@ -1,0 +1,472 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "created_utc": "2026-09-14T22:27:52.323954+00:00",
+  "probe_sha256": "02c09deef697ca2571c8bf95190e57e1735281fb1352773411c693a2f0965c25",
+  "device_name": "NVIDIA GeForce RTX 3090",
+  "cuda_visible_devices": "1",
+  "torch_version": "2.7.0+cu126",
+  "transformers_version": "4.57.6",
+  "bos_token_id": 50256,
+  "convention": "BOS-only targets as written, no added leading space or EOS; mean log likelihood primary for full targets",
+  "bare_word": {
+    "upper": {
+      "text": "above",
+      "token_ids": [
+        29370
+      ],
+      "tokens": [
+        "above"
+      ],
+      "target_token_count": 1,
+      "token_log_probs": [
+        -13.42711067199707
+      ],
+      "mean_log_likelihood": -13.42711067199707,
+      "sum_log_likelihood": -13.42711067199707
+    },
+    "lower": {
+      "text": "below",
+      "token_ids": [
+        35993
+      ],
+      "tokens": [
+        "below"
+      ],
+      "target_token_count": 1,
+      "token_log_probs": [
+        -12.752882957458496
+      ],
+      "mean_log_likelihood": -12.752882957458496,
+      "sum_log_likelihood": -12.752882957458496
+    },
+    "mean_gap_upper_minus_lower": -0.6742277145385742,
+    "sum_gap_upper_minus_lower": -0.6742277145385742
+  },
+  "prefix_conditioned_words": [
+    {
+      "prefix": "One object is",
+      "upper": {
+        "text": "above",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -7.014312744140625
+        ],
+        "mean_log_likelihood": -7.014312744140625,
+        "sum_log_likelihood": -7.014312744140625
+      },
+      "lower": {
+        "text": "below",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -7.620553016662598
+        ],
+        "mean_log_likelihood": -7.620553016662598,
+        "sum_log_likelihood": -7.620553016662598
+      },
+      "mean_gap_upper_minus_lower": 0.6062402725219727,
+      "sum_gap_upper_minus_lower": 0.6062402725219727
+    },
+    {
+      "prefix": "The first object is",
+      "upper": {
+        "text": "above",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -8.256937026977539
+        ],
+        "mean_log_likelihood": -8.256937026977539,
+        "sum_log_likelihood": -8.256937026977539
+      },
+      "lower": {
+        "text": "below",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -8.606263160705566
+        ],
+        "mean_log_likelihood": -8.606263160705566,
+        "sum_log_likelihood": -8.606263160705566
+      },
+      "mean_gap_upper_minus_lower": 0.34932613372802734,
+      "sum_gap_upper_minus_lower": 0.34932613372802734
+    },
+    {
+      "prefix": "The second object is",
+      "upper": {
+        "text": "above",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -8.007654190063477
+        ],
+        "mean_log_likelihood": -8.007654190063477,
+        "sum_log_likelihood": -8.007654190063477
+      },
+      "lower": {
+        "text": "below",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -7.750854969024658
+        ],
+        "mean_log_likelihood": -7.750854969024658,
+        "sum_log_likelihood": -7.750854969024658
+      },
+      "mean_gap_upper_minus_lower": -0.25679922103881836,
+      "sum_gap_upper_minus_lower": -0.25679922103881836
+    },
+    {
+      "prefix": "The first item is",
+      "upper": {
+        "text": "above",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -9.481474876403809
+        ],
+        "mean_log_likelihood": -9.481474876403809,
+        "sum_log_likelihood": -9.481474876403809
+      },
+      "lower": {
+        "text": "below",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -9.545195579528809
+        ],
+        "mean_log_likelihood": -9.545195579528809,
+        "sum_log_likelihood": -9.545195579528809
+      },
+      "mean_gap_upper_minus_lower": 0.063720703125,
+      "sum_gap_upper_minus_lower": 0.063720703125
+    },
+    {
+      "prefix": "The second item is",
+      "upper": {
+        "text": "above",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -9.020689010620117
+        ],
+        "mean_log_likelihood": -9.020689010620117,
+        "sum_log_likelihood": -9.020689010620117
+      },
+      "lower": {
+        "text": "below",
+        "target_token_count": 1,
+        "token_log_probs": [
+          -8.101972579956055
+        ],
+        "mean_log_likelihood": -8.101972579956055,
+        "sum_log_likelihood": -8.101972579956055
+      },
+      "mean_gap_upper_minus_lower": -0.9187164306640625,
+      "sum_gap_upper_minus_lower": -0.9187164306640625
+    }
+  ],
+  "full_target_sentences": [
+    {
+      "pair_count_in_probe": 5,
+      "upper": {
+        "text": "One object is above another.",
+        "token_ids": [
+          3198,
+          2134,
+          318,
+          2029,
+          1194,
+          13
+        ],
+        "tokens": [
+          "One",
+          "\u0120object",
+          "\u0120is",
+          "\u0120above",
+          "\u0120another",
+          "."
+        ],
+        "target_token_count": 6,
+        "token_log_probs": [
+          -5.421661376953125,
+          -8.929118156433105,
+          -3.3297781944274902,
+          -7.014318466186523,
+          -1.6834263801574707,
+          -1.4962539672851562
+        ],
+        "mean_log_likelihood": -4.6457594235738116,
+        "sum_log_likelihood": -27.87455654144287
+      },
+      "lower": {
+        "text": "One object is below another.",
+        "token_ids": [
+          3198,
+          2134,
+          318,
+          2174,
+          1194,
+          13
+        ],
+        "tokens": [
+          "One",
+          "\u0120object",
+          "\u0120is",
+          "\u0120below",
+          "\u0120another",
+          "."
+        ],
+        "target_token_count": 6,
+        "token_log_probs": [
+          -5.421661376953125,
+          -8.929118156433105,
+          -3.3297781944274902,
+          -7.620550155639648,
+          -4.5387396812438965,
+          -1.3830742835998535
+        ],
+        "mean_log_likelihood": -5.20382030804952,
+        "sum_log_likelihood": -31.22292184829712
+      },
+      "mean_gap_upper_minus_lower": 0.558060884475708,
+      "sum_gap_upper_minus_lower": 3.348365306854248
+    },
+    {
+      "pair_count_in_probe": 5,
+      "upper": {
+        "text": "The first object is above the second.",
+        "token_ids": [
+          464,
+          717,
+          2134,
+          318,
+          2029,
+          262,
+          1218,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120object",
+          "\u0120is",
+          "\u0120above",
+          "\u0120the",
+          "\u0120second",
+          "."
+        ],
+        "target_token_count": 8,
+        "token_log_probs": [
+          -2.580206871032715,
+          -4.251243591308594,
+          -6.965517997741699,
+          -3.5653629302978516,
+          -8.256942749023438,
+          -1.0715093612670898,
+          -3.2649974822998047,
+          -1.3709648847579956
+        ],
+        "mean_log_likelihood": -3.9158432334661484,
+        "sum_log_likelihood": -31.326745867729187
+      },
+      "lower": {
+        "text": "The first object is below the second.",
+        "token_ids": [
+          464,
+          717,
+          2134,
+          318,
+          2174,
+          262,
+          1218,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120object",
+          "\u0120is",
+          "\u0120below",
+          "\u0120the",
+          "\u0120second",
+          "."
+        ],
+        "target_token_count": 8,
+        "token_log_probs": [
+          -2.5802090167999268,
+          -4.25124454498291,
+          -6.965521812438965,
+          -3.5653634071350098,
+          -8.6062650680542,
+          -1.6907762289047241,
+          -3.8464841842651367,
+          -1.4383727312088013
+        ],
+        "mean_log_likelihood": -4.118029624223709,
+        "sum_log_likelihood": -32.94423699378967
+      },
+      "mean_gap_upper_minus_lower": 0.20218639075756073,
+      "sum_gap_upper_minus_lower": 1.6174911260604858
+    },
+    {
+      "pair_count_in_probe": 20,
+      "upper": {
+        "text": "The first object is above the second object.",
+        "token_ids": [
+          464,
+          717,
+          2134,
+          318,
+          2029,
+          262,
+          1218,
+          2134,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120object",
+          "\u0120is",
+          "\u0120above",
+          "\u0120the",
+          "\u0120second",
+          "\u0120object",
+          "."
+        ],
+        "target_token_count": 9,
+        "token_log_probs": [
+          -2.580206871032715,
+          -4.251243591308594,
+          -6.965517997741699,
+          -3.5653626918792725,
+          -8.256942749023438,
+          -1.0715094804763794,
+          -3.2649974822998047,
+          -3.2655420303344727,
+          -1.0296763181686401
+        ],
+        "mean_log_likelihood": -3.8056665791405573,
+        "sum_log_likelihood": -34.250999212265015
+      },
+      "lower": {
+        "text": "The first object is below the second object.",
+        "token_ids": [
+          464,
+          717,
+          2134,
+          318,
+          2174,
+          262,
+          1218,
+          2134,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120object",
+          "\u0120is",
+          "\u0120below",
+          "\u0120the",
+          "\u0120second",
+          "\u0120object",
+          "."
+        ],
+        "target_token_count": 9,
+        "token_log_probs": [
+          -2.5802090167999268,
+          -4.25124454498291,
+          -6.965521812438965,
+          -3.5653631687164307,
+          -8.606264114379883,
+          -1.6907762289047241,
+          -3.8464839458465576,
+          -3.4526662826538086,
+          -0.9526219964027405
+        ],
+        "mean_log_likelihood": -3.990127901236216,
+        "sum_log_likelihood": -35.911151111125946
+      },
+      "mean_gap_upper_minus_lower": 0.1844613220956588,
+      "sum_gap_upper_minus_lower": 1.6601518988609314
+    },
+    {
+      "pair_count_in_probe": 20,
+      "upper": {
+        "text": "The first item is above the second item.",
+        "token_ids": [
+          464,
+          717,
+          2378,
+          318,
+          2029,
+          262,
+          1218,
+          2378,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120item",
+          "\u0120is",
+          "\u0120above",
+          "\u0120the",
+          "\u0120second",
+          "\u0120item",
+          "."
+        ],
+        "target_token_count": 9,
+        "token_log_probs": [
+          -2.580206871032715,
+          -4.251243591308594,
+          -6.96877908706665,
+          -2.926480293273926,
+          -9.481473922729492,
+          -1.895399570465088,
+          -4.957544326782227,
+          -2.028052806854248,
+          -1.025741457939148
+        ],
+        "mean_log_likelihood": -4.012769103050232,
+        "sum_log_likelihood": -36.11492192745209
+      },
+      "lower": {
+        "text": "The first item is below the second item.",
+        "token_ids": [
+          464,
+          717,
+          2378,
+          318,
+          2174,
+          262,
+          1218,
+          2378,
+          13
+        ],
+        "tokens": [
+          "The",
+          "\u0120first",
+          "\u0120item",
+          "\u0120is",
+          "\u0120below",
+          "\u0120the",
+          "\u0120second",
+          "\u0120item",
+          "."
+        ],
+        "target_token_count": 9,
+        "token_log_probs": [
+          -2.580206871032715,
+          -4.251243591308594,
+          -6.968778610229492,
+          -2.926480293273926,
+          -9.545196533203125,
+          -2.4074435234069824,
+          -4.612840175628662,
+          -1.7269282341003418,
+          -0.8995739817619324
+        ],
+        "mean_log_likelihood": -3.9909657571050854,
+        "sum_log_likelihood": -35.91869181394577
+      },
+      "mean_gap_upper_minus_lower": -0.021803345945146546,
+      "sum_gap_upper_minus_lower": -0.19623011350631714
+    }
+  ]
+}

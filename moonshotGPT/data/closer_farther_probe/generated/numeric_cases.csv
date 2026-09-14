@@ -1,0 +1,13 @@
+id,initial_distance,movement_distance,closer_final_distance,farther_final_distance,unchanged_final_distance
+num_00,18,5,13,23,18
+num_01,85,12,73,97,85
+num_02,30,6,24,36,30
+num_03,35,4,31,39,35
+num_04,53,32,21,85,53
+num_05,54,32,22,86,54
+num_06,59,10,49,69,59
+num_07,48,26,22,74,48
+num_08,12,8,4,20,12
+num_09,52,28,24,80,52
+num_10,56,8,48,64,56
+num_11,32,23,9,55,32

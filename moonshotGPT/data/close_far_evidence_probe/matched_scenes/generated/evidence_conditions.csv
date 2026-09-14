@@ -1,0 +1,5 @@
+id,evidence_type,context_structure,context_entity_order,close,far
+direct_label,explicit_relation,locative_object_subject,object_first,"In the {setting}, the {object} is close to {name}.","In the {setting}, the {object} is far from {name}."
+distance_phrase,distance_magnitude_phrase,locative_distance_subject,person_first,"In the {setting}, a short distance separates {name} and the {object}.","In the {setting}, a long distance separates {name} and the {object}."
+distance_phrase_object_first,distance_magnitude_phrase,locative_distance_subject,object_first,"In the {setting}, a short distance separates the {object} and {name}.","In the {setting}, a long distance separates the {object} and {name}."
+endpoint_placement,physical_endpoint_placement,two_sentence_person_then_object,person_first,"In the {setting}, {name} stands {person_endpoint}. The {object} rests at {name}'s feet.","In the {setting}, {name} stands {person_endpoint}. The {object} rests {far_endpoint}."

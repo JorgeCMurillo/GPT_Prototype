@@ -1,0 +1,35 @@
+{
+  "probe_name": "close_far_situations",
+  "version": "1.0",
+  "components_sha256": "451b49980a85e7c93c1b0ee5858c6156fffa40fc7e2f124f881ebd27df85181d",
+  "paired_probes": 468,
+  "context_level_judgments": 936,
+  "conditional_likelihood_combinations": 1872,
+  "base_entity_assignments": 52,
+  "scenario_templates": 8,
+  "by_entity_type": {
+    "person_object": 360,
+    "object_object": 108
+  },
+  "by_condition": {
+    "baseline": 52,
+    "phrase_alternate": 52,
+    "word_beside": 52,
+    "word_alongside": 52,
+    "word_near": 52,
+    "reference_reversed": 52,
+    "negate_close": 52,
+    "negate_far": 52,
+    "both_negated": 52
+  },
+  "by_evidence_type": {
+    "physical_arrangement": 312,
+    "proximity_word": 156
+  },
+  "control_matches": 416,
+  "substitution_matches": 558,
+  "default_score_reduction": "mean",
+  "model_evaluation_performed": false,
+  "structural_validation": "passed",
+  "independent_human_semantic_review": "pending"
+}

@@ -1,0 +1,71 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "created_utc": "2026-09-14T22:12:07.901115+00:00",
+  "probe_sha256": "02c09deef697ca2571c8bf95190e57e1735281fb1352773411c693a2f0965c25",
+  "components_sha256": "1557792f4591191a526e82a3e76e960a44fe0cd7d861bc4cbfc980d7797c9732",
+  "cuda_visible_devices": "1",
+  "device_name": "NVIDIA GeForce RTX 3090",
+  "dtype": "float32",
+  "attention_implementation": "eager",
+  "batch_size": 8,
+  "torch_version": "2.7.0+cu126",
+  "transformers_version": "4.57.6",
+  "primary_reduction": "mean",
+  "n_pairs": 80,
+  "families": {
+    "literal_definition": {
+      "by_direction": {
+        "definition_to_word": {
+          "n_pairs": 40,
+          "n_judgments": 80,
+          "choice_accuracy": 0.6125,
+          "above_gold_accuracy": 0.975,
+          "below_gold_accuracy": 0.25,
+          "both_correct_fraction": 0.25,
+          "above_chosen_fraction": 0.8625,
+          "context_sensitivity_accuracy": 0.6375,
+          "exact_choice_ties": 0
+        },
+        "word_to_definition": {
+          "n_pairs": 24,
+          "n_judgments": 48,
+          "choice_accuracy": 0.5625,
+          "above_gold_accuracy": 1.0,
+          "below_gold_accuracy": 0.125,
+          "both_correct_fraction": 0.125,
+          "above_chosen_fraction": 0.9375,
+          "context_sensitivity_accuracy": 0.8333333333333334,
+          "exact_choice_ties": 0
+        }
+      },
+      "direction_balanced_accuracy": 0.5875
+    },
+    "lexical_synonym": {
+      "by_direction": {
+        "synonym_to_word": {
+          "n_pairs": 10,
+          "n_judgments": 20,
+          "choice_accuracy": 0.4,
+          "above_gold_accuracy": 0.7,
+          "below_gold_accuracy": 0.1,
+          "both_correct_fraction": 0.1,
+          "above_chosen_fraction": 0.8,
+          "context_sensitivity_accuracy": 0.55,
+          "exact_choice_ties": 0
+        },
+        "word_to_synonym": {
+          "n_pairs": 6,
+          "n_judgments": 12,
+          "choice_accuracy": 1.0,
+          "above_gold_accuracy": 1.0,
+          "below_gold_accuracy": 1.0,
+          "both_correct_fraction": 1.0,
+          "above_chosen_fraction": 0.5,
+          "context_sensitivity_accuracy": 0.9166666666666666,
+          "exact_choice_ties": 0
+        }
+      },
+      "direction_balanced_accuracy": 0.7
+    }
+  }
+}

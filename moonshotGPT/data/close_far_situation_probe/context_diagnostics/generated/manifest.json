@@ -1,0 +1,22 @@
+{
+  "probe_name": "close_far_context_and_body_reference",
+  "version": "1.0",
+  "paired_probes": 228,
+  "context_level_judgments": 456,
+  "base_entity_assignments": 52,
+  "by_context_form": {
+    "compact": 76,
+    "setting": 76,
+    "endpoint": 76
+  },
+  "by_reference_form": {
+    "placement": 156,
+    "person_direct": 72
+  },
+  "diagnostic_matches": 224,
+  "original_probe_sha256": "b558f81518b16971d893c79514caf82cc103e84c121ba9483d93d13c90524182",
+  "components_sha256": "6d621a502654503258078536e4c8b344cc5f1d758efeb48860f735a84b8e36ab",
+  "default_score_reduction": "mean",
+  "structural_validation": "passed",
+  "model_evaluation_performed": false
+}

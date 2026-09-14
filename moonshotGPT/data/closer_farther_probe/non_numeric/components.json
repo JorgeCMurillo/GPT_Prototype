@@ -1,0 +1,74 @@
+{
+  "probe_name": "closer_farther_non_numeric_movement",
+  "version": "1.3",
+  "parent_components": "../components.json",
+  "evidence_type": "directed_movement_inference",
+  "numeric_information": "absent",
+  "trajectory_constraint_id": "without_reaching_or_passing",
+  "templates": [
+    {
+      "id": "aligned_compact",
+      "length_band": "compact",
+      "text": "Starting {initial_distance_phrase} from a stationary {object}, {name} walked {movement_distance_phrase} directly {direction} it without reaching or passing it."
+    },
+    {
+      "id": "aligned_standard",
+      "length_band": "standard",
+      "text": "{name} was {initial_distance_phrase} from a stationary {object}. {name} walked {movement_distance_phrase} directly {direction} the {object} without reaching or passing it."
+    },
+    {
+      "id": "aligned_expanded",
+      "length_band": "expanded",
+      "text": "Initially, {name} was {initial_distance_phrase} from a {object} that remained stationary. From that starting position, {name} walked {movement_distance_phrase} directly {direction} the {object} without reaching or passing it."
+    }
+  ],
+  "minimal_templates": [
+    {
+      "id": "minimal_unqualified",
+      "length_band": "minimal",
+      "reference_stationarity": "assumed",
+      "text": "{name} walked {direction} the {object}."
+    },
+    {
+      "id": "minimal_stationary",
+      "length_band": "minimal_stationary",
+      "reference_stationarity": "explicit",
+      "text": "{name} walked {direction} the stationary {object}."
+    },
+    {
+      "id": "reference_clause_stationary",
+      "length_band": "clause_stationary",
+      "reference_stationarity": "explicit",
+      "text": "{name} walked {direction} the {object}, which remained stationary."
+    },
+    {
+      "id": "reference_clause_still",
+      "length_band": "clause_still",
+      "reference_stationarity": "explicit",
+      "text": "{name} walked {direction} the {object}, which remained still."
+    }
+  ],
+  "directions": [
+    {
+      "outcome": "closer",
+      "text": "toward",
+      "correct_target": "Target1"
+    },
+    {
+      "outcome": "farther",
+      "text": "away from",
+      "correct_target": "Target2"
+    }
+  ],
+  "unspecified_distance_phrase": "some distance",
+  "additional_objects": [
+    {
+      "id": "obj_bench",
+      "text": "bench"
+    },
+    {
+      "id": "obj_mailbox",
+      "text": "mailbox"
+    }
+  ]
+}

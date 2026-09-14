@@ -1,0 +1,5 @@
+id,close,far
+positive,{subject} is close to {reference}.,{subject} is far from {reference}.
+negate_close,{subject} is close to {reference}.,{subject} is not close to {reference}.
+negate_far,{subject} is not far from {reference}.,{subject} is far from {reference}.
+both_negated,{subject} is not far from {reference}.,{subject} is not close to {reference}.

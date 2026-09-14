@@ -1,0 +1,37 @@
+{
+  "probe_name": "closer_farther_non_numeric_movement",
+  "version": "1.3",
+  "context_items": 280,
+  "matched_pairs": 140,
+  "targets_per_context": 2,
+  "conditional_scores_required": 560,
+  "by_outcome": {
+    "closer": 140,
+    "farther": 140
+  },
+  "by_length_band": {
+    "compact": 40,
+    "standard": 40,
+    "expanded": 40,
+    "minimal": 40,
+    "minimal_stationary": 40,
+    "clause_stationary": 40,
+    "clause_still": 40
+  },
+  "context_templates": 7,
+  "aligned_non_numeric_contexts": 120,
+  "minimal_contexts": 160,
+  "minimal_control_matches": 280,
+  "length_matches": 80,
+  "numeric_matches": 4320,
+  "numeric_aligned_context_items": 4320,
+  "numeric_aligned_pairs": 2160,
+  "numeric_aligned_conditional_scores_required": 8640,
+  "tokenizer_source": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "default_score_reduction": "mean",
+  "model_evaluation_performed": false,
+  "components_sha256": "2fd384d2070741abb2d40013440455c98585cb2410e6e15cda0ccc3585589990",
+  "parent_components_sha256": "e559aaf6bf2568e3c36e3f4be3956f06706567a77ea5c87eab934254d57a091a",
+  "numeric_source_sha256": "62d87d33606bfdd4d8450936c67ed97b7ef29cd038cebf560744d7e9700c343f",
+  "validation": "passed"
+}

@@ -1,0 +1,4 @@
+id,target_key,target_template
+closer,Target1,{name} is now closer to the {object} than before.
+farther,Target2,{name} is now farther from the {object} than before.
+unchanged,Target3,{name} is now at the same distance from the {object} as before.

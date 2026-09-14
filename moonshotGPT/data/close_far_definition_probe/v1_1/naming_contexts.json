@@ -1,0 +1,26 @@
+{
+  "version": "1.1",
+  "task_form": "explicit_naming",
+  "label_target_id": "label_word_0",
+  "targets": {"close": "close.", "far": "far."},
+  "naming_contexts": [
+    {
+      "id": "name_0",
+      "structure_label": "compact",
+      "matched_definition_structure_id": "def_0",
+      "template": "A {modifier} {adjective} distance is described by the word"
+    },
+    {
+      "id": "name_1",
+      "structure_label": "medium",
+      "matched_definition_structure_id": "def_1",
+      "template": "A {modifier} {adjective} distance between objects is described by the word"
+    },
+    {
+      "id": "name_2",
+      "structure_label": "expanded",
+      "matched_definition_structure_id": "def_2",
+      "template": "Objects separated by a {modifier} {adjective} distance are described by the word"
+    }
+  ]
+}

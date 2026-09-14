@@ -1,0 +1,3 @@
+id,description
+word_to_definition,Concept word to distance description
+definition_to_word,Distance description to concept word

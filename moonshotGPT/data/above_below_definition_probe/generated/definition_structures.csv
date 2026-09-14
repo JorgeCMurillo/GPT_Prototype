@@ -1,0 +1,3 @@
+id,template,above_target,below_target
+generic,one object is {phrase} another.,One object is above another.,One object is below another.
+ordered,the first object is {phrase} the second.,The first object is above the second.,The first object is below the second.

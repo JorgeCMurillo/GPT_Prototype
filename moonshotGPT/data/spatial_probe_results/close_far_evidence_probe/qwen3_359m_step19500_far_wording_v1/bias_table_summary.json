@@ -1,0 +1,16 @@
+{
+  "source_kind": "close_far_evidence",
+  "n_unique_pairs": 3456,
+  "source_sha256": {
+    "item_scores.csv": "6ca735b7bc5f423612dd77ba55b7eda3d86864e16d8b5e48cc9e0f732e036146"
+  },
+  "primary_grouping": "scene_role",
+  "groupings": [
+    "scene_role",
+    "scene_role+scene_id",
+    "scene_role+context_structure+target_order"
+  ],
+  "n_table_rows": 60,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

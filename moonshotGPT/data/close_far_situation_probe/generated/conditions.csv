@@ -1,0 +1,10 @@
+id,phrase_pair_id,reference_order_id,target_pattern_id,control
+baseline,placement_0,target_first,positive,baseline
+phrase_alternate,placement_1,target_first,positive,location_phrasing
+word_beside,lex_beside,target_first,positive,evidence_wording
+word_alongside,lex_alongside,target_first,positive,evidence_wording
+word_near,lex_near,target_first,positive,evidence_wording
+reference_reversed,placement_0,anchor_first,positive,reference_reversal
+negate_close,placement_0,target_first,negate_close,target_negation
+negate_far,placement_0,target_first,negate_far,target_negation
+both_negated,placement_0,target_first,both_negated,target_negation

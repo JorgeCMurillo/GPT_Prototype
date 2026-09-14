@@ -1,0 +1,35 @@
+{
+  "probe_name": "close_far_far_wording_controls",
+  "version": "1.0",
+  "source_probes": "../generated/probes.jsonl",
+  "source_far_variant_id": "across_space",
+  "far_variants": [
+    {
+      "id": "direct_far",
+      "evidence_type": "explicit_relation",
+      "templates": {
+        "object_subject": "The {object} is far from {name}.",
+        "fronted_location": "Far from {name} is the {object}.",
+        "person_subject": "{name} is far from the {object}."
+      }
+    },
+    {
+      "id": "synonym_distant",
+      "evidence_type": "distance_synonym",
+      "templates": {
+        "object_subject": "The {object} is distant from {name}.",
+        "fronted_location": "Distant from {name} is the {object}.",
+        "person_subject": "{name} is distant from the {object}."
+      }
+    },
+    {
+      "id": "large_distance",
+      "evidence_type": "distance_magnitude_phrase",
+      "templates": {
+        "object_subject": "The {object} and {name} are separated by a large distance.",
+        "fronted_location": "A large distance separates {name} and the {object}.",
+        "person_subject": "{name} and the {object} are separated by a large distance."
+      }
+    }
+  ]
+}

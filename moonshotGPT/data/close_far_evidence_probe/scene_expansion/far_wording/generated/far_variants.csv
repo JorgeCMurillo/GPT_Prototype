@@ -1,0 +1,4 @@
+id,evidence_type,templates
+direct_far,explicit_relation,"{""object_subject"": ""The {object} is far from {name}."", ""fronted_location"": ""Far from {name} is the {object}."", ""person_subject"": ""{name} is far from the {object}.""}"
+synonym_distant,distance_synonym,"{""object_subject"": ""The {object} is distant from {name}."", ""fronted_location"": ""Distant from {name} is the {object}."", ""person_subject"": ""{name} is distant from the {object}.""}"
+large_distance,distance_magnitude_phrase,"{""object_subject"": ""The {object} and {name} are separated by a large distance."", ""fronted_location"": ""A large distance separates {name} and the {object}."", ""person_subject"": ""{name} and the {object} are separated by a large distance.""}"

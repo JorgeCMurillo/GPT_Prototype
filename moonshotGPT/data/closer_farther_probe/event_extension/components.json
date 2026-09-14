@@ -1,0 +1,57 @@
+{
+  "probe_name": "closer_farther_event_extension",
+  "version": "1.2",
+  "parent_components": "../components.json",
+  "parent_numeric_cases": "../generated/numeric_cases.csv",
+  "parent_probes": "../generated/probes.jsonl",
+  "direct_label_templates": [
+    {
+      "id": "direct_person_first",
+      "context_entity_order": "person_first",
+      "closer": "Compared with before, {name} is now closer to the {object}.",
+      "farther": "Compared with before, {name} is now farther from the {object}.",
+      "unchanged": "Compared with before, {name} is now at the same distance from the {object}."
+    },
+    {
+      "id": "direct_object_first",
+      "context_entity_order": "object_first",
+      "closer": "Compared with before, the {object} is now closer to {name}.",
+      "farther": "Compared with before, the {object} is now farther from {name}.",
+      "unchanged": "Compared with before, the {object} is now at the same distance from {name}."
+    }
+  ],
+  "event_templates": [
+    {
+      "id": "reference_object_moves",
+      "outcomes": ["closer", "farther"],
+      "compact_numeric": "The {object}, {initial} from {name}, moved {movement} directly {direction} {name} without crossing {name}'s position; {name} stayed still.",
+      "numeric": "Initially, {name} and the {object} were {initial} apart. {name} remained in place. The {object} was moved {movement} directly {direction} {name} without crossing {name}'s position.",
+      "expanded_numeric": "At the start, {name} and the {object} were {initial} apart. {name} remained in exactly the same position throughout. From its starting position, the {object} was moved {movement} in a straight line directly {direction} {name}, without crossing {name}'s position.",
+      "compact_non_numeric": "The {object} began some distance from {name} and moved directly {direction} {name} without crossing {name}'s position; {name} stayed still.",
+      "non_numeric": "Initially, {name} and the {object} were some distance apart. {name} remained in place. The {object} was moved directly {direction} {name} without crossing {name}'s position.",
+      "expanded_non_numeric": "At the start, {name} and the {object} were some distance apart. {name} remained in exactly the same position throughout. From its starting position, the {object} was moved in a straight line directly {direction} {name}, without crossing {name}'s position.",
+      "alternate_compact_numeric": "{name} stayed still; the {object}, {initial} from {name}, moved {movement} directly {direction} {name} without crossing {name}'s position.",
+      "alternate_numeric": "Initially, the {object} and {name} were {initial} apart. The {object} was moved {movement} directly {direction} {name} without crossing {name}'s position. {name} remained in place.",
+      "alternate_expanded_numeric": "At the start, the {object} and {name} were {initial} apart. From its starting position, the {object} was moved {movement} in a straight line directly {direction} {name}, without crossing {name}'s position. {name} remained in exactly the same position throughout.",
+      "alternate_compact_non_numeric": "{name} stayed still; the {object} began some distance from {name} and moved directly {direction} {name} without crossing {name}'s position.",
+      "alternate_non_numeric": "Initially, the {object} and {name} were some distance apart. The {object} was moved directly {direction} {name} without crossing {name}'s position. {name} remained in place.",
+      "alternate_expanded_non_numeric": "At the start, the {object} and {name} were some distance apart. From its starting position, the {object} was moved in a straight line directly {direction} {name}, without crossing {name}'s position. {name} remained in exactly the same position throughout."
+    },
+    {
+      "id": "both_move_same_separation",
+      "outcomes": ["unchanged"],
+      "compact_numeric": "Starting {initial} apart, {name} and the {object} each moved {movement} right.",
+      "numeric": "Initially, {name} and the {object} were {initial} apart. {name} and the {object} each moved {movement} to the right.",
+      "expanded_numeric": "At the beginning, {name} and the {object} were {initial} apart. From that starting arrangement, {name} moved {movement} to the right, and the {object} also moved {movement} to the right.",
+      "compact_non_numeric": "Starting some distance apart, {name} and the {object} each moved equally far right.",
+      "non_numeric": "Initially, {name} and the {object} were some distance apart. {name} and the {object} each moved the same distance to the right.",
+      "expanded_non_numeric": "At the beginning, {name} and the {object} were some distance apart. From that starting arrangement, {name} moved to the right by some distance, and the {object} also moved to the right by exactly the same distance.",
+      "alternate_compact_numeric": "Starting {initial} apart, the {object} and {name} each moved {movement} right.",
+      "alternate_numeric": "Initially, the {object} and {name} were {initial} apart. The {object} and {name} each moved {movement} to the right.",
+      "alternate_expanded_numeric": "At the beginning, the {object} and {name} were {initial} apart. From that starting arrangement, the {object} moved {movement} to the right, and {name} also moved {movement} to the right.",
+      "alternate_compact_non_numeric": "Starting some distance apart, the {object} and {name} each moved equally far right.",
+      "alternate_non_numeric": "Initially, the {object} and {name} were some distance apart. The {object} and {name} each moved the same distance to the right.",
+      "alternate_expanded_non_numeric": "At the beginning, the {object} and {name} were some distance apart. From that starting arrangement, the {object} moved to the right by some distance, and {name} also moved to the right by exactly the same distance."
+    }
+  ]
+}

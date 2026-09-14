@@ -1,0 +1,17 @@
+{
+  "source_kind": "closer_farther_person_movement",
+  "n_unique_pairs": 2260,
+  "source_sha256": {
+    "pair_scores.csv": "95bc32725815fb7f5a5e1b38aa826f307cb44b93dea2ade33d3c718c4b8ac9b3",
+    "item_scores.csv": "c252e4d9d628272de2762d620bde0621fb5182f6d0dab44b05b2c7005ee3eb67"
+  },
+  "primary_grouping": "dataset",
+  "groupings": [
+    "dataset",
+    "dataset+length_band",
+    "dataset+template_family"
+  ],
+  "n_table_rows": 26,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

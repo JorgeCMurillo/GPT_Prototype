@@ -1,0 +1,30 @@
+{
+  "probe_name": "above_below_definition_and_synonym",
+  "version": "1.2",
+  "context_stems": [
+    {"id": "short", "above": "Above means that", "below": "Below means that"},
+    {"id": "medium", "above": "In physical space, 'above' means that", "below": "In physical space, 'below' means that"},
+    {"id": "long", "above": "When one object is above another, this means that", "below": "When one object is below another, this means that"}
+  ],
+  "phrase_pairs": [
+    {"id": "vertical_higher_lower", "register": "explicit_vertical", "above": "vertically higher than", "below": "vertically lower than"},
+    {"id": "greater_lesser_height", "register": "height_comparison", "above": "at a greater height than", "below": "at a lesser height than"},
+    {"id": "higher_up_lower_down", "register": "colloquial", "above": "higher up than", "below": "lower down than"},
+    {"id": "higher_lower", "register": "everyday", "above": "higher than", "below": "lower than"}
+  ],
+  "lexical_synonym_pairs": [
+    {"id": "over_under", "register": "lexical_synonym", "above": "over", "below": "under"}
+  ],
+  "definition_structures": [
+    {"id": "generic", "template": "one object is {phrase} another.", "above_target": "One object is above another.", "below_target": "One object is below another."},
+    {"id": "ordered", "template": "the first object is {phrase} the second.", "above_target": "The first object is above the second.", "below_target": "The first object is below the second."}
+  ],
+  "reverse_entity_nouns": [
+    {"id": "object", "text": "object"},
+    {"id": "item", "text": "item"}
+  ],
+  "reverse_context_structures": [
+    {"id": "plain", "template": "{subject} is {phrase} {reference}."},
+    {"id": "positioned", "template": "{subject} is positioned {phrase} {reference}."}
+  ]
+}

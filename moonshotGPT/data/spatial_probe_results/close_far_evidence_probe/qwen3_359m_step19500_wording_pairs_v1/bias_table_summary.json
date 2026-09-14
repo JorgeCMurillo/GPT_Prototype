@@ -1,0 +1,17 @@
+{
+  "source_kind": "close_far_evidence",
+  "n_unique_pairs": 4320,
+  "source_sha256": {
+    "item_scores.csv": "16dca43b9662e837a4beab2ff18143446f3a34f5958e87ad18a83c367411ff9e"
+  },
+  "primary_grouping": "mode+wording_family_id",
+  "groupings": [
+    "mode+wording_family_id",
+    "mode+wording_family_id+target_order",
+    "mode+wording_family_id+context_structure",
+    "mode+wording_family_id+context_entity_order"
+  ],
+  "n_table_rows": 144,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

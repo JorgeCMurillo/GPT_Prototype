@@ -1,0 +1,24 @@
+{
+  "probe_name": "above_below_definition_and_synonym",
+  "version": "1.2",
+  "paired_probes": 80,
+  "individual_choice_judgments": 160,
+  "conditional_likelihoods_to_compute": 320,
+  "by_direction": {
+    "word_to_definition": 24,
+    "definition_to_word": 40,
+    "word_to_synonym": 6,
+    "synonym_to_word": 10
+  },
+  "phrase_pairs": 4,
+  "lexical_synonym_pairs": 1,
+  "definition_structures": 2,
+  "reverse_entity_nouns": 2,
+  "reverse_context_structures": 2,
+  "entity_order_extension_pairs": 40,
+  "entity_order_matched_groups": 20,
+  "matched_direction_groups": 8,
+  "synonym_matched_direction_groups": 2,
+  "validation": "passed",
+  "model_evaluation_performed": false
+}

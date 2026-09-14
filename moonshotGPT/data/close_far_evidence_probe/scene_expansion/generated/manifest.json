@@ -1,0 +1,22 @@
+{
+  "probe_name": "close_far_scene_expansion",
+  "version": "1.0",
+  "matched_pairs": 1024,
+  "context_judgments": 2048,
+  "primary_scene_count": 7,
+  "primary_placement_pairs": 672,
+  "primary_placement_context_judgments": 1344,
+  "primary_pairs_per_context_and_target_order": 112,
+  "primary_judgments_per_context_and_target_order": 224,
+  "shoe_control_pairs": 192,
+  "shared_control_pairs": 160,
+  "matches": 3024,
+  "unique_context_texts": 928,
+  "unique_conditional_sequences": 3712,
+  "default_score_reduction": "mean",
+  "tokenizer_source": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "model_evaluation_performed": false,
+  "components_sha256": "c05b1dd21e57a63cc7a2fe73c295b7e492d072e7b6de063777505f1b7995939e",
+  "parent_components_sha256": "92287debb372bf4513fb542c9808879f01bb992160523f2fb34f8fb634ebb68e",
+  "validation": "passed"
+}

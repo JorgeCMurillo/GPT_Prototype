@@ -1,0 +1,60 @@
+{
+  "probe_name": "closer_farther_initial_conditions",
+  "version": "1.2",
+  "random_seed": 20260913,
+  "numeric_cases": 12,
+  "initial_distance_min": 6,
+  "initial_distance_max": 90,
+  "maximum_final_distance": 99,
+  "maximum_movement": 40,
+  "units": [
+    {"id": "unit_metres", "unit": "metres", "singular": "metre", "plural": "metres", "notation": "word"},
+    {"id": "unit_ft", "unit": "feet", "singular": "ft", "plural": "ft", "notation": "abbreviation"},
+    {"id": "unit_inches", "unit": "inches", "singular": "inch", "plural": "inches", "notation": "word"}
+  ],
+  "names": [
+    {"id": "name_0", "text": "Maya"},
+    {"id": "name_1", "text": "Jesse"},
+    {"id": "name_2", "text": "Li"},
+    {"id": "name_3", "text": "Omar"}
+  ],
+  "objects": [
+    {"id": "obj_cone", "text": "cone"},
+    {"id": "obj_flag", "text": "flag"},
+    {"id": "obj_bicycle", "text": "bicycle"}
+  ],
+  "outcomes": [
+    {"id": "closer", "target_key": "Target1", "target_template": "{name} is now closer to the {object} than before."},
+    {"id": "farther", "target_key": "Target2", "target_template": "{name} is now farther from the {object} than before."},
+    {"id": "unchanged", "target_key": "Target3", "target_template": "{name} is now at the same distance from the {object} as before."}
+  ],
+  "conditions": [
+    {
+      "id": "explicit_distance", "outcomes": ["closer", "farther", "unchanged"],
+      "evidence_type": "explicit_distance_comparison",
+      "templates": [
+        {"id": "distance_compact", "length_band": "compact", "text": "{name}'s distance from the stationary {object}: initially {initial} {initial_unit}, now {final} {final_unit}."},
+        {"id": "distance_standard", "length_band": "standard", "text": "{name} was {initial} {initial_unit} from a stationary {object}. {name} is now {final} {final_unit} from the {object}."},
+        {"id": "distance_expanded", "length_band": "expanded", "text": "Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. The distance between {name} and that {object} is now {final} {final_unit}."}
+      ]
+    },
+    {
+      "id": "movement_description", "outcomes": ["closer", "farther"],
+      "evidence_type": "directed_movement_inference",
+      "templates": [
+        {"id": "movement_compact", "length_band": "compact", "text": "Starting {initial} {initial_unit} from a stationary {object}, {name} walked {movement} {movement_unit} directly {direction} it."},
+        {"id": "movement_standard", "length_band": "standard", "text": "{name} was {initial} {initial_unit} from a stationary {object}. {name} walked {movement} {movement_unit} directly {direction} the {object}."},
+        {"id": "movement_expanded", "length_band": "expanded", "text": "Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. From that starting position, {name} walked {movement} {movement_unit} directly {direction} the {object}."}
+      ]
+    },
+    {
+      "id": "orientation_control", "outcomes": ["unchanged"],
+      "evidence_type": "rotation_without_translation_inference",
+      "templates": [
+        {"id": "orientation_compact", "length_band": "compact", "text": "{name}, {initial} {initial_unit} from a stationary {object}, turned around in place."},
+        {"id": "orientation_standard", "length_band": "standard", "text": "{name} was {initial} {initial_unit} from a stationary {object}. {name} turned around without changing position."},
+        {"id": "orientation_expanded", "length_band": "expanded", "text": "Initially, {name} was {initial} {initial_unit} from a {object} that remained stationary. {name} then turned to face the opposite direction, keeping both feet in the same place."}
+      ]
+    }
+  ]
+}

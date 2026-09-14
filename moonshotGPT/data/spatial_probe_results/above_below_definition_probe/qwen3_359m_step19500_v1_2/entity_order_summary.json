@@ -1,0 +1,24 @@
+{
+  "literal_definition": {
+    "n_matches": 16,
+    "first_subject_accuracy": 0.53125,
+    "second_subject_accuracy": 0.78125,
+    "first_subject_both_correct": 0.0625,
+    "second_subject_both_correct": 0.5625,
+    "all_four_correct": 0.0625,
+    "above_prediction_flip": 0.0,
+    "below_prediction_flip": 0.5,
+    "any_prediction_flip": 0.5
+  },
+  "lexical_synonym": {
+    "n_matches": 4,
+    "first_subject_accuracy": 0.625,
+    "second_subject_accuracy": 0.125,
+    "first_subject_both_correct": 0.25,
+    "second_subject_both_correct": 0.0,
+    "all_four_correct": 0.0,
+    "above_prediction_flip": 0.75,
+    "below_prediction_flip": 0.25,
+    "any_prediction_flip": 0.75
+  }
+}

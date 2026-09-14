@@ -1,0 +1,16 @@
+{
+  "source_kind": "closer_farther_parent_binary",
+  "n_unique_pairs": 7776,
+  "source_sha256": {
+    "matched_pair_scores.csv": "2c9d808f0305bf0ac85f23d24d059816329f736804834b250cf8844b29fd3d93",
+    "item_scores.csv": "409298b362dcb8c79598c55a3dcc0dee29277c4779c6e91015a23e4f777f3f65"
+  },
+  "primary_grouping": "contrast+description_family",
+  "groupings": [
+    "contrast+description_family",
+    "contrast+description_family+length_band"
+  ],
+  "n_table_rows": 48,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

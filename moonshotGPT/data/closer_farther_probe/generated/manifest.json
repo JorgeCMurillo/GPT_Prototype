@@ -1,0 +1,48 @@
+{
+  "probe_name": "closer_farther_initial_conditions",
+  "version": "1.2",
+  "random_seed": 20260913,
+  "numeric_cases": 12,
+  "base_entity_numeric_assignments_per_unit": 144,
+  "base_entity_numeric_unit_assignments": 432,
+  "context_items": 7776,
+  "targets_per_context": 3,
+  "conditional_scores_required": 23328,
+  "by_condition": {
+    "explicit_distance": 3888,
+    "movement_description": 2592,
+    "orientation_control": 1296
+  },
+  "by_outcome": {
+    "closer": 2592,
+    "farther": 2592,
+    "unchanged": 2592
+  },
+  "by_unit": {
+    "unit_metres": 2592,
+    "unit_ft": 2592,
+    "unit_inches": 2592
+  },
+  "by_length_band": {
+    "compact": 2592,
+    "standard": 2592,
+    "expanded": 2592
+  },
+  "by_evidence_type": {
+    "explicit_distance_comparison": 3888,
+    "directed_movement_inference": 2592,
+    "rotation_without_translation_inference": 1296
+  },
+  "context_templates": 9,
+  "length_match_groups": 2592,
+  "length_matches": 5184,
+  "tokenizer_source": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "token_counts_include_special_tokens": false,
+  "standalone_token_counts_and_conditional_target_counts": true,
+  "unit_matches": 5184,
+  "matched_comparisons": 3888,
+  "default_score_reduction": "mean",
+  "components_sha256": "e559aaf6bf2568e3c36e3f4be3956f06706567a77ea5c87eab934254d57a091a",
+  "structural_and_arithmetic_validation": "passed",
+  "model_evaluation_performed": false
+}

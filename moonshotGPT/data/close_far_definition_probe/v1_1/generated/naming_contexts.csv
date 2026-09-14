@@ -1,0 +1,4 @@
+id,structure_label,matched_definition_structure_id,template
+name_0,compact,def_0,A {modifier} {adjective} distance is described by the word
+name_1,medium,def_1,A {modifier} {adjective} distance between objects is described by the word
+name_2,expanded,def_2,Objects separated by a {modifier} {adjective} distance are described by the word

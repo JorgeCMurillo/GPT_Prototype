@@ -1,0 +1,20 @@
+{
+  "source_kind": "above_below_definition",
+  "n_unique_pairs": 80,
+  "source_sha256": {
+    "item_scores.csv": "3951a539125e3180ea41a4e7848f20e982e20d61a71c89671d33c9c8086d03b5"
+  },
+  "primary_grouping": "probe_family+direction",
+  "groupings": [
+    "probe_family+direction",
+    "probe_family+direction+design_block",
+    "probe_family+direction+phrase_pair_id",
+    "probe_family+direction+definition_structure_id",
+    "probe_family+direction+context_stem_id",
+    "probe_family+direction+design_block+context_entity_order",
+    "probe_family+direction+design_block+entity_noun_id"
+  ],
+  "n_table_rows": 58,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

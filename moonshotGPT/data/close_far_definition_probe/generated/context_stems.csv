@@ -1,0 +1,4 @@
+id,structure_label,close,far
+ctx_0,short,Close means that,Far means that
+ctx_1,medium,"In physical space, 'close' means that","In physical space, 'far' means that"
+ctx_2,long,"When two objects are described as close to each other, this means that","When two objects are described as far from each other, this means that"

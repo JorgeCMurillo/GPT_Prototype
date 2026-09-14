@@ -1,0 +1,4 @@
+id,condition_id,entity_order
+object_subject,physical_placement,object_first
+fronted_location,physical_placement_fronted,person_first
+person_subject,physical_placement_person_subject,person_first

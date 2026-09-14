@@ -1,0 +1,115 @@
+{
+  "probe_name": "close_far_situations",
+  "version": "1.0",
+  "names": [
+    {"id": "name_0", "text": "Maya"},
+    {"id": "name_1", "text": "Jesse"},
+    {"id": "name_2", "text": "Li"},
+    {"id": "name_3", "text": "Omar"}
+  ],
+  "objects": [
+    {"id": "obj_ball", "text": "ball"},
+    {"id": "obj_bag", "text": "bag"},
+    {"id": "obj_book", "text": "book"},
+    {"id": "obj_cone", "text": "cone"},
+    {"id": "obj_suitcase", "text": "suitcase"},
+    {"id": "obj_backpack", "text": "backpack"},
+    {"id": "obj_coat", "text": "coat"},
+    {"id": "obj_bench", "text": "bench"},
+    {"id": "obj_mat", "text": "mat"},
+    {"id": "obj_cup", "text": "cup"},
+    {"id": "obj_mug", "text": "mug"},
+    {"id": "obj_plate", "text": "plate"},
+    {"id": "obj_bowl", "text": "bowl"},
+    {"id": "obj_helmet", "text": "helmet"},
+    {"id": "obj_bucket", "text": "bucket"},
+    {"id": "obj_toolbox", "text": "toolbox"},
+    {"id": "obj_crate", "text": "crate"}
+  ],
+  "phrase_pairs": [
+    {"id": "placement_0", "evidence_type": "physical_arrangement", "source": "scenario", "semantic_match": "baseline"},
+    {"id": "placement_1", "evidence_type": "physical_arrangement", "source": "scenario", "semantic_match": "category_matched"},
+    {"id": "lex_beside", "evidence_type": "proximity_word", "source": "shared", "close": "The {object} is beside {reference}.", "far": "The {object} is far from {reference}.", "semantic_match": "category_matched"},
+    {"id": "lex_alongside", "evidence_type": "proximity_word", "source": "shared", "close": "The {object} is alongside {reference}.", "far": "The {object} is a long way from {reference}.", "semantic_match": "category_matched"},
+    {"id": "lex_near", "evidence_type": "proximity_word", "source": "shared", "close": "The {object} is near {reference}.", "far": "The {object} is a long distance from {reference}.", "semantic_match": "category_matched"}
+  ],
+  "reference_orders": [
+    {"id": "target_first", "subject": "object", "reference": "anchor"},
+    {"id": "anchor_first", "subject": "anchor", "reference": "object"}
+  ],
+  "target_patterns": [
+    {"id": "positive", "close": "{subject} is close to {reference}.", "far": "{subject} is far from {reference}."},
+    {"id": "negate_close", "close": "{subject} is close to {reference}.", "far": "{subject} is not close to {reference}."},
+    {"id": "negate_far", "close": "{subject} is not far from {reference}.", "far": "{subject} is far from {reference}."},
+    {"id": "both_negated", "close": "{subject} is not far from {reference}.", "far": "{subject} is not close to {reference}."}
+  ],
+  "conditions": [
+    {"id": "baseline", "phrase_pair_id": "placement_0", "reference_order_id": "target_first", "target_pattern_id": "positive", "control": "baseline"},
+    {"id": "phrase_alternate", "phrase_pair_id": "placement_1", "reference_order_id": "target_first", "target_pattern_id": "positive", "control": "location_phrasing"},
+    {"id": "word_beside", "phrase_pair_id": "lex_beside", "reference_order_id": "target_first", "target_pattern_id": "positive", "control": "evidence_wording"},
+    {"id": "word_alongside", "phrase_pair_id": "lex_alongside", "reference_order_id": "target_first", "target_pattern_id": "positive", "control": "evidence_wording"},
+    {"id": "word_near", "phrase_pair_id": "lex_near", "reference_order_id": "target_first", "target_pattern_id": "positive", "control": "evidence_wording"},
+    {"id": "reference_reversed", "phrase_pair_id": "placement_0", "reference_order_id": "anchor_first", "target_pattern_id": "positive", "control": "reference_reversal"},
+    {"id": "negate_close", "phrase_pair_id": "placement_0", "reference_order_id": "target_first", "target_pattern_id": "negate_close", "control": "target_negation"},
+    {"id": "negate_far", "phrase_pair_id": "placement_0", "reference_order_id": "target_first", "target_pattern_id": "negate_far", "control": "target_negation"},
+    {"id": "both_negated", "phrase_pair_id": "placement_0", "reference_order_id": "target_first", "target_pattern_id": "both_negated", "control": "target_negation"}
+  ],
+  "scenarios": [
+    {
+      "id": "person_gym", "entity_type": "person_object", "setting": "long gym", "family": "room_separation",
+      "object_ids": ["obj_ball", "obj_bag"],
+      "setup": "{name} stands at one end of a long gym.",
+      "placement_0": {"close": "The {object} rests between {name}'s shoes.", "far": "The {object} rests at the other end of the gym from {name}."},
+      "placement_1": {"close": "The {object} rests immediately next to {name}'s shoes.", "far": "The {object} rests across the full length of the gym from {name}."}
+    },
+    {
+      "id": "person_dining", "entity_type": "person_object", "setting": "large dining room", "family": "room_separation",
+      "object_ids": ["obj_book", "obj_bag"],
+      "setup": "{name} sits on a chair at one end of a large dining room.",
+      "placement_0": {"close": "The {object} rests on the floor between the legs of {name}'s chair.", "far": "The {object} rests on the floor at the other end of the dining room from {name}."},
+      "placement_1": {"close": "The {object} rests on the floor immediately beside {name}'s chair.", "far": "The {object} rests on the floor across the full length of the dining room from {name}."}
+    },
+    {
+      "id": "person_field", "entity_type": "person_object", "setting": "large playing field", "family": "endpoints",
+      "object_ids": ["obj_ball", "obj_cone"],
+      "setup": "{name} stands at one end of a large playing field.",
+      "placement_0": {"close": "The {object} rests between {name}'s feet.", "far": "The {object} rests at the other end of the field from {name}."},
+      "placement_1": {"close": "The {object} rests immediately next to {name}'s foot.", "far": "The entire length of the playing field separates the {object} from {name}."}
+    },
+    {
+      "id": "person_platform", "entity_type": "person_object", "setting": "long train platform", "family": "endpoints",
+      "object_ids": ["obj_suitcase", "obj_backpack"],
+      "setup": "{name} stands at one end of a long train platform.",
+      "placement_0": {"close": "The {object} rests against {name}'s ankle.", "far": "The {object} rests at the other end of the platform from {name}."},
+      "placement_1": {"close": "The {object} rests immediately next to {name}'s ankle.", "far": "The {object} rests with the full length of the platform between it and {name}."}
+    },
+    {
+      "id": "person_auditorium", "entity_type": "person_object", "setting": "large auditorium", "family": "seating_arrangement",
+      "object_ids": ["obj_bag", "obj_coat"],
+      "setup": "{name} sits in the front row of a large auditorium.",
+      "placement_0": {"close": "The {object} rests on the seat immediately next to {name}.", "far": "The {object} rests on a seat in the last row at the back of the auditorium."},
+      "placement_1": {"close": "The {object} rests on the seat directly alongside {name}.", "far": "The {object} rests on a seat across the full depth of the auditorium from {name}."}
+    },
+    {
+      "id": "objects_gym", "entity_type": "object_object", "setting": "long gym", "family": "room_separation",
+      "object_ids": ["obj_ball", "obj_cone"], "anchor_object_ids": ["obj_bench", "obj_mat"],
+      "setup": "The {anchor_object} is at one end of a long gym.",
+      "placement_0": {"close": "The {object} rests immediately beside the edge of the {anchor_object}.", "far": "The {object} rests at the other end of the gym from the {anchor_object}."},
+      "placement_1": {"close": "Only a narrow gap separates the {object} from the {anchor_object}.", "far": "The {object} rests on the other side of the gym, across its full length from the {anchor_object}."}
+    },
+    {
+      "id": "objects_kitchen", "entity_type": "object_object", "setting": "large kitchen", "family": "surfaces_and_room_separation",
+      "object_ids": ["obj_cup", "obj_mug"], "anchor_object_ids": ["obj_plate", "obj_bowl"],
+      "setup": "The {anchor_object} rests on a table at one end of a large kitchen.",
+      "placement_0": {"close": "The {object} rests on the table immediately beside the {anchor_object}.", "far": "The {object} rests on a counter at the other end of the kitchen from the {anchor_object}."},
+      "placement_1": {"close": "The {object} rests on the same table with only a narrow gap between it and the {anchor_object}.", "far": "The {object} rests on a counter across the full length of the kitchen from the {anchor_object}."}
+    },
+    {
+      "id": "objects_workshop", "entity_type": "object_object", "setting": "long workshop", "family": "room_separation",
+      "object_ids": ["obj_helmet", "obj_bucket"], "anchor_object_ids": ["obj_toolbox", "obj_crate"],
+      "setup": "The {anchor_object} rests on the floor at one end of a long workshop.",
+      "placement_0": {"close": "The {object} rests immediately beside the {anchor_object}.", "far": "The {object} rests at the other end of the workshop from the {anchor_object}."},
+      "placement_1": {"close": "Only a narrow gap separates the {object} from the {anchor_object}.", "far": "The full length of the workshop separates the {object} from the {anchor_object}."}
+    }
+  ]
+}

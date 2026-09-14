@@ -1,0 +1,4 @@
+id,unit,singular,plural,notation
+unit_metres,metres,metre,metres,word
+unit_ft,feet,ft,ft,abbreviation
+unit_inches,inches,inch,inches,word

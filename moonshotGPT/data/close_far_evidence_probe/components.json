@@ -1,0 +1,98 @@
+{
+  "probe_name": "close_far_matched_evidence",
+  "version": "1.1",
+  "names": [
+    {
+      "id": "name_0",
+      "text": "Maya"
+    },
+    {
+      "id": "name_1",
+      "text": "Jesse"
+    },
+    {
+      "id": "name_2",
+      "text": "Li"
+    },
+    {
+      "id": "name_3",
+      "text": "Omar"
+    }
+  ],
+  "objects": [
+    {
+      "id": "obj_ball",
+      "text": "ball"
+    },
+    {
+      "id": "obj_bag",
+      "text": "bag"
+    },
+    {
+      "id": "obj_book",
+      "text": "book"
+    },
+    {
+      "id": "obj_cone",
+      "text": "cone"
+    },
+    {
+      "id": "obj_helmet",
+      "text": "helmet"
+    }
+  ],
+  "evidence_conditions": [
+    {
+      "id": "direct_label",
+      "close": "The {object} is close to {name}.",
+      "far": "The {object} is far from {name}.",
+      "evidence_type": "explicit_relation",
+      "context_entity_order": "object_first",
+      "context_structure": "object_subject"
+    },
+    {
+      "id": "proximity_paraphrase",
+      "close": "The {object} is beside {name}.",
+      "far": "The {object} is a long way from {name}.",
+      "evidence_type": "proximity_phrase",
+      "context_entity_order": "object_first",
+      "context_structure": "object_subject"
+    },
+    {
+      "id": "physical_placement",
+      "close": "The {object} is between {name}'s shoes.",
+      "far": "The {object} is across the full length of a long gym from {name}.",
+      "evidence_type": "physical_arrangement",
+      "context_entity_order": "object_first",
+      "context_structure": "object_subject"
+    },
+    {
+      "id": "physical_placement_fronted",
+      "close": "Between {name}'s shoes is the {object}.",
+      "far": "Across the full length of a long gym from {name} is the {object}.",
+      "evidence_type": "physical_arrangement",
+      "context_entity_order": "person_first",
+      "context_structure": "fronted_location"
+    },
+    {
+      "id": "physical_placement_person_subject",
+      "close": "{name} has the {object} between their shoes.",
+      "far": "{name} is across the full length of a long gym from the {object}.",
+      "evidence_type": "physical_arrangement",
+      "context_entity_order": "person_first",
+      "context_structure": "person_subject"
+    }
+  ],
+  "target_orders": [
+    {
+      "id": "person_first",
+      "close": "{name} is close to the {object}.",
+      "far": "{name} is far from the {object}."
+    },
+    {
+      "id": "object_first",
+      "close": "The {object} is close to {name}.",
+      "far": "The {object} is far from {name}."
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+id,close,far
+person_first,{name} is close to the {object}.,{name} is far from the {object}.
+object_first,The {object} is close to {name}.,The {object} is far from {name}.

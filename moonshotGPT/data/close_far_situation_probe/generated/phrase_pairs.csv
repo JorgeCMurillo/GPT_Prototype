@@ -1,0 +1,6 @@
+id,evidence_type,source,semantic_match,close,far
+placement_0,physical_arrangement,scenario,baseline,,
+placement_1,physical_arrangement,scenario,category_matched,,
+lex_beside,proximity_word,shared,category_matched,The {object} is beside {reference}.,The {object} is far from {reference}.
+lex_alongside,proximity_word,shared,category_matched,The {object} is alongside {reference}.,The {object} is a long way from {reference}.
+lex_near,proximity_word,shared,category_matched,The {object} is near {reference}.,The {object} is a long distance from {reference}.

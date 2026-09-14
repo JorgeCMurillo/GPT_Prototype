@@ -1,0 +1,4 @@
+id,description,prefix_source
+compact,Location sentence only,none
+setting,Setting prefix followed by the identical location sentence,setting_prefix
+endpoint,Original endpoint-detail prefix followed by the identical location sentence,original_setup

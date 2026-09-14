@@ -1,0 +1,4 @@
+id,template
+def_0,the distance is {modifier} {adjective}.
+def_1,the distance between the objects is {modifier} {adjective}.
+def_2,the objects are separated by a {modifier} {adjective} distance.

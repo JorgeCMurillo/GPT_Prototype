@@ -1,0 +1,18 @@
+{
+  "source_kind": "close_far_situation",
+  "n_unique_pairs": 228,
+  "source_sha256": {
+    "item_scores.csv": "7efcdd9a5a13ed4fb2d5386204f9cffaa21f2872abfab4f6c05e1de197bfc924"
+  },
+  "primary_grouping": "condition_id",
+  "groupings": [
+    "condition_id",
+    "condition_id+scenario_family",
+    "condition_id+reference_order_id",
+    "condition_id+sentence_structure_id",
+    "context_form_id+reference_form_id"
+  ],
+  "n_table_rows": 42,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

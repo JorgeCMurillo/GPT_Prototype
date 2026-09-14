@@ -1,0 +1,62 @@
+{
+  "name": "matched_scene_applied_close_far",
+  "scope": "Two applied evidence families in the matched-scene probe only; other close/far probes excluded.",
+  "scoring": "mean full-target token log likelihood; binary close/far choice",
+  "weighting": "Within each scene, average balanced target and context orders; then average 192 scenes; then give distance phrase and endpoint placement equal weight.",
+  "family_scores": [
+    {
+      "evidence_family": "distance_phrase",
+      "n_scenes": 192,
+      "n_probe_rows": 768,
+      "raw_close_accuracy": 0.7864583333333334,
+      "raw_far_accuracy": 0.5651041666666666,
+      "raw_accuracy": 0.67578125,
+      "pmi_close_accuracy": 0.4453125,
+      "pmi_far_accuracy": 0.7864583333333334,
+      "pmi_accuracy": 0.6158854166666667,
+      "context_close_accuracy": 0.3763020833333333,
+      "context_far_accuracy": 0.98046875,
+      "context_accuracy": 0.6783854166666666
+    },
+    {
+      "evidence_family": "endpoint_placement",
+      "n_scenes": 192,
+      "n_probe_rows": 384,
+      "raw_close_accuracy": 0.953125,
+      "raw_far_accuracy": 0.020833333333333332,
+      "raw_accuracy": 0.4869791666666667,
+      "pmi_close_accuracy": 0.703125,
+      "pmi_far_accuracy": 0.3567708333333333,
+      "pmi_accuracy": 0.5299479166666666,
+      "context_close_accuracy": 0.1171875,
+      "context_far_accuracy": 0.8671875,
+      "context_accuracy": 0.4921875
+    },
+    {
+      "evidence_family": "direct_label_control",
+      "n_scenes": 192,
+      "n_probe_rows": 384,
+      "raw_close_accuracy": 0.953125,
+      "raw_far_accuracy": 1.0,
+      "raw_accuracy": 0.9765625,
+      "pmi_close_accuracy": 0.7135416666666666,
+      "pmi_far_accuracy": 1.0,
+      "pmi_accuracy": 0.8567708333333333,
+      "context_close_accuracy": 0.9427083333333334,
+      "context_far_accuracy": 1.0,
+      "context_accuracy": 0.9713541666666667
+    }
+  ],
+  "overall_applied_mean": {
+    "raw_accuracy": 0.5813802083333334,
+    "raw_close_accuracy": 0.8697916666666667,
+    "raw_far_accuracy": 0.29296875,
+    "pmi_accuracy": 0.5729166666666667,
+    "pmi_close_accuracy": 0.57421875,
+    "pmi_far_accuracy": 0.5716145833333334,
+    "context_accuracy": 0.5852864583333333,
+    "context_close_accuracy": 0.24674479166666666,
+    "context_far_accuracy": 0.923828125
+  },
+  "direct_label_control_excluded": true
+}

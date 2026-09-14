@@ -1,0 +1,17 @@
+{
+  "source_kind": "above_below_definition",
+  "n_unique_pairs": 40,
+  "source_sha256": {
+    "item_scores.csv": "0f77829fe18fe1cd538e1a693905a69b24dec399d58d833d0c34a7181ecfa2c6"
+  },
+  "primary_grouping": "probe_family+direction",
+  "groupings": [
+    "probe_family+direction",
+    "probe_family+direction+phrase_pair_id",
+    "probe_family+direction+definition_structure_id",
+    "probe_family+direction+context_stem_id"
+  ],
+  "n_table_rows": 30,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

@@ -1,0 +1,66 @@
+{
+  "probe_name": "close_far_matched_scenes",
+  "version": "1.1",
+  "names": [
+    {"id": "name_maya", "text": "Maya"},
+    {"id": "name_jesse", "text": "Jesse"},
+    {"id": "name_li", "text": "Li"},
+    {"id": "name_omar", "text": "Omar"}
+  ],
+  "objects": [
+    {"id": "obj_ball", "text": "ball"},
+    {"id": "obj_bag", "text": "bag"},
+    {"id": "obj_book", "text": "book"},
+    {"id": "obj_cone", "text": "cone"},
+    {"id": "obj_helmet", "text": "helmet"},
+    {"id": "obj_cup", "text": "cup"},
+    {"id": "obj_key", "text": "key"},
+    {"id": "obj_box", "text": "box"}
+  ],
+  "settings": [
+    {"id": "gym", "text": "gym", "person_endpoint": "at one end", "far_endpoint": "at the other end", "geometry": "ends"},
+    {"id": "hallway", "text": "hallway", "person_endpoint": "at one end", "far_endpoint": "at the opposite end", "geometry": "ends"},
+    {"id": "courtyard", "text": "courtyard", "person_endpoint": "at one edge", "far_endpoint": "at the opposite edge", "geometry": "edges"},
+    {"id": "field", "text": "field", "person_endpoint": "at one sideline", "far_endpoint": "at the opposite sideline", "geometry": "sidelines"},
+    {"id": "platform", "text": "platform", "person_endpoint": "at one end", "far_endpoint": "at the other end", "geometry": "ends"},
+    {"id": "auditorium", "text": "auditorium", "person_endpoint": "at one side", "far_endpoint": "at the opposite side", "geometry": "sides"}
+  ],
+  "evidence_conditions": [
+    {
+      "id": "direct_label",
+      "evidence_type": "explicit_relation",
+      "context_structure": "locative_object_subject",
+      "context_entity_order": "object_first",
+      "close": "In the {setting}, the {object} is close to {name}.",
+      "far": "In the {setting}, the {object} is far from {name}."
+    },
+    {
+      "id": "distance_phrase",
+      "evidence_type": "distance_magnitude_phrase",
+      "context_structure": "locative_distance_subject",
+      "context_entity_order": "person_first",
+      "close": "In the {setting}, a short distance separates {name} and the {object}.",
+      "far": "In the {setting}, a long distance separates {name} and the {object}."
+    },
+    {
+      "id": "distance_phrase_object_first",
+      "evidence_type": "distance_magnitude_phrase",
+      "context_structure": "locative_distance_subject",
+      "context_entity_order": "object_first",
+      "close": "In the {setting}, a short distance separates the {object} and {name}.",
+      "far": "In the {setting}, a long distance separates the {object} and {name}."
+    },
+    {
+      "id": "endpoint_placement",
+      "evidence_type": "physical_endpoint_placement",
+      "context_structure": "two_sentence_person_then_object",
+      "context_entity_order": "person_first",
+      "close": "In the {setting}, {name} stands {person_endpoint}. The {object} rests at {name}'s feet.",
+      "far": "In the {setting}, {name} stands {person_endpoint}. The {object} rests {far_endpoint}."
+    }
+  ],
+  "target_orders": [
+    {"id": "object_first", "close": "The {object} is close to {name}.", "far": "The {object} is far from {name}."},
+    {"id": "person_first", "close": "{name} is close to the {object}.", "far": "{name} is far from the {object}."}
+  ]
+}

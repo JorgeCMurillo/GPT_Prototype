@@ -1,0 +1,8 @@
+id,length_band,text,reference_stationarity
+aligned_compact,compact,"Starting {initial_distance_phrase} from a stationary {object}, {name} walked {movement_distance_phrase} directly {direction} it without reaching or passing it.",
+aligned_standard,standard,{name} was {initial_distance_phrase} from a stationary {object}. {name} walked {movement_distance_phrase} directly {direction} the {object} without reaching or passing it.,
+aligned_expanded,expanded,"Initially, {name} was {initial_distance_phrase} from a {object} that remained stationary. From that starting position, {name} walked {movement_distance_phrase} directly {direction} the {object} without reaching or passing it.",
+minimal_unqualified,minimal,{name} walked {direction} the {object}.,assumed
+minimal_stationary,minimal_stationary,{name} walked {direction} the stationary {object}.,explicit
+reference_clause_stationary,clause_stationary,"{name} walked {direction} the {object}, which remained stationary.",explicit
+reference_clause_still,clause_still,"{name} walked {direction} the {object}, which remained still.",explicit

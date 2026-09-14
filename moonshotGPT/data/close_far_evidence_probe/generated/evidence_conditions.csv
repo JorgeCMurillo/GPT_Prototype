@@ -1,0 +1,6 @@
+id,close,far,evidence_type,context_entity_order,context_structure
+direct_label,The {object} is close to {name}.,The {object} is far from {name}.,explicit_relation,object_first,object_subject
+proximity_paraphrase,The {object} is beside {name}.,The {object} is a long way from {name}.,proximity_phrase,object_first,object_subject
+physical_placement,The {object} is between {name}'s shoes.,The {object} is across the full length of a long gym from {name}.,physical_arrangement,object_first,object_subject
+physical_placement_fronted,Between {name}'s shoes is the {object}.,Across the full length of a long gym from {name} is the {object}.,physical_arrangement,person_first,fronted_location
+physical_placement_person_subject,{name} has the {object} between their shoes.,{name} is across the full length of a long gym from the {object}.,physical_arrangement,person_first,person_subject

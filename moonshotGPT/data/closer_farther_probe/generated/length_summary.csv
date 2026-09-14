@@ -1,0 +1,10 @@
+condition_id,length_band,context_items,word_min,word_max,token_min,token_max
+explicit_distance,compact,1296,13,13,16,17
+explicit_distance,standard,1296,16,16,18,19
+explicit_distance,expanded,1296,22,22,25,25
+movement_description,compact,864,14,15,16,17
+movement_description,standard,864,16,17,18,20
+movement_description,expanded,864,23,24,27,28
+orientation_control,compact,432,11,11,14,15
+orientation_control,standard,432,14,14,16,17
+orientation_control,expanded,432,26,26,30,30

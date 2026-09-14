@@ -1,0 +1,16 @@
+{
+  "source_kind": "close_far_evidence",
+  "n_unique_pairs": 200,
+  "source_sha256": {
+    "item_scores.csv": "b5ce177e5b16f8e1acfecacf7b62ae4673b473f32217fb0ae33664bc5264fa71"
+  },
+  "primary_grouping": "condition_id",
+  "groupings": [
+    "condition_id",
+    "condition_id+context_entity_order",
+    "condition_id+target_order"
+  ],
+  "n_table_rows": 40,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}

@@ -1,0 +1,30 @@
+{
+  "probe_name": "close_far_literal_definition",
+  "version": "1.0",
+  "directions": [
+    {"id": "word_to_definition", "description": "Concept word to distance description"},
+    {"id": "definition_to_word", "description": "Distance description to concept word"}
+  ],
+  "context_stems": [
+    {"id": "ctx_0", "structure_label": "short", "close": "Close means that", "far": "Far means that"},
+    {"id": "ctx_1", "structure_label": "medium", "close": "In physical space, 'close' means that", "far": "In physical space, 'far' means that"},
+    {"id": "ctx_2", "structure_label": "long", "close": "When two objects are described as close to each other, this means that", "far": "When two objects are described as far from each other, this means that"}
+  ],
+  "definition_structures": [
+    {"id": "def_0", "template": "the distance is {modifier} {adjective}."},
+    {"id": "def_1", "template": "the distance between the objects is {modifier} {adjective}."},
+    {"id": "def_2", "template": "the objects are separated by a {modifier} {adjective} distance."}
+  ],
+  "modifiers": [
+    {"id": "mod_0", "text": "relatively"},
+    {"id": "mod_1", "text": "comparatively"},
+    {"id": "mod_2", "text": "fairly"}
+  ],
+  "adjective_pairs": [
+    {"id": "adj_0", "close": "small", "far": "large"},
+    {"id": "adj_1", "close": "short", "far": "long"}
+  ],
+  "label_targets": [
+    {"id": "label_0", "close": "The objects are close.", "far": "The objects are far."}
+  ]
+}
