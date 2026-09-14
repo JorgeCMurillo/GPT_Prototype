@@ -2,8 +2,8 @@
 
 `generate.py` reads the saved, matched two-answer scores for a spatial probe. It
 does not score the model again. Supported close/far, closer/farther, and
-above/below evaluators
-generate a table after writing their scores. To backfill or regenerate a run:
+above/below definition and situation evaluators generate a table after writing
+their scores. To backfill or regenerate a run:
 
 ```bash
 python data/spatial_bias_report/generate.py --results-dir runs/research/bos_aligned_proto/close_far_situation_probe/qwen3_359m_step19500_v1
@@ -31,6 +31,9 @@ while 50% accuracy with 50% `both correct` and 50% `both wrong` is a different
 pattern. For negated targets, the answer labels explicitly say `not close` or
 `not far`. The table only describes preference within the given binary target
 pair; it does not infer that `not close` entails `far` in an intermediate case.
+For above/below situations, each target entity order is shown separately,
+because reversing the sentence makes the first answer contain `below` rather
+than `above`. This keeps a lexical answer preference visible.
 
 The primary table groups by probe condition or binary contrast. The CSV splits
 further by event family, scenario, wording, sentence length, or entity order

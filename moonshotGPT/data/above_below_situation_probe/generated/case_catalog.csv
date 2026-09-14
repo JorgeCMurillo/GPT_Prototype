@@ -1,0 +1,13 @@
+case_id,event_family,event_subtype,above_target_start,above_target_end,above_reference_start,above_reference_end,below_target_start,below_target_end,below_reference_start,below_reference_end
+static_outer,static_placement,outer_shelves,5,5,1,1,1,1,5,5
+static_inner,static_placement,inner_shelves,4,4,2,2,2,2,4,4
+static_offset,static_placement,middle_reference,5,5,3,3,3,3,5,5
+target_cross_full,target_crosses,full_crossing,1,5,3,3,5,1,3,3
+target_cross_inner,target_crosses,inner_crossing,2,4,3,3,4,2,3,3
+reference_cross_full,reference_crosses,full_crossing,3,3,5,1,3,3,1,5
+reference_cross_inner,reference_crosses,inner_crossing,3,3,4,2,3,3,2,4
+no_cross_up,target_moves_without_crossing,upward_motion,4,5,1,1,1,2,5,5
+no_cross_down,target_moves_without_crossing,downward_motion,5,4,1,1,2,1,5,5
+both_preserve_up,both_move,order_preserved_up,4,5,2,3,2,3,4,5
+both_preserve_down,both_move,order_preserved_down,5,4,3,2,3,2,5,4
+both_reverse,both_move,order_reversed,2,4,4,2,4,2,2,4

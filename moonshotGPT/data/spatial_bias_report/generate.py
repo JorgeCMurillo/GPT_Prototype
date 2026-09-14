@@ -74,6 +74,20 @@ def from_paired_items(path):
                        parse_bool(row["context_far_correct"]))
             paired.append(pair(row, ("close", "far"), attrs, margins,
                                {"context": context}))
+    elif {"above_margin", "below_margin", "event_family", "target_entity_order"} <= fields:
+        kind = "above_below_situation"
+        for row in rows:
+            if row["score_reduction"] != "mean":
+                continue
+            attrs = {k: row.get(k, "") for k in ["event_family", "event_subtype",
+                "evidence_type", "length_band", "context_entity_order",
+                "target_entity_order", "object_pair_id", "case_id"]}
+            context = (float(row["context_sensitivity_above_margin"]) > 0,
+                       float(row["context_sensitivity_below_margin"]) > 0)
+            paired.append(pair(row,
+                (row["target1_relation_word"], row["target2_relation_word"]), attrs,
+                {"raw": (row["above_margin"], row["below_margin"])},
+                {"context": context}))
     elif {"above_margin", "below_margin"} <= fields:
         kind = "above_below_definition"
         labels_by_direction = {
@@ -204,6 +218,13 @@ def detect(out):
 
 
 def groupings(kind, pairs):
+    if kind == "above_below_situation":
+        return [("event_family", "target_entity_order"),
+                ("event_family", "target_entity_order", "evidence_type"),
+                ("event_family", "target_entity_order", "event_subtype"),
+                ("event_family", "target_entity_order", "length_band"),
+                ("event_family", "target_entity_order", "context_entity_order"),
+                ("event_family", "target_entity_order", "object_pair_id")]
     if kind == "above_below_definition":
         return [("probe_family", "direction"),
                 ("probe_family", "direction", "design_block"),

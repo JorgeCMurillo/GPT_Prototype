@@ -13,6 +13,7 @@ neighboring probe directories.
 | Close/far matched situations | [Applied mean: 58.14%](close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/applied_score_report.md) | [Direct labels: 97.66%](close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/applied_score_report.md) |
 | Closer/farther movement | [Applied mean: 48.97%](closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_report.md) | [Direct labels: 82.64%](closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_report.md) |
 | Above/below literal definition | [Word to definition: 56.25%; definition to word: 61.25%](above_below_definition_probe/qwen3_359m_step19500_v1_2/report.md) | [Answer preference and entity order](above_below_definition_probe/qwen3_359m_step19500_v1_2/above_below_bias.md) |
+| Above/below situations | [Equal-family applied mean: 49.76%](above_below_situation_probe/qwen3_359m_step19500_v1_2/report.md) | [Direct labels: 53.12%; target-order bias](above_below_situation_probe/qwen3_359m_step19500_v1_2/bias_table.md) |
 
 These scores use different evidence and different averaging rules. They are
 diagnostic summaries, not a single cross-concept benchmark ranking. Repeated

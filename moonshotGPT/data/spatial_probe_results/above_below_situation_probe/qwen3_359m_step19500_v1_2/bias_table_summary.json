@@ -1,0 +1,19 @@
+{
+  "source_kind": "above_below_situation",
+  "n_unique_pairs": 1248,
+  "source_sha256": {
+    "item_scores.csv": "494c0524f6b6e7ecf56726fb4b0e26b57924891e8114fcb45869a4158f7cc93d"
+  },
+  "primary_grouping": "event_family+target_entity_order",
+  "groupings": [
+    "event_family+target_entity_order",
+    "event_family+target_entity_order+evidence_type",
+    "event_family+target_entity_order+event_subtype",
+    "event_family+target_entity_order+length_band",
+    "event_family+target_entity_order+context_entity_order",
+    "event_family+target_entity_order+object_pair_id"
+  ],
+  "n_table_rows": 172,
+  "raw_table_file": "bias_table.csv",
+  "display_file": "bias_table.md"
+}
