@@ -1,0 +1,23 @@
+{
+  "probe_name": "closer_farther_both_move_minimal",
+  "version": "1.0",
+  "parent_components": "../components.json",
+  "parent_numeric_cases": "../generated/numeric_cases.csv",
+  "slow_movement": 1,
+  "numeric_templates": {
+    "person_first": "{name} began {initial} to the left of the {object}. {name} moved {person_move} right, and the {object} moved {object_move} right.",
+    "object_first": "The {object} began {initial} to the right of {name}. The {object} moved {object_move} right, and {name} moved {person_move} right."
+  },
+  "non_numeric_templates": {
+    "person_first": {
+      "closer": "{name} began to the left of the {object}. Both moved right, but {name} covered more ground without reaching the {object}.",
+      "farther": "{name} began to the left of the {object}. Both moved right, but the {object} covered more ground than {name}.",
+      "unchanged": "{name} began to the left of the {object}. Both moved right by equal distances."
+    },
+    "object_first": {
+      "closer": "The {object} began to the right of {name}. Both moved right, but {name} covered more ground without reaching the {object}.",
+      "farther": "The {object} began to the right of {name}. Both moved right, but the {object} covered more ground than {name}.",
+      "unchanged": "The {object} began to the right of {name}. Both moved right by equal distances."
+    }
+  }
+}

@@ -10,6 +10,12 @@ A separate [non-numeric closer/farther extension](non_numeric/README.md) adds 28
 
 An additive [event extension](event_extension/README.md) generates direct comparative-label controls, reference-object movement, and unchanged-separation co-motion with numeric and nonnumeric versions in compact, standard, and expanded wording. It has been evaluated on Qwen3 359M at step 19,500; the original set remains unchanged.
 
+A minimal [both-moving extension](both_move_minimal/README.md) adds closer,
+farther, and unchanged outcomes within the same event family. Both entities
+move right in every context; swapping which entity moves farther yields closer
+versus farther, while equal movement preserves separation. This additive batch
+is generated but unevaluated.
+
 For current and future diagnostic summaries, **binary target comparisons are primary**: closer versus farther, closer versus unchanged, and farther versus unchanged, each with 50% uniform-choice chance. The original version 1.2 three-way run remains an archived historical result. The event extension's binary report and pair tables demonstrate the current scoring convention.
 
 | Condition | Outcomes | Per length | All lengths | Evidence type |

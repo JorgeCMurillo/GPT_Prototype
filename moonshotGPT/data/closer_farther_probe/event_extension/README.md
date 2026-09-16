@@ -2,6 +2,10 @@
 
 This additive probe extends the evaluated closer/farther set without changing its generated examples or scores. It uses the same names, objects, twelve numeric cases, three units, and three complete targets as the parent probe.
 
+The separate [minimal both-moving extension](../both_move_minimal/README.md)
+adds closer and farther outcomes to the both-moving family while preserving
+this evaluated v1.2 dataset unchanged.
+
 | Condition | Example | Gold outcome |
 | --- | --- | --- |
 | Direct label, person first | Compared with before, Maya is now closer to the cone. | Closer |
