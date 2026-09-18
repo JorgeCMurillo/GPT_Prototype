@@ -1,0 +1,32 @@
+{
+  "probe_name": "cardinal_fixed_map_situations",
+  "version": "1.2",
+  "paired_rows": 1344,
+  "event_pairs": 1296,
+  "control_pairs": 48,
+  "binary_judgments": 2688,
+  "conditional_likelihoods": 5376,
+  "numeric_event_pairs": 864,
+  "named_event_pairs": 432,
+  "location_list_orders": 2,
+  "numeric_label_orders": 2,
+  "context_entity_orders": 2,
+  "target_entity_orders": 2,
+  "underlying_matched_cases": 9,
+  "axes": 2,
+  "entities_per_scene": 2,
+  "location_pool_size": 12,
+  "template_combinations": 36,
+  "variant_matches": 4424,
+  "by_event_family": {
+    "static_placement": 288,
+    "target_crosses": 144,
+    "reference_crosses": 144,
+    "target_moves_without_crossing": 288,
+    "both_move": 432,
+    "direct_relation": 24,
+    "screen_to_cardinal": 24
+  },
+  "components_sha256": "cc6d9d9f4d0737a0873bf3dd4826fe41b5a3cbec0a35ba0d4fdb218315a32345",
+  "validation": "passed"
+}

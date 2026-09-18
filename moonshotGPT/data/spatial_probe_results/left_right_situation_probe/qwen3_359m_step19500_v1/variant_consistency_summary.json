@@ -1,0 +1,44 @@
+{
+  "context_entity_order": {
+    "n_matches": 1200,
+    "left_prediction_flip_fraction": 0.08333333333333333,
+    "right_prediction_flip_fraction": 0.105,
+    "both_predictions_same_fraction": 0.8766666666666667,
+    "both_variants_fully_correct_fraction": 0.0008333333333333334
+  },
+  "direct_label_style": {
+    "n_matches": 48,
+    "left_prediction_flip_fraction": 0.08333333333333333,
+    "right_prediction_flip_fraction": 0.0,
+    "both_predictions_same_fraction": 0.9166666666666666,
+    "both_variants_fully_correct_fraction": 0.5
+  },
+  "evidence_type": {
+    "n_matches": 1728,
+    "left_prediction_flip_fraction": 0.05324074074074074,
+    "right_prediction_flip_fraction": 0.07407407407407407,
+    "both_predictions_same_fraction": 0.9033564814814815,
+    "both_variants_fully_correct_fraction": 0.0
+  },
+  "length_band": {
+    "n_matches": 1600,
+    "left_prediction_flip_fraction": 0.034375,
+    "right_prediction_flip_fraction": 0.033125,
+    "both_predictions_same_fraction": 0.94375,
+    "both_variants_fully_correct_fraction": 0.020625
+  },
+  "numbering_direction": {
+    "n_matches": 576,
+    "left_prediction_flip_fraction": 0.015625,
+    "right_prediction_flip_fraction": 0.024305555555555556,
+    "both_predictions_same_fraction": 0.96875,
+    "both_variants_fully_correct_fraction": 0.006944444444444444
+  },
+  "target_entity_order": {
+    "n_matches": 1200,
+    "left_prediction_flip_fraction": 0.9366666666666666,
+    "right_prediction_flip_fraction": 0.9316666666666666,
+    "both_predictions_same_fraction": 0.03166666666666667,
+    "both_variants_fully_correct_fraction": 0.0
+  }
+}

@@ -1,0 +1,162 @@
+[
+  {
+    "architecture": "qwen3",
+    "context": "bos_only",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8032635148914519,
+    "probability_ratio_median": 0.9903176713732232,
+    "probability_ratio_p95": 1.2275542635514285,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "qwen3",
+    "context": "single_ball",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8021078350220316,
+    "probability_ratio_median": 0.9902409658207806,
+    "probability_ratio_p95": 1.2298430962405973,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "qwen3",
+    "context": "single_left",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8046723216617718,
+    "probability_ratio_median": 0.9900960828864398,
+    "probability_ratio_p95": 1.2310899592645959,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "qwen3",
+    "context": "single_right",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8034350734454226,
+    "probability_ratio_median": 0.9892678520363771,
+    "probability_ratio_p95": 1.2308976857958236,
+    "mean_over_vocabulary": 0.9999999999999997
+  },
+  {
+    "architecture": "qwen3",
+    "context": "neutral",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.80243707947798,
+    "probability_ratio_median": 0.9905566980884598,
+    "probability_ratio_p95": 1.2293659061933482,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "qwen3",
+    "context": "left_scene",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.802528201881512,
+    "probability_ratio_median": 0.9900877954393362,
+    "probability_ratio_p95": 1.2289232568452644,
+    "mean_over_vocabulary": 0.9999999999999999
+  },
+  {
+    "architecture": "qwen3",
+    "context": "right_scene",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8036893162408131,
+    "probability_ratio_median": 0.99024315046763,
+    "probability_ratio_p95": 1.2279585449333057,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "qwen3",
+    "context": "summary_bridge",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8035106544331999,
+    "probability_ratio_median": 0.9911050929717038,
+    "probability_ratio_p95": 1.227442715771273,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "llama",
+    "context": "bos_only",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8047351032814156,
+    "probability_ratio_median": 0.9909192725252226,
+    "probability_ratio_p95": 1.2271427653790241,
+    "mean_over_vocabulary": 1.0000000000000002
+  },
+  {
+    "architecture": "llama",
+    "context": "single_ball",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8058598809483822,
+    "probability_ratio_median": 0.9905956109747983,
+    "probability_ratio_p95": 1.2259291760062647,
+    "mean_over_vocabulary": 0.9999999999999997
+  },
+  {
+    "architecture": "llama",
+    "context": "single_left",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8034765492314593,
+    "probability_ratio_median": 0.9907221076204177,
+    "probability_ratio_p95": 1.230434526467997,
+    "mean_over_vocabulary": 1.0000000000000002
+  },
+  {
+    "architecture": "llama",
+    "context": "single_right",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8044524424243564,
+    "probability_ratio_median": 0.9909713512344942,
+    "probability_ratio_p95": 1.2259649476010357,
+    "mean_over_vocabulary": 0.9999999999999999
+  },
+  {
+    "architecture": "llama",
+    "context": "neutral",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8039942085735167,
+    "probability_ratio_median": 0.9899807951422871,
+    "probability_ratio_p95": 1.2263590715623185,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "llama",
+    "context": "left_scene",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8045967095812377,
+    "probability_ratio_median": 0.990998708529029,
+    "probability_ratio_p95": 1.228648084406362,
+    "mean_over_vocabulary": 1.0000000000000002
+  },
+  {
+    "architecture": "llama",
+    "context": "right_scene",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8039763007499927,
+    "probability_ratio_median": 0.9904449508378178,
+    "probability_ratio_p95": 1.2282845011837573,
+    "mean_over_vocabulary": 1.0
+  },
+  {
+    "architecture": "llama",
+    "context": "summary_bridge",
+    "vocabulary_size": 50257,
+    "seeds": 30,
+    "probability_ratio_p05": 0.8033369708879434,
+    "probability_ratio_median": 0.9904153404104197,
+    "probability_ratio_p95": 1.226853977181558,
+    "mean_over_vocabulary": 1.0000000000000002
+  }
+]

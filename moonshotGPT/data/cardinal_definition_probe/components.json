@@ -1,0 +1,34 @@
+{
+  "probe_name": "cardinal_direction_definitions_and_map_relations",
+  "version": "1.2",
+  "frame_id": "north_up_east_right_map",
+  "frame_text": "On this map, north is at the top and east is on the right.",
+  "globe_frame_id": "upright_globe_central_view",
+  "globe_frame_text": "You view an upright globe with the North Pole at the top. In the central visible region, north appears upward and east appears rightward. Both markers are close together in that region.",
+  "axes": [
+    {"id": "north_south", "directions": ["north", "south"], "edge_phrases": ["the top edge", "the bottom edge"], "movement_words": ["upward", "downward"], "position_phrases": ["above", "below"], "screen_axis": "vertical", "screen_signs": [1, -1]},
+    {"id": "east_west", "directions": ["east", "west"], "edge_phrases": ["the right edge", "the left edge"], "movement_words": ["rightward", "leftward"], "position_phrases": ["to the right of", "to the left of"], "screen_axis": "horizontal", "screen_signs": [1, -1]}
+  ],
+  "definition_templates": [
+    {"id": "edge_forward_plain", "wording_id": "plain", "mapping": "word_to_meaning", "wording_family": "map_edge", "context": "{frame} Moving {direction} means moving toward", "target": "{edge}."},
+    {"id": "edge_forward_paraphrase", "wording_id": "paraphrase", "mapping": "word_to_meaning", "wording_family": "map_edge", "context": "{frame} To go {direction}, travel toward", "target": "{edge}."},
+    {"id": "edge_reverse_plain", "wording_id": "plain", "mapping": "meaning_to_word", "wording_family": "map_edge", "context": "{frame} Moving toward {edge} means moving", "target": "{direction}."},
+    {"id": "edge_reverse_paraphrase", "wording_id": "paraphrase", "mapping": "meaning_to_word", "wording_family": "map_edge", "context": "{frame} To travel toward {edge}, go", "target": "{direction}."},
+    {"id": "movement_forward_plain", "wording_id": "plain", "mapping": "word_to_meaning", "wording_family": "movement_word", "context": "{frame} Moving {direction} means moving", "target": "{movement}."},
+    {"id": "movement_forward_paraphrase", "wording_id": "paraphrase", "mapping": "word_to_meaning", "wording_family": "movement_word", "context": "{frame} To go {direction}, move", "target": "{movement}."},
+    {"id": "movement_reverse_plain", "wording_id": "plain", "mapping": "meaning_to_word", "wording_family": "movement_word", "context": "{frame} Moving {movement} means moving", "target": "{direction}."},
+    {"id": "movement_reverse_paraphrase", "wording_id": "paraphrase", "mapping": "meaning_to_word", "wording_family": "movement_word", "context": "{frame} To move {movement}, go", "target": "{direction}."}
+  ],
+  "opposite_templates": [
+    {"id": "opposite_plain", "wording_id": "plain", "context": "The direction opposite {direction} is"},
+    {"id": "opposite_other_way", "wording_id": "other_way", "context": "Going the opposite way from {direction} means going"},
+    {"id": "opposite_reversed", "wording_id": "reversed", "context": "If the direction of travel is {direction}, reversing that direction means traveling"},
+    {"id": "opposite_turn", "wording_id": "turn", "context": "If you face {direction} and turn halfway around, you then face"}
+  ],
+  "position_templates": [
+    {"id": "position_forward_plain", "wording_id": "plain", "mapping": "word_to_meaning", "context": "{frame} Marker A is {direction} of marker B. On the map, marker A appears", "target": "{position} marker B."},
+    {"id": "position_forward_paraphrase", "wording_id": "paraphrase", "mapping": "word_to_meaning", "context": "{frame} Marker A lies {direction} of marker B. Its position on the map is", "target": "{position} marker B."},
+    {"id": "position_reverse_plain", "wording_id": "plain", "mapping": "meaning_to_word", "context": "{frame} Marker A appears {position} marker B. Marker A is", "target": "{direction} of marker B."},
+    {"id": "position_reverse_paraphrase", "wording_id": "paraphrase", "mapping": "meaning_to_word", "context": "{frame} Marker A is drawn {position} marker B. Its position is", "target": "{direction} of marker B."}
+  ]
+}

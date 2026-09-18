@@ -1,0 +1,12 @@
+{
+  "version": "1.1",
+  "scene_geometries": 8,
+  "wording_lengths": 3,
+  "query_frames": 2,
+  "description_structures": 2,
+  "paired_rows": 96,
+  "binary_judgments": 192,
+  "conditional_likelihoods": 384,
+  "variant_matches": 160,
+  "validation": "passed"
+}

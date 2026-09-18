@@ -1,28 +1,30 @@
 {
   "probe_name": "above_below_situations",
-  "version": "1.1",
-  "paired_rows": 1248,
-  "binary_judgments": 2496,
-  "conditional_likelihoods": 4992,
-  "applied_rows": 1152,
+  "version": "1.3",
+  "paired_rows": 2400,
+  "binary_judgments": 4800,
+  "conditional_likelihoods": 9600,
+  "applied_rows": 2304,
   "direct_label_control_rows": 96,
   "by_event_family": {
-    "static_placement": 288,
-    "target_crosses": 192,
-    "reference_crosses": 192,
-    "target_moves_without_crossing": 192,
-    "both_move": 288,
+    "static_placement": 576,
+    "target_crosses": 384,
+    "reference_crosses": 384,
+    "target_moves_without_crossing": 384,
+    "both_move": 576,
     "direct_label_control": 96
   },
   "by_evidence_type": {
     "named_shelves": 576,
     "measured_height": 576,
+    "numbered_steps": 576,
+    "numbered_floors": 576,
     "direct_label_plain": 48,
     "direct_label_positioned": 48
   },
   "object_pairs": 4,
   "physical_cases": 12,
-  "variant_matches": 2704,
-  "components_sha256": "4cbd5893b2741f8ca975f9dbbe8e8e1c676beb730626f7ddd5a917e75cd90076",
+  "variant_matches": 5776,
+  "components_sha256": "1c0164a18bf2931970b624ae630023374f69ab53fd08e0c2ee7ab09e5bb7ca03",
   "validation": "passed"
 }

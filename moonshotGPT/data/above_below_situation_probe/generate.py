@@ -17,7 +17,7 @@ SHELF_LABELS = {1: "bottom", 2: "lower", 3: "middle", 4: "upper", 5: "top"}
 def write_csv(path, rows):
     fields = list(dict.fromkeys(key for row in rows for key in row))
     with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -33,6 +33,19 @@ def intro(evidence, length):
             "standard": "In the room, a five-tier rack has bottom, lower, middle, upper, and top shelves, in that vertical order. ",
             "expanded": "In the room, a fixed five-tier rack has bottom, lower, middle, upper, and top shelves, in that vertical order. Each shelf stays at its level throughout the scene. ",
         }[length]
+    if evidence == "numbered_steps":
+        return {
+            "compact": "Steps 1 to 5 go up. ",
+            "standard": "On a staircase, steps 1 to 5 go up. ",
+            "expanded": "On a staircase, steps 1 to 5 go up. The steps stay fixed as the objects move. ",
+        }[length]
+    if evidence == "numbered_floors":
+        return {
+            "compact": "Floors are numbered upward, 1 to 5. ",
+            "standard": "In a building, floors are numbered upward, 1 to 5. ",
+            "expanded": "In a building, floors are numbered upward, 1 to 5. The floors stay fixed as the objects move. ",
+        }[length]
+    assert evidence == "measured_height", evidence
     return {
         "compact": "Heights are measured from the floor. ",
         "standard": "In the room, the heights of both objects are measured from the same floor. ",
@@ -49,6 +62,14 @@ def entity_clause(noun, positions, evidence, is_static):
         if start == end:
             return f"the {noun} remains on the {last} shelf"
         return f"the {noun} moves from the {first} shelf to the {last} shelf"
+    if evidence in ("numbered_steps", "numbered_floors"):
+        place = "step" if evidence == "numbered_steps" else "floor"
+        if is_static:
+            return f"the {noun} is on {place} {end}"
+        if start == end:
+            return f"the {noun} stays on {place} {end}"
+        return f"the {noun} moves from {place} {start} to {place} {end}"
+    assert evidence == "measured_height", evidence
     if is_static:
         return f"the {noun} is at a height of {feet(end)} from the floor"
     if start == end:
@@ -157,7 +178,7 @@ def make_row(case, pair, evidence, length, context_order, target_order):
                      for point, index in (("start", 0), ("end", 1))}
     row = {
         "probe_id": probe_id,
-        "probe_version": "1.1",
+        "probe_version": "1.3",
         "probe_family": "control" if is_direct else "applied",
         "event_family": family,
         "event_subtype": style if is_direct else case["event_subtype"],
@@ -215,8 +236,9 @@ def make_matches(rows):
                 comparisons.append(("length_band", (
                     case, obj, evidence, variant, context_order, target_order)))
         if evidence == "named_shelves":
-            comparisons.append(("evidence_type", (
-                case, obj, "measured_height", length, context_order, target_order)))
+            for variant in ("measured_height", "numbered_steps", "numbered_floors"):
+                comparisons.append(("evidence_type", (
+                    case, obj, variant, length, context_order, target_order)))
         if evidence == "direct_label_plain":
             comparisons.append(("direct_label_style", (
                 "direct_label_positioned", obj, "direct_label_positioned",
@@ -255,13 +277,13 @@ def main():
              for pair, style, length, context_order, target_order in product(
                 config["object_pairs"], config["direct_label_styles"], config["length_bands"],
                 config["context_entity_orders"], config["target_entity_orders"])]
-    assert len(rows) == 1248 and len({r["probe_id"] for r in rows}) == len(rows)
+    assert len(rows) == 2400 and len({r["probe_id"] for r in rows}) == len(rows)
     assert Counter(r["event_family"] for r in rows) == {
-        "static_placement": 288, "target_crosses": 192,
-        "reference_crosses": 192, "target_moves_without_crossing": 192,
-        "both_move": 288, "direct_label_control": 96}
+        "static_placement": 576, "target_crosses": 384,
+        "reference_crosses": 384, "target_moves_without_crossing": 384,
+        "both_move": 576, "direct_label_control": 96}
     assert Counter(r["target_entity_order"] for r in rows) == {
-        "target_first": 624, "reference_first": 624}
+        "target_first": 1200, "reference_first": 1200}
     matches = make_matches(rows)
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -277,7 +299,7 @@ def main():
                for case in config["cases"]]
     write_csv(out / "case_catalog.csv", catalog)
     review = [r for r in rows if r["object_pair_id"] == "ball_cone"
-              and r["evidence_type"] == "named_shelves"
+              and r["evidence_type"] in ("named_shelves", "numbered_steps", "numbered_floors")
               and r["length_band"] == "compact"
               and r["context_entity_order"] == "target_first"
               and r["target_entity_order"] == "target_first"]
@@ -285,7 +307,7 @@ def main():
     manifest = {"probe_name": config["probe_name"], "version": config["version"],
                 "paired_rows": len(rows), "binary_judgments": len(rows) * 2,
                 "conditional_likelihoods": len(rows) * 4,
-                "applied_rows": 1152, "direct_label_control_rows": 96,
+                "applied_rows": 2304, "direct_label_control_rows": 96,
                 "by_event_family": dict(Counter(r["event_family"] for r in rows)),
                 "by_evidence_type": dict(Counter(r["evidence_type"] for r in rows)),
                 "object_pairs": len(config["object_pairs"]),

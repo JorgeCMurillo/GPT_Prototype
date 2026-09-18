@@ -136,7 +136,7 @@ def make_report(summary):
                            "binary_accuracy", "above_gold_accuracy", "below_gold_accuracy",
                            "both_correct_fraction", "above_word_chosen_fraction")) + " |")
         result = data["all_evidence"]
-        aggregate_label = "both label forms" if family == "direct_label_control" else "both evidence forms"
+        aggregate_label = "both label forms" if family == "direct_label_control" else "all evidence forms"
         out.append(f"| **{family}** | **{aggregate_label}** | {result['n_pairs']} | " +
                    " | ".join(f"**{result[key]:.2%}**" for key in (
                        "binary_accuracy", "above_gold_accuracy", "below_gold_accuracy",
@@ -144,7 +144,7 @@ def make_report(summary):
     overall = summary["overall_applied"]
     direct = summary["direct_label_control"]
     out.extend(["", f"**Equal-family applied mean:** {overall['equal_family_binary_accuracy']:.2%} across five physical families. The direct-label control is separate ({direct['binary_accuracy']:.2%}).",
-        "", "The family mean first balances the two evidence forms and all wording, object, and entity-order variants within each family, then gives the five physical families equal weight. The repeated variants are matched measurements of a small set of physical cases, not independent scene samples.",
+        "", "The family mean first balances the evidence forms and all wording, object, and entity-order variants within each family, then gives the five physical families equal weight. The repeated variants are matched measurements of a small set of physical cases, not independent scene samples.",
         "", "`target_moves_without_crossing` holds upward or downward motion constant across the above and below contexts. Its score tests whether the model uses the final relative position rather than motion direction alone. `both_move` includes preserved and reversed vertical order.",
         "", "`variant_consistency_summary.json` records matched prediction flips for context order, target order, evidence type, and wording length. Target order also inverts the relation word in the answer, so its flip rate is not a pure syntax effect. Length-band prefixes vary in wording as well as length. `bias_table.md` separates lexical answer preference by target order.", ""])
     return "\n".join(out)

@@ -20,13 +20,16 @@ The physical cases and their initial/final levels are specified in
 `components.json`; the generator validates the correct final relation for both
 contexts. The five shelf levels are named bottom, lower, middle, upper, and top
 in that order. Measured-height variants use the same levels as 1–5 feet from
-the floor. The
-`no_cross_up` and `no_cross_down` pairs keep the target's movement direction
+the floor. Numbered-step variants put objects on steps 1–5, which go up in
+order. Numbered-floor variants put them on building floors 1–5, numbered
+upward. Across all four forms, the correct answer follows the objects' final
+heights. The `no_cross_up` and `no_cross_down` pairs keep the target's movement direction
 the same across both gold answers.
 
-Generation crosses 12 physical cases with four object pairs, two evidence
-forms (`named_shelves`, `measured_height`), three wording lengths, two
-context entity orders, and two target entity orders. This yields 1,152 applied
+Generation crosses 12 physical cases with four object pairs, four evidence
+forms (`named_shelves`, `measured_height`, `numbered_steps`, `numbered_floors`),
+three wording lengths, two context entity orders, and two target entity orders.
+This yields 2,304 applied
 rows. A further 96 direct-label rows use plain and `is positioned` forms
 with the same object, length, and order controls. The `target_entity_order=reference_first` variants express the
 inverse relation (for example, “The cone is below the ball” when the ball is
@@ -42,6 +45,13 @@ Example from the target-crossing family:
 | `Context2` | The rack's shelves run from bottom through lower, middle, and upper to top. The ball moves from the top shelf to the bottom shelf. The cone remains on the middle shelf. |
 | `Target2` | The ball is below the cone. |
 
+The same case in the compact steps scene uses: “Steps 1 to 5 go up. The ball
+moves from step 1 to step 5. The cone stays on step 3.” Its
+matched below context changes the ball's path to step 5 → step 1. Each step
+scene shares the original case ID, object pair, and target choices with its
+shelf, floor, and measured-height versions. This holds ordinal level assignments
+and event structure fixed, but changes wording, number cues, and physical scale.
+
 Run from the `moonshotGPT` directory:
 
 ```bash
@@ -55,12 +65,13 @@ The generator writes `probes.csv`, `probes.jsonl`, a case catalog, review
 examples, and `variant_matches.csv`. The evaluator writes item-level and
 family-level scores, a family-balanced applied mean, the shared answer-bias
 table, and matched-variant consistency. The overall applied score averages
-the five physical family means equally; numeric and shelf evidence and the
+the five physical family means equally; all four evidence forms and the
 available wording and order variants are balanced within each family. Related
 variants reuse the same cases and should not be treated as independent scenes.
 The two direct-label forms are reported separately so exact sentence
 repetition can be diagnosed rather than hidden in the control mean.
 
-The vertical frame is fixed to a room and its floor. This first batch does not
-test rotated viewpoints, screen coordinates, tilted supports, or ambiguous
-object extent.
+All scenes use an upright vertical frame. Step and building-floor scenes test
+height order without requiring the objects to overlap on a vertical line.
+This batch does not test rotated viewpoints, screen coordinates, tilted
+supports, or ambiguous object extent.

@@ -1,0 +1,30 @@
+{
+  "probe_name": "fixed_frame_left_right_situations",
+  "version": "1.2",
+  "paired_rows": 2400,
+  "binary_judgments": 4800,
+  "conditional_likelihoods": 9600,
+  "applied_rows": 2304,
+  "direct_label_control_rows": 96,
+  "physical_cases": 12,
+  "object_pairs": 4,
+  "by_event_family": {
+    "static_placement": 576,
+    "target_crosses": 384,
+    "reference_crosses": 384,
+    "target_moves_without_crossing": 384,
+    "both_move": 576,
+    "direct_label_control": 96
+  },
+  "by_evidence_type": {
+    "named_positions": 576,
+    "numbered_left_to_right": 576,
+    "numbered_right_to_left": 576,
+    "lettered_positions": 576,
+    "direct_label_plain": 48,
+    "direct_label_positioned": 48
+  },
+  "variant_matches": 6352,
+  "components_sha256": "fe654a858e7d742823fe4260656ea3c97e1499bfa7d866469a24bd3089277a0a",
+  "validation": "passed"
+}

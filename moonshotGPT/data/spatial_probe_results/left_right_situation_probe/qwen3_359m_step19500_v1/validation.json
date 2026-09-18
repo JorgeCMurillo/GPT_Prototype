@@ -1,0 +1,15 @@
+{
+  "validation": "passed",
+  "pairs": 2400,
+  "unique_sequences": 9600,
+  "matched_links": 6352,
+  "checks": [
+    "input preservation",
+    "finite token scores",
+    "token means agree within 2e-6 (float32 reduction)",
+    "all choices and lexical preferences",
+    "pair correctness and ties",
+    "family averages",
+    "matched prediction flips"
+  ]
+}

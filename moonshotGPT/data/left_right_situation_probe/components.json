@@ -1,0 +1,31 @@
+{
+  "probe_name": "fixed_frame_left_right_situations",
+  "version": "1.2",
+  "reference_frame": "reader_view_fixed_screen",
+  "coordinate_convention": "Positions 1 through 5 increase from the reader's left to right; these are internal coordinates, not necessarily displayed labels.",
+  "object_pairs": [
+    {"id": "ball_cone", "target": "ball", "reference": "cone"},
+    {"id": "cup_box", "target": "cup", "reference": "box"},
+    {"id": "book_jar", "target": "book", "reference": "jar"},
+    {"id": "toy_key", "target": "toy", "reference": "key"}
+  ],
+  "evidence_types": ["named_positions", "numbered_left_to_right", "numbered_right_to_left", "lettered_positions"],
+  "length_bands": ["compact", "standard", "expanded"],
+  "context_entity_orders": ["target_first", "reference_first"],
+  "target_entity_orders": ["target_first", "reference_first"],
+  "direct_label_styles": ["plain", "positioned"],
+  "cases": [
+    {"id": "static_outer", "event_family": "static_placement", "event_subtype": "outer_positions", "left": {"target": [1,1], "reference": [5,5]}, "right": {"target": [5,5], "reference": [1,1]}},
+    {"id": "static_inner", "event_family": "static_placement", "event_subtype": "inner_positions", "left": {"target": [2,2], "reference": [4,4]}, "right": {"target": [4,4], "reference": [2,2]}},
+    {"id": "static_offset", "event_family": "static_placement", "event_subtype": "off_center_reference", "left": {"target": [1,1], "reference": [3,3]}, "right": {"target": [3,3], "reference": [1,1]}},
+    {"id": "target_cross_full", "event_family": "target_crosses", "event_subtype": "full_crossing", "left": {"target": [5,1], "reference": [3,3]}, "right": {"target": [1,5], "reference": [3,3]}},
+    {"id": "target_cross_inner", "event_family": "target_crosses", "event_subtype": "inner_crossing", "left": {"target": [4,2], "reference": [3,3]}, "right": {"target": [2,4], "reference": [3,3]}},
+    {"id": "reference_cross_full", "event_family": "reference_crosses", "event_subtype": "full_crossing", "left": {"target": [3,3], "reference": [1,5]}, "right": {"target": [3,3], "reference": [5,1]}},
+    {"id": "reference_cross_inner", "event_family": "reference_crosses", "event_subtype": "inner_crossing", "left": {"target": [3,3], "reference": [2,4]}, "right": {"target": [3,3], "reference": [4,2]}},
+    {"id": "no_cross_right", "event_family": "target_moves_without_crossing", "event_subtype": "rightward_motion", "left": {"target": [1,2], "reference": [5,5]}, "right": {"target": [4,5], "reference": [1,1]}},
+    {"id": "no_cross_left", "event_family": "target_moves_without_crossing", "event_subtype": "leftward_motion", "left": {"target": [2,1], "reference": [5,5]}, "right": {"target": [5,4], "reference": [1,1]}},
+    {"id": "both_preserve_right", "event_family": "both_move", "event_subtype": "order_preserved_right", "left": {"target": [2,3], "reference": [4,5]}, "right": {"target": [4,5], "reference": [2,3]}},
+    {"id": "both_preserve_left", "event_family": "both_move", "event_subtype": "order_preserved_left", "left": {"target": [3,2], "reference": [5,4]}, "right": {"target": [5,4], "reference": [3,2]}},
+    {"id": "both_reverse", "event_family": "both_move", "event_subtype": "order_reversed", "left": {"target": [4,2], "reference": [2,4]}, "right": {"target": [2,4], "reference": [4,2]}}
+  ]
+}

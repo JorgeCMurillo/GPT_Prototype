@@ -1,0 +1,199 @@
+{
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+  ],
+  "configs": {
+    "qwen3": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+    "llama": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/llama_liger_muon_steps19500_ws6_seed42_queued_after_restart_20260816_120352/runs/llama_liger_muon/babygpt_fineweb_stream_mbs6_T1024_llama_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500"
+  },
+  "contexts": {
+    "bos_only": {
+      "text": "",
+      "token_ids": [
+        50256
+      ]
+    },
+    "single_ball": {
+      "text": " ball",
+      "token_ids": [
+        50256,
+        2613
+      ]
+    },
+    "single_left": {
+      "text": " left",
+      "token_ids": [
+        50256,
+        1364
+      ]
+    },
+    "single_right": {
+      "text": " right",
+      "token_ids": [
+        50256,
+        826
+      ]
+    },
+    "neutral": {
+      "text": "The objects are",
+      "token_ids": [
+        50256,
+        464,
+        5563,
+        389
+      ]
+    },
+    "left_scene": {
+      "text": "The ball is to the left of the cone. The ball is to the",
+      "token_ids": [
+        50256,
+        464,
+        2613,
+        318,
+        284,
+        262,
+        1364,
+        286,
+        262,
+        27763,
+        13,
+        383,
+        2613,
+        318,
+        284,
+        262
+      ]
+    },
+    "right_scene": {
+      "text": "The ball is to the right of the cone. The ball is to the",
+      "token_ids": [
+        50256,
+        464,
+        2613,
+        318,
+        284,
+        262,
+        826,
+        286,
+        262,
+        27763,
+        13,
+        383,
+        2613,
+        318,
+        284,
+        262
+      ]
+    },
+    "summary_bridge": {
+      "text": "The ball is to the left of the cone. To summarize the positions: The ball is to the",
+      "token_ids": [
+        50256,
+        464,
+        2613,
+        318,
+        284,
+        262,
+        1364,
+        286,
+        262,
+        27763,
+        13,
+        1675,
+        35743,
+        262,
+        6116,
+        25,
+        383,
+        2613,
+        318,
+        284,
+        262
+      ]
+    }
+  },
+  "candidate_token_ids": {
+    "left": [
+      1364
+    ],
+    "right": [
+      826
+    ],
+    "above": [
+      2029
+    ],
+    "below": [
+      2174
+    ],
+    "north": [
+      5093
+    ],
+    "south": [
+      5366
+    ],
+    "east": [
+      7627
+    ],
+    "west": [
+      7421
+    ]
+  },
+  "torch": "2.7.0+cu126",
+  "transformers": "4.57.6",
+  "dtype": "float32",
+  "attention": "sdpa",
+  "gpu": "1",
+  "method": "Fresh AutoModelForCausalLM.from_config for every seed; no checkpoint weights loaded; no training.",
+  "extended_from": "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/initialization_distributions/llama_qwen3_20seeds_v1",
+  "reused_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "created_utc": "2026-09-17T23:37:08.441890+00:00",
+  "score": "raw mean full-target conditional log likelihood, including punctuation; no PMI; ties incorrect",
+  "pairs": 1344,
+  "unique_sequences": 5376,
+  "results": {
+    "north_south": {
+      "balanced_events": {
+        "accuracy": 0.5,
+        "both_correct": 0,
+        "positive_word_choice": 1.0
+      },
+      "pooled_events": {
+        "pairs": 648,
+        "accuracy": 0.5,
+        "both_correct": 0,
+        "positive_word_choice": 1.0,
+        "ties": 0
+      },
+      "families": {
+        "both_move": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "reference_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "static_placement": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "target_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "target_moves_without_crossing": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        }
+      },
+      "controls": {
+        "direct_relation": {
+          "pairs": 12,
+          "accuracy": 0.5416666666666666,
+          "both_correct": 0.4166666666666667,
+          "positive_word_choice": 0.625,
+          "ties": 0
+        },
+        "screen_to_cardinal": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0,
+          "ties": 0
+        }
+      }
+    },
+    "east_west": {
+      "balanced_events": {
+        "accuracy": 0.49930555555555556,
+        "both_correct": 0,
+        "positive_word_choice": 0.9965277777777778
+      },
+      "pooled_events": {
+        "pairs": 648,
+        "accuracy": 0.4992283950617284,
+        "both_correct": 0,
+        "positive_word_choice": 0.996141975308642,
+        "ties": 0
+      },
+      "families": {
+        "both_move": {
+          "accuracy": 0.4965277777777778,
+          "both_correct": 0,
+          "positive_word_choice": 0.9826388888888888
+        },
+        "reference_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "static_placement": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "target_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "target_moves_without_crossing": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        }
+      },
+      "controls": {
+        "direct_relation": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0.3333333333333333,
+          "positive_word_choice": 0.6666666666666666,
+          "ties": 0
+        },
+        "screen_to_cardinal": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0,
+          "ties": 0
+        }
+      }
+    }
+  },
+  "balancing": "equal weight to evidence formats within each event family, then equal weight to five families",
+  "probe_sha256": "ad9dce7b6c300a1141e3ac33f8516995a2f7774f5ff23083d2c4a250296e584a",
+  "torch": "2.7.0+cu126",
+  "transformers": "4.57.6",
+  "dtype": "float32",
+  "attention": "eager",
+  "gpu": "1",
+  "validation": "All persisted token means and gold choices reconstructed successfully."
+}

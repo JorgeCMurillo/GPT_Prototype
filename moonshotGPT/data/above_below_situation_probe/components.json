@@ -1,13 +1,13 @@
 {
   "probe_name": "above_below_situations",
-  "version": "1.1",
+  "version": "1.3",
   "object_pairs": [
     {"id": "ball_cone", "target": "ball", "reference": "cone"},
     {"id": "cup_box", "target": "cup", "reference": "box"},
     {"id": "book_jar", "target": "book", "reference": "jar"},
     {"id": "toy_key", "target": "toy", "reference": "key"}
   ],
-  "evidence_types": ["named_shelves", "measured_height"],
+  "evidence_types": ["named_shelves", "measured_height", "numbered_steps", "numbered_floors"],
   "length_bands": ["compact", "standard", "expanded"],
   "context_entity_orders": ["target_first", "reference_first"],
   "target_entity_orders": ["target_first", "reference_first"],

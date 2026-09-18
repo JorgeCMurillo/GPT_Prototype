@@ -1,0 +1,236 @@
+[
+  {
+    "id": "static_adjacent",
+    "family": "static_placement",
+    "subtype": "adjacent",
+    "positions": 2,
+    "positive": {
+      "target": [
+        1,
+        1
+      ],
+      "reference": [
+        0,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        0,
+        0
+      ],
+      "reference": [
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "id": "static_separated",
+    "family": "static_placement",
+    "subtype": "one_intervening_position",
+    "positions": 3,
+    "positive": {
+      "target": [
+        2,
+        2
+      ],
+      "reference": [
+        0,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        0,
+        0
+      ],
+      "reference": [
+        2,
+        2
+      ]
+    }
+  },
+  {
+    "id": "target_cross",
+    "family": "target_crosses",
+    "subtype": "order_reversed",
+    "positions": 3,
+    "positive": {
+      "target": [
+        0,
+        2
+      ],
+      "reference": [
+        1,
+        1
+      ]
+    },
+    "negative": {
+      "target": [
+        2,
+        0
+      ],
+      "reference": [
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "id": "reference_cross",
+    "family": "reference_crosses",
+    "subtype": "order_reversed",
+    "positions": 3,
+    "positive": {
+      "target": [
+        1,
+        1
+      ],
+      "reference": [
+        2,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        1,
+        1
+      ],
+      "reference": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "id": "no_cross_positive",
+    "family": "target_moves_without_crossing",
+    "subtype": "positive_motion",
+    "positions": 4,
+    "positive": {
+      "target": [
+        2,
+        3
+      ],
+      "reference": [
+        0,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        0,
+        1
+      ],
+      "reference": [
+        3,
+        3
+      ]
+    }
+  },
+  {
+    "id": "no_cross_negative",
+    "family": "target_moves_without_crossing",
+    "subtype": "negative_motion",
+    "positions": 4,
+    "positive": {
+      "target": [
+        3,
+        2
+      ],
+      "reference": [
+        0,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        1,
+        0
+      ],
+      "reference": [
+        3,
+        3
+      ]
+    }
+  },
+  {
+    "id": "both_preserve_positive",
+    "family": "both_move",
+    "subtype": "preserve_order_positive_motion",
+    "positions": 4,
+    "positive": {
+      "target": [
+        2,
+        3
+      ],
+      "reference": [
+        0,
+        1
+      ]
+    },
+    "negative": {
+      "target": [
+        0,
+        1
+      ],
+      "reference": [
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "id": "both_preserve_negative",
+    "family": "both_move",
+    "subtype": "preserve_order_negative_motion",
+    "positions": 4,
+    "positive": {
+      "target": [
+        3,
+        2
+      ],
+      "reference": [
+        1,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        1,
+        0
+      ],
+      "reference": [
+        3,
+        2
+      ]
+    }
+  },
+  {
+    "id": "both_swap",
+    "family": "both_move",
+    "subtype": "swap_two_positions",
+    "positions": 2,
+    "positive": {
+      "target": [
+        0,
+        1
+      ],
+      "reference": [
+        1,
+        0
+      ]
+    },
+    "negative": {
+      "target": [
+        1,
+        0
+      ],
+      "reference": [
+        0,
+        1
+      ]
+    }
+  }
+]

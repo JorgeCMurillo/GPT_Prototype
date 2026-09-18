@@ -1,0 +1,24 @@
+{
+  "probe_name": "cardinal_direction_definitions_and_map_relations",
+  "version": "1.2",
+  "paired_rows": 80,
+  "binary_judgments": 160,
+  "conditional_likelihoods": 320,
+  "by_block": {
+    "direction_definition": 32,
+    "opposite_direction": 16,
+    "relative_map_position": 32
+  },
+  "by_axis": {
+    "north_south": 40,
+    "east_west": 40
+  },
+  "variant_matches": 136,
+  "by_reference_surface": {
+    "map": 48,
+    "none": 16,
+    "globe": 16
+  },
+  "components_sha256": "050c9227e3432eeb36b88f45b42d261794213e4e4991f5ec5973d32bba78b2b3",
+  "validation": "passed"
+}

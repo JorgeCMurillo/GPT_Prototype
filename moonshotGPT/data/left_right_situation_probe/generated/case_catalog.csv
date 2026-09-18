@@ -1,0 +1,13 @@
+case_id,event_family,event_subtype,target_start_left,target_end_left,reference_start_left,reference_end_left,target_start_right,target_end_right,reference_start_right,reference_end_right
+static_outer,static_placement,outer_positions,1,1,5,5,5,5,1,1
+static_inner,static_placement,inner_positions,2,2,4,4,4,4,2,2
+static_offset,static_placement,off_center_reference,1,1,3,3,3,3,1,1
+target_cross_full,target_crosses,full_crossing,5,1,3,3,1,5,3,3
+target_cross_inner,target_crosses,inner_crossing,4,2,3,3,2,4,3,3
+reference_cross_full,reference_crosses,full_crossing,3,3,1,5,3,3,5,1
+reference_cross_inner,reference_crosses,inner_crossing,3,3,2,4,3,3,4,2
+no_cross_right,target_moves_without_crossing,rightward_motion,1,2,5,5,4,5,1,1
+no_cross_left,target_moves_without_crossing,leftward_motion,2,1,5,5,5,4,1,1
+both_preserve_right,both_move,order_preserved_right,2,3,4,5,4,5,2,3
+both_preserve_left,both_move,order_preserved_left,3,2,5,4,5,4,3,2
+both_reverse,both_move,order_reversed,4,2,2,4,2,4,4,2

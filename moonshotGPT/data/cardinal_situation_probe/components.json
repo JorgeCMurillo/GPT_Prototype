@@ -1,0 +1,35 @@
+{
+  "probe_name": "cardinal_fixed_map_situations",
+  "version": "1.2",
+  "location_list_orders": ["negative_to_positive", "positive_to_negative"],
+  "numeric_label_orders": ["increasing", "decreasing"],
+  "context_entity_orders": ["target_first", "reference_first"],
+  "target_entity_orders": ["target_first", "reference_first"],
+  "frame": "On this map, north is up and east is right.",
+  "answer_bridge": "After the scene ends, to summarize the final positions:",
+  "entities": {"target": "A", "reference": "B"},
+  "locations": ["lake", "forest", "village", "bridge", "tower", "garden", "station", "school", "mill", "field", "cabin", "fountain"],
+  "axes": [
+    {"id": "north_south", "positive": "north", "negative": "south", "place": "row", "alignment": "column", "screen_positive": "above", "screen_negative": "below"},
+    {"id": "east_west", "positive": "east", "negative": "west", "place": "column", "alignment": "row", "screen_positive": "to the right of", "screen_negative": "to the left of"}
+  ],
+  "formats": ["numeric", "named_locations"],
+  "lengths": ["compact", "standard", "expanded"],
+  "cases": [
+    {"id": "static_adjacent", "family": "static_placement", "subtype": "adjacent", "positions": 2, "positive": {"target": [1,1], "reference": [0,0]}, "negative": {"target": [0,0], "reference": [1,1]}},
+    {"id": "static_separated", "family": "static_placement", "subtype": "one_intervening_position", "positions": 3, "positive": {"target": [2,2], "reference": [0,0]}, "negative": {"target": [0,0], "reference": [2,2]}},
+    {"id": "target_cross", "family": "target_crosses", "subtype": "order_reversed", "positions": 3, "positive": {"target": [0,2], "reference": [1,1]}, "negative": {"target": [2,0], "reference": [1,1]}},
+    {"id": "reference_cross", "family": "reference_crosses", "subtype": "order_reversed", "positions": 3, "positive": {"target": [1,1], "reference": [2,0]}, "negative": {"target": [1,1], "reference": [0,2]}},
+    {"id": "no_cross_positive", "family": "target_moves_without_crossing", "subtype": "positive_motion", "positions": 4, "positive": {"target": [2,3], "reference": [0,0]}, "negative": {"target": [0,1], "reference": [3,3]}},
+    {"id": "no_cross_negative", "family": "target_moves_without_crossing", "subtype": "negative_motion", "positions": 4, "positive": {"target": [3,2], "reference": [0,0]}, "negative": {"target": [1,0], "reference": [3,3]}},
+    {"id": "both_preserve_positive", "family": "both_move", "subtype": "preserve_order_positive_motion", "positions": 4, "positive": {"target": [2,3], "reference": [0,1]}, "negative": {"target": [0,1], "reference": [2,3]}},
+    {"id": "both_preserve_negative", "family": "both_move", "subtype": "preserve_order_negative_motion", "positions": 4, "positive": {"target": [3,2], "reference": [1,0]}, "negative": {"target": [1,0], "reference": [3,2]}},
+    {"id": "both_swap", "family": "both_move", "subtype": "swap_two_positions", "positions": 2, "positive": {"target": [0,1], "reference": [1,0]}, "negative": {"target": [1,0], "reference": [0,1]}}
+  ],
+  "control_types": ["direct_relation", "screen_to_cardinal"],
+  "entity_templates": {
+    "compact": {"static": "{entity} is at {end}.", "still": "{entity} stays at {end}.", "moving": "{entity} moves from {start} to {end}."},
+    "standard": {"static": "Marker {entity} occupies {end}.", "still": "Marker {entity} starts at {start} and remains there.", "moving": "Marker {entity} starts at {start} and moves to {end}."},
+    "expanded": {"static": "Marker {entity} is located at {end}. It stays at that position throughout the scene.", "still": "Initially, marker {entity} is at {start}. It remains at that same position until the scene ends.", "moving": "Initially, marker {entity} is at {start}. It then moves to {end} and stays there until the scene ends."}
+  }
+}
