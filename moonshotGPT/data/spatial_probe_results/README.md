@@ -18,6 +18,7 @@ neighboring probe directories.
 | Cardinal situations v1.2 | [North/south 50.00%; east/west 49.93%](cardinal_situation_probe/qwen3_359m_step19500_v1_2/report.md) | [Failure analysis](cardinal_situation_probe/qwen3_359m_step19500_v1_2/findings.md) |
 | Cardinal definitions and observer turns | [Expanded-block results](cardinal_blocks/qwen3_359m_step19500_expanded_v2/report.md) | [Intervals](cardinal_blocks/qwen3_359m_step19500_expanded_v2/confidence_intervals.md) |
 | Selected six-category situation composite | [Balanced accuracy: 51.22%](spatial_benchmark/qwen3_359m_step19500_v1/report.md) | Conditional scene-cluster bootstrap; limitations in report |
+| Token-Length Preference Diagnostic | [Answer length versus model choice](spatial_benchmark/qwen3_359m_step19500_length_diagnostic_v1/report.md) | Mean versus summed scoring; length/meaning confounding |
 
 These scores use different evidence and different averaging rules. They are
 diagnostic summaries; only the explicitly defined six-category composite

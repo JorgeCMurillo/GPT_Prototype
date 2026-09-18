@@ -1,0 +1,1356 @@
+{
+  "scopes": {
+    "above_below": {
+      "mean": {
+        "judgments": 4608,
+        "unique_comparisons": 4608,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 4608
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5021701388888888,
+          "accuracy": 0.5021701388888888,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5022569444444164,
+          "accuracy": 0.5022569444444164,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4984374999999993,
+              0.5057291666666659
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4984374999999993,
+              0.5057291666666659
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 4608,
+        "unique_comparisons": 4608,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 4608
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5021701388888888,
+          "accuracy": 0.5021701388888888,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5022569444444164,
+          "accuracy": 0.5022569444444164,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4984374999999993,
+              0.5057291666666659
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4984374999999993,
+              0.5057291666666659
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 0,
+      "length_informative_clusters_resampleable": false
+    },
+    "close_far": {
+      "mean": {
+        "judgments": 2304,
+        "unique_comparisons": 2304,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 2304
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.6128472222222222,
+          "accuracy": 0.6128472222222222,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5813802083333502,
+          "accuracy": 0.5813802083333502,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5468749999999964,
+              0.6165364583333303
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5468749999999964,
+              0.6165364583333303
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 2304,
+        "unique_comparisons": 2304,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 2304
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.6128472222222222,
+          "accuracy": 0.6128472222222222,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5813802083333502,
+          "accuracy": 0.5813802083333502,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5468749999999964,
+              0.6165364583333303
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5468749999999964,
+              0.6165364583333303
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 0,
+      "length_informative_clusters_resampleable": false
+    },
+    "closer_farther": {
+      "mean": {
+        "judgments": 18648,
+        "unique_comparisons": 18648,
+        "unequal_length_judgments": 10656,
+        "length_differences": {
+          "-3": 10656,
+          "0": 7992
+        },
+        "raw": {
+          "point_biserial_r": 0.8790417731745324,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": 0.48598598598598597,
+          "accuracy": 0.493993993993994,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": 0.889470717287154,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": 0.48461612654331165,
+          "accuracy": 0.4897440843621615,
+          "tie_rate": 0.0
+        },
+        "unequal_only_raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": null,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4846161265431984,
+              0.4846161265431984
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.48974408436214373,
+              0.48974408436214373
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 18648,
+        "unique_comparisons": 18648,
+        "unequal_length_judgments": 10656,
+        "length_differences": {
+          "-3": 10656,
+          "0": 7992
+        },
+        "raw": {
+          "point_biserial_r": 0.04436238532866441,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.8230105105105106,
+          "accuracy_correct_shorter": 0.8596096096096096,
+          "accuracy_correct_longer": 0.2135885885885886,
+          "accuracy_equal_length": 0.48598598598598597,
+          "accuracy": 0.5149077649077649,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": 0.09972581826609589,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.8550347222222401,
+          "accuracy_correct_shorter": 0.8940972222222306,
+          "accuracy_correct_longer": 0.18402777777778279,
+          "accuracy_equal_length": 0.48461612654331165,
+          "accuracy": 0.5027649176954927,
+          "tie_rate": 0.0
+        },
+        "unequal_only_raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": 0.8230105105105106,
+          "accuracy_correct_shorter": 0.8596096096096096,
+          "accuracy_correct_longer": 0.2135885885885886,
+          "accuracy_equal_length": null,
+          "accuracy": 0.5365990990990991,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4846161265431984,
+              0.4846161265431984
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5027649176954752,
+              0.5027649176954752
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 1,
+      "length_informative_clusters_resampleable": false
+    },
+    "east_west": {
+      "mean": {
+        "judgments": 1296,
+        "unique_comparisons": 1296,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 1296
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.4992283950617284,
+          "accuracy": 0.4992283950617284,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.4993055555555617,
+          "accuracy": 0.4993055555555617,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4979166666666679,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4979166666666679,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 1296,
+        "unique_comparisons": 1296,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 1296
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.4992283950617284,
+          "accuracy": 0.4992283950617284,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.4993055555555617,
+          "accuracy": 0.4993055555555617,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4979166666666679,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4979166666666679,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 0,
+      "length_informative_clusters_resampleable": false
+    },
+    "left_right": {
+      "mean": {
+        "judgments": 4608,
+        "unique_comparisons": 4608,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 4608
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5002604166666379,
+          "accuracy": 0.5002604166666379,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4949652777777771,
+              0.5046006944444437
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4949652777777771,
+              0.5046006944444437
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 4608,
+        "unique_comparisons": 4608,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 4608
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5002604166666379,
+          "accuracy": 0.5002604166666379,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.4949652777777771,
+              0.5046006944444437
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.4949652777777771,
+              0.5046006944444437
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 0,
+      "length_informative_clusters_resampleable": false
+    },
+    "north_south": {
+      "mean": {
+        "judgments": 1296,
+        "unique_comparisons": 1296,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 1296
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5000000000000062,
+          "accuracy": 0.5000000000000062,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5000000000000012,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5000000000000012,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 1296,
+        "unique_comparisons": 1296,
+        "unequal_length_judgments": 0,
+        "length_differences": {
+          "0": 1296
+        },
+        "raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": null,
+          "accuracy_correct_shorter": null,
+          "accuracy_correct_longer": null,
+          "accuracy_equal_length": 0.5000000000000062,
+          "accuracy": 0.5000000000000062,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "metric undefined"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5000000000000012,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5000000000000012,
+              0.5000000000000012
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 0,
+      "length_informative_clusters_resampleable": false
+    },
+    "overall": {
+      "mean": {
+        "judgments": 32760,
+        "unique_comparisons": 32760,
+        "unequal_length_judgments": 10656,
+        "length_differences": {
+          "-3": 10656,
+          "0": 22104
+        },
+        "raw": {
+          "point_biserial_r": 0.6318047220491347,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": 0.5071027868259138,
+          "accuracy": 0.5047924297924298,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": 0.286293147695827,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": 0.5128730369460884,
+          "accuracy": 0.5121578682268662,
+          "tie_rate": 0.0
+        },
+        "unequal_only_raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": 0.0,
+          "accuracy_correct_shorter": 0.0,
+          "accuracy_correct_longer": 1.0,
+          "accuracy_equal_length": null,
+          "accuracy": 0.5,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5067224165418464,
+              0.5191766521423365
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5063489489561903,
+              0.5181112825788755
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "sum": {
+        "judgments": 32760,
+        "unique_comparisons": 32760,
+        "unequal_length_judgments": 10656,
+        "length_differences": {
+          "-3": 10656,
+          "0": 22104
+        },
+        "raw": {
+          "point_biserial_r": -0.15837965579622335,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.8230105105105106,
+          "accuracy_correct_shorter": 0.8596096096096096,
+          "accuracy_correct_longer": 0.2135885885885886,
+          "accuracy_equal_length": 0.5071027868259138,
+          "accuracy": 0.5166971916971917,
+          "tie_rate": 0.0
+        },
+        "balanced": {
+          "point_biserial_r": -0.1131847199424525,
+          "correlation_unavailable_reason": null,
+          "shorter_choice_rate": 0.8550347222222401,
+          "accuracy_correct_shorter": 0.8940972222222306,
+          "accuracy_correct_longer": 0.18402777777778279,
+          "accuracy_equal_length": 0.5128730369460884,
+          "accuracy": 0.5143280071157642,
+          "tie_rate": 0.0
+        },
+        "unequal_only_raw": {
+          "point_biserial_r": null,
+          "correlation_unavailable_reason": "no variation in token-length difference",
+          "shorter_choice_rate": 0.8230105105105106,
+          "accuracy_correct_shorter": 0.8596096096096096,
+          "accuracy_correct_longer": 0.2135885885885886,
+          "accuracy_equal_length": null,
+          "accuracy": 0.5365990990990991,
+          "tie_rate": 0.0
+        },
+        "balanced_cluster_intervals": {
+          "point_biserial_r": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "shorter_choice_rate": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_shorter": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_correct_longer": {
+            "ci95": null,
+            "reason": "no resampleable length-informative scene strata"
+          },
+          "accuracy_equal_length": {
+            "ci95": [
+              0.5067224165418464,
+              0.5191766521423365
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "accuracy": {
+            "ci95": [
+              0.5085190878450788,
+              0.5202814214677641
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          },
+          "tie_rate": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "valid_replicates": 10000,
+            "total_replicates": 10000
+          }
+        }
+      },
+      "length_informative_clusters": 1,
+      "length_informative_clusters_resampleable": false
+    }
+  },
+  "by_length_gap": [
+    {
+      "category": "above_below",
+      "contrast": "above_below",
+      "length_difference": 0,
+      "judgments": 4608,
+      "conditional_token_lengths": "7/7",
+      "mean_answer1_rate": 0.5577256944444444,
+      "mean_balanced_answer1_rate": 0.5607638888888888,
+      "sum_answer1_rate": 0.5577256944444444,
+      "sum_balanced_answer1_rate": 0.5607638888888888
+    },
+    {
+      "category": "close_far",
+      "contrast": "close_far",
+      "length_difference": 0,
+      "judgments": 2304,
+      "conditional_token_lengths": "7/7",
+      "mean_answer1_rate": 0.7291666666666666,
+      "mean_balanced_answer1_rate": 0.7884114583333333,
+      "sum_answer1_rate": 0.7291666666666666,
+      "sum_balanced_answer1_rate": 0.7884114583333333
+    },
+    {
+      "category": "closer_farther",
+      "contrast": "closer_vs_farther",
+      "length_difference": 0,
+      "judgments": 7992,
+      "conditional_token_lengths": "10/10",
+      "mean_answer1_rate": 0.8561061061061062,
+      "mean_balanced_answer1_rate": 0.9191261574074074,
+      "sum_answer1_rate": 0.8561061061061062,
+      "sum_balanced_answer1_rate": 0.9191261574074074
+    },
+    {
+      "category": "closer_farther",
+      "contrast": "closer_vs_unchanged",
+      "length_difference": -3,
+      "judgments": 5328,
+      "conditional_token_lengths": "10/13",
+      "mean_answer1_rate": 0.0,
+      "mean_balanced_answer1_rate": 0.0,
+      "sum_answer1_rate": 0.875,
+      "sum_balanced_answer1_rate": 0.912133487654321
+    },
+    {
+      "category": "closer_farther",
+      "contrast": "farther_vs_unchanged",
+      "length_difference": -3,
+      "judgments": 5328,
+      "conditional_token_lengths": "10/13",
+      "mean_answer1_rate": 0.0,
+      "mean_balanced_answer1_rate": 0.0,
+      "sum_answer1_rate": 0.771021021021021,
+      "sum_balanced_answer1_rate": 0.7979359567901234
+    },
+    {
+      "category": "east_west",
+      "contrast": "east_west",
+      "length_difference": 0,
+      "judgments": 1296,
+      "conditional_token_lengths": "9/9",
+      "mean_answer1_rate": 0.5023148148148148,
+      "mean_balanced_answer1_rate": 0.5020833333333333,
+      "sum_answer1_rate": 0.5023148148148148,
+      "sum_balanced_answer1_rate": 0.5020833333333333
+    },
+    {
+      "category": "left_right",
+      "contrast": "left_right",
+      "length_difference": 0,
+      "judgments": 4608,
+      "conditional_token_lengths": "12/12",
+      "mean_answer1_rate": 0.53125,
+      "mean_balanced_answer1_rate": 0.529079861111111,
+      "sum_answer1_rate": 0.53125,
+      "sum_balanced_answer1_rate": 0.529079861111111
+    },
+    {
+      "category": "north_south",
+      "contrast": "north_south",
+      "length_difference": 0,
+      "judgments": 1296,
+      "conditional_token_lengths": "9/9",
+      "mean_answer1_rate": 0.5,
+      "mean_balanced_answer1_rate": 0.5,
+      "sum_answer1_rate": 0.5,
+      "sum_balanced_answer1_rate": 0.5
+    }
+  ],
+  "bootstrap_replicates": 10000,
+  "seed": 42,
+  "method": "Point-biserial r = Pearson(delta conditional answer tokens, answer1 chosen); ties excluded from r and shorter-choice rate, counted incorrect for accuracy.",
+  "warnings": [
+    "Association is not causation; length is confounded with answer identity and contrast.",
+    "Raw r weights rendered judgments equally. Balanced r uses the benchmark hierarchy; it is weighted Pearson with a binary outcome.",
+    "Counts include repeated contexts and wording variants, not independent samples. No iid p-values are reported.",
+    "Bootstrap resamples scene cases within fixed families, sharing draws across matched axes. Singleton strata stay fixed.",
+    "No length-association CI is reported when all length-informative strata are singletons; a degenerate bootstrap would imply unjustified precision.",
+    "Scores describe evaluated left/right v1.0, not the shortened v1.2 wording. Front/behind has not been evaluated and is excluded."
+  ],
+  "provenance": {
+    "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+    "sources": [
+      {
+        "category": "above_below",
+        "path": "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/item_scores.jsonl",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/summary.json"
+        ],
+        "adapter": "directional",
+        "select": {
+          "probe_family": "applied"
+        },
+        "cluster_group": "ordered_five_positions",
+        "evidence_field": "evidence_type",
+        "accuracy_field": "binary_accuracy",
+        "balance_fields": [
+          "length_band",
+          "context_entity_order",
+          "target_entity_order"
+        ],
+        "case_aliases": {
+          "no_cross_up": "no_cross_positive",
+          "no_cross_down": "no_cross_negative",
+          "both_preserve_up": "both_preserve_positive",
+          "both_preserve_down": "both_preserve_negative"
+        },
+        "expected_pairs": 2304,
+        "note": "Latest applied situation version only; direct-label controls excluded.",
+        "total_source_rows": 2400,
+        "included_pairs": 2304,
+        "excluded_rows": 96,
+        "sha256": "4a73fa6a8502c59e7b4c6d0bc0c6bc17493b6b9c61a497335d6c453301adc055",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/summary.json": "d064b55f3eb17c2078627eedcbc5a89f0fc934510dd3441701d1223ce1f997e2"
+        }
+      },
+      {
+        "category": "left_right",
+        "path": "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1/item_scores.jsonl",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1/summary.json"
+        ],
+        "adapter": "directional",
+        "select": {
+          "probe_family": "applied"
+        },
+        "cluster_group": "ordered_five_positions",
+        "evidence_field": "evidence_type",
+        "accuracy_field": "binary_accuracy",
+        "balance_fields": [
+          "length_band",
+          "context_entity_order",
+          "target_entity_order"
+        ],
+        "case_aliases": {
+          "no_cross_right": "no_cross_positive",
+          "no_cross_left": "no_cross_negative",
+          "both_preserve_right": "both_preserve_positive",
+          "both_preserve_left": "both_preserve_negative"
+        },
+        "expected_pairs": 2304,
+        "note": "Latest applied situation version only; direct-label controls excluded.",
+        "total_source_rows": 2400,
+        "included_pairs": 2304,
+        "excluded_rows": 96,
+        "sha256": "b17d26a72831b6ad91c7dc34d80cc5e0e2401f27b674bb1ea74f9ecca17c0a8f",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1/summary.json": "0686866da27947453e13925dd437a6c4a24910afcd8e033e9935a85551a5c64b"
+        }
+      },
+      {
+        "category": "north_south",
+        "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/item_scores.jsonl",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/summary.json"
+        ],
+        "adapter": "directional",
+        "select": {
+          "probe_family": "event",
+          "axis": "north_south"
+        },
+        "cluster_group": "cardinal_map",
+        "evidence_field": "evidence_format",
+        "accuracy_field": "accuracy",
+        "balance_fields": [
+          "length_band",
+          "context_entity_order",
+          "target_entity_order",
+          "location_list_order",
+          "numeric_label_order"
+        ],
+        "expected_pairs": 648,
+        "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight.",
+        "total_source_rows": 1344,
+        "included_pairs": 648,
+        "excluded_rows": 696,
+        "sha256": "e8336198321cb18879cbdf6ac3794f8c39364663e68af892dcb21a643e342200",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/summary.json": "9f56f691df4c7a58ec12c9231eae4789c5e08af452d5ebbe6ad714a59dc81b32"
+        }
+      },
+      {
+        "category": "east_west",
+        "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/item_scores.jsonl",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/summary.json"
+        ],
+        "adapter": "directional",
+        "select": {
+          "probe_family": "event",
+          "axis": "east_west"
+        },
+        "cluster_group": "cardinal_map",
+        "evidence_field": "evidence_format",
+        "accuracy_field": "accuracy",
+        "balance_fields": [
+          "length_band",
+          "context_entity_order",
+          "target_entity_order",
+          "location_list_order",
+          "numeric_label_order"
+        ],
+        "expected_pairs": 648,
+        "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight.",
+        "total_source_rows": 1344,
+        "included_pairs": 648,
+        "excluded_rows": 696,
+        "sha256": "e8336198321cb18879cbdf6ac3794f8c39364663e68af892dcb21a643e342200",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/summary.json": "9f56f691df4c7a58ec12c9231eae4789c5e08af452d5ebbe6ad714a59dc81b32"
+        }
+      },
+      {
+        "category": "close_far",
+        "path": "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/item_scores.jsonl",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/summary.json"
+        ],
+        "adapter": "close_far",
+        "cluster_group": "close_far_settings",
+        "balance_fields": [
+          "context_entity_order",
+          "target_order"
+        ],
+        "expected_pairs": 1152,
+        "note": "Existing matched-scene applied score: distance phrases and endpoint placements; direct labels and other historical close/far versions excluded.",
+        "uncertainty_note": "Close/far resamples six settings with all entity/order variants attached. They reuse a common spatial geometry, so this estimates setting sensitivity, not uncertainty over new spatial structures.",
+        "total_source_rows": 1536,
+        "included_pairs": 1152,
+        "excluded_rows": 384,
+        "sha256": "04378b03ba075d8424d2c7e0b30cde24d991cc672d16f6d9bb8452d430ce5e5b",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/summary.json": "57ee30062fee197205715a7958d9f70251381d5f4f7f3dca7bae01c32cefbf0b"
+        }
+      },
+      {
+        "category": "closer_farther",
+        "path": "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_applied_pairs.csv",
+        "metadata_paths": [
+          "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/summary.json",
+          "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/summary.json"
+        ],
+        "adapter": "closer_farther",
+        "cluster_group": "distance_movement",
+        "balance_fields": [
+          "contrast",
+          "length_band",
+          "context_entity_order"
+        ],
+        "expected_pairs": 9324,
+        "note": "Existing three-family applied movement macro, with numeric/nonnumeric evidence balanced. Cross-family contrasts share contexts and remain in one structural cluster.",
+        "uncertainty_note": "Closer/farther has one structural cluster per fixed event-family stratum. Its bootstrap contribution is fixed, not an estimated generalization uncertainty; numeric values, names and units are treated as variants, not independent structures.",
+        "total_source_rows": 9324,
+        "included_pairs": 9324,
+        "excluded_rows": 0,
+        "sha256": "8bae088680f1285523f80ed926d68f0f9dba8d310ccf02956a998b670939a44e",
+        "metadata_sha256": {
+          "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/summary.json": "2f072e088c23c94baa4305843b576574613fb6fd74a7386a725c2efa526c34d1",
+          "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/summary.json": "238e43906a4a8308b743ba37072fadf0047f73d498e05e3bf3425aa2c4da8663"
+        }
+      }
+    ],
+    "auxiliary_sha256": {
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/item_scores.jsonl": "4a73fa6a8502c59e7b4c6d0bc0c6bc17493b6b9c61a497335d6c453301adc055",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1/item_scores.jsonl": "b17d26a72831b6ad91c7dc34d80cc5e0e2401f27b674bb1ea74f9ecca17c0a8f",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/item_scores.jsonl": "e8336198321cb18879cbdf6ac3794f8c39364663e68af892dcb21a643e342200",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_2/token_scores.jsonl": "b2a088050a84c2471a40b9043d15364d91f4c86e0e036589c39a7d24614663b0",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/item_scores.jsonl": "04378b03ba075d8424d2c7e0b30cde24d991cc672d16f6d9bb8452d430ce5e5b",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/token_scores.jsonl": "533d88701b875903e8dedfbe78cadce7c50363a4804be2acfb081275f739c25b",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_applied_pairs.csv": "8bae088680f1285523f80ed926d68f0f9dba8d310ccf02956a998b670939a44e",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/binary_pair_scores.csv": "a8b06c1a4459209ac687b98be52accf1ab72ad37525e04553e7458447eecc138",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/item_scores.jsonl": "6faac28d6204ddd0f28b1a152f8c2fc5eb51abc53b3b29780c2835cab529af47",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/pair_scores.csv": "95bc32725815fb7f5a5e1b38aa826f307cb44b93dea2ade33d3c718c4b8ac9b3",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/token_scores.jsonl": "da04239efd6f504610e5e2e4f026ea3275e4008e4c9681c4b607fdd41b67c3e4",
+      "/home/jorge/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/token_scores.jsonl": "52f0ba9bb4aea8ebd642f14604c15e489419334be5c257cf3f712558613bb63b"
+    }
+  },
+  "manifest_sha256": "eedd6c989575acdecdfbbe12a1d8504d4467bddcf850e65bc8cb3146b992f9bb"
+}

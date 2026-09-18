@@ -84,3 +84,39 @@ warnings) and `report.md`. Optional `--categories above_below left_right
 north_south east_west` produces a directional-only score. To use a different
 checkpoint, copy the manifest and replace its source and metadata paths; do not
 mix checkpoints. `--bootstrap`, `--seed`, `--manifest`, and `--root` are configurable.
+
+## Token-Length Preference Diagnostic
+
+`length_diagnostic.py` uses the same saved-run manifest to relate **conditional
+answer token counts** to binary answer choices. It reports point-biserial
+correlation (ordinary Pearson between `length1 - length2` and `answer1_chosen`),
+plus a benchmark-weighted version, shorter-answer choice rates, and accuracy
+when the correct answer is shorter, longer, or equal in length. Mean-token and
+summed-token scoring are reconstructed without model inference. Conditional
+token arrays/counts are used; standalone target counts can differ at the boundary.
+
+```bash
+python data/spatial_benchmark/length_diagnostic.py \
+  --output-dir runs/research/bos_aligned_proto/spatial_benchmark/qwen3_359m_step19500_length_diagnostic_v1
+python -m pytest tests/test_spatial_length_diagnostic.py -q
+```
+
+Outputs include `report.md`, `summary.json`, a per-comparison JSONL audit trail,
+`by_length_gap.csv`, and `choice_by_length_gap.png`. Source hashes are recorded.
+Ties are excluded from binary-choice correlation and shorter-choice percentages
+but count as incorrect for accuracy. An undefined correlation is **not zero**.
+
+These estimates are descriptive, not causal. In this checkpoint's saved set,
+only closer/farther versus unchanged comparisons have unequal lengths (10 vs
+13 tokens). All other contrasts are token-length matched. Within the unequal
+contrasts, length and answer identity are inseparable. The informative scene
+strata are singletons, so the report marks length-association confidence
+intervals **not estimable**, rather than turning duplicated templates into
+artificially tight uncertainty. Where available, intervals use the same
+stratified scene-cluster resampling with shared-axis draws as the composite.
+
+Pooled correlations can be driven by category/contrast composition, and their
+sign need not match the shorter-choice majority. Use the category/contrast
+tables and direct shorter-choice rates when interpreting the result. The newly
+generated front/behind and shortened left/right texts are not substituted for
+the historical inputs that were actually scored.
