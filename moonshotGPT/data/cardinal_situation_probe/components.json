@@ -1,12 +1,14 @@
 {
   "probe_name": "cardinal_fixed_map_situations",
-  "version": "1.2",
+  "version": "1.4",
   "location_list_orders": ["negative_to_positive", "positive_to_negative"],
   "numeric_label_orders": ["increasing", "decreasing"],
   "context_entity_orders": ["target_first", "reference_first"],
   "target_entity_orders": ["target_first", "reference_first"],
   "frame": "On this map, north is up and east is right.",
   "answer_bridge": "After the scene ends, to summarize the final positions:",
+  "event_frame": "On this fixed map, north is up and east is right.",
+  "event_answer_bridge": "Final positions:",
   "entities": {"target": "A", "reference": "B"},
   "locations": ["lake", "forest", "village", "bridge", "tower", "garden", "station", "school", "mill", "field", "cabin", "fountain"],
   "axes": [
@@ -29,7 +31,7 @@
   "control_types": ["direct_relation", "screen_to_cardinal"],
   "entity_templates": {
     "compact": {"static": "{entity} is at {end}.", "still": "{entity} stays at {end}.", "moving": "{entity} moves from {start} to {end}."},
-    "standard": {"static": "Marker {entity} occupies {end}.", "still": "Marker {entity} starts at {start} and remains there.", "moving": "Marker {entity} starts at {start} and moves to {end}."},
-    "expanded": {"static": "Marker {entity} is located at {end}. It stays at that position throughout the scene.", "still": "Initially, marker {entity} is at {start}. It remains at that same position until the scene ends.", "moving": "Initially, marker {entity} is at {start}. It then moves to {end} and stays there until the scene ends."}
+    "standard": {"static": "Marker {entity} is at {end}.", "still": "Marker {entity} stays at {end}.", "moving": "Marker {entity} moves from {start} to {end}."},
+    "expanded": {"static": "Marker {entity} starts at {start} and stays there.", "still": "Marker {entity} starts at {start} and stays there.", "moving": "Marker {entity} starts at {start}, then moves to {end}."}
   }
 }

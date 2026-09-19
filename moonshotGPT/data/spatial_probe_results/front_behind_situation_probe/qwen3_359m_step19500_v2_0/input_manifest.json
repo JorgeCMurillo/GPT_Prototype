@@ -1,0 +1,67 @@
+{
+  "name": "front_behind_situation_probe",
+  "version": "2.0",
+  "paired_rows": 224,
+  "proposed_seed_scenes": 12,
+  "distinct_numeric_geometries": 10,
+  "blocks": {
+    "event": 212,
+    "control": 4,
+    "observer_turn": 8
+  },
+  "event_formats": {
+    "numeric": 160,
+    "nonnumeric": 52
+  },
+  "case_seed_mapping": {
+    "static_adjacent": [
+      "static_adjacent"
+    ],
+    "static_separated": [
+      "static_separated"
+    ],
+    "static_interior": [
+      "static_interior"
+    ],
+    "target_cross_forward": [
+      "target_cross_forward",
+      "target_cross_backward"
+    ],
+    "reference_cross_forward": [
+      "reference_cross_forward",
+      "reference_cross_backward"
+    ],
+    "approach_without_crossing": [
+      "approach_without_crossing"
+    ],
+    "recede_without_crossing": [
+      "recede_without_crossing"
+    ],
+    "both_same_direction": [
+      "both_same_direction"
+    ],
+    "both_opposite_preserved": [
+      "both_opposite_preserved"
+    ],
+    "both_reverse": [
+      "both_reverse"
+    ]
+  },
+  "matched_variants": {
+    "context_entity_order": 80,
+    "target_entity_order": 112,
+    "facing_direction": 92,
+    "entity_pair_id": 112,
+    "anchor": 16
+  },
+  "context_words": {
+    "min": 4,
+    "mean": 14.964285714285714,
+    "max": 19
+  },
+  "probes_sha256": "ca8bd7921aecfb60b55b4230139ef2bc457fbc3e9daa49572b875d573ea7d0a7",
+  "components_sha256": "195a5e443ea4391d1e43159d6b2a7137db811ad6c927f9ee8d94d1ba230acc8a",
+  "scoring_note": "Use explicit correct_target_for_context fields; gold is not always diagonal.",
+  "replacement_note": "Compact-only replacement of v1.0. Detailed numeric/named-location renderings, long tiers, definition prefixes and answer bridges removed.",
+  "benchmark_status": "Generated, not evaluated or included in the scored six-category composite."
+}

@@ -121,7 +121,7 @@ def test_list_and_numbering_reversals(dataset):
             text=r[f'Context{i}'].split('. ')[1]
             rendered=', '.join(map(str,expected)) if r['evidence_format']=='numeric' else ', '.join('the '+x for x in expected)
             assert rendered in text
-            assert f'from {negative} to {positive}' in text.lower()
+            assert f'{negative} to {positive}:' in text.lower()
     for link in links:
         if link['control'] not in ('location_list_order','numeric_label_order'): continue
         a,b=lookup[link['base_probe_id']],lookup[link['variant_probe_id']]
@@ -132,3 +132,45 @@ def test_list_and_numbering_reversals(dataset):
                     k=f'context{i}_{e}_{point}'
                     assert a[k]==b[k]
                     if link['control']=='location_list_order': assert a[k+'_label']==b[k+'_label']
+
+
+def test_simplified_event_wording_and_tiers(dataset):
+    config,rows,_=dataset
+    assert config['version']=='1.4'
+    tiers=defaultdict(dict)
+    for row in rows:
+        if row['probe_family']!='event':
+            assert row['answer_bridge']==config['answer_bridge']
+            continue
+        assert row['answer_bridge']=='Final positions:'
+        key=tuple(row[k] for k in ('axis','case_id','evidence_format',
+            'context_entity_order','target_entity_order','location_list_order','numeric_label_order'))
+        tiers[key][row['length_band']]=row
+        for i in (1,2):
+            text=row[f'Context{i}']
+            assert text.startswith('On this fixed map, north is up and east is right. ')
+            assert text.endswith('Final positions:')
+            assert 'until the scene ends' not in text
+            assert len(text.split())<=52
+            if row['evidence_format']=='numeric':
+                alignment='column' if row['axis']=='north_south' else 'row'
+                assert f'Both markers share a {alignment}.' in text
+                place='Rows' if row['axis']=='north_south' else 'Columns'
+                assert f'{place} run ' in text
+            else:
+                assert 'Along one line, the locations run ' in text
+            assert '  ' not in text
+    for variants in tiers.values():
+        assert set(variants)=={'compact','standard','expanded'}
+        for i in (1,2):
+            counts=[len(variants[t][f'Context{i}'].split()) for t in ('compact','standard','expanded')]
+            assert counts[0]<counts[1]<counts[2]
+
+
+def test_generated_artifacts_match_generator(dataset):
+    _,rows,links=dataset
+    saved=[json.loads(line) for line in (ROOT/'generated/probes.jsonl').read_text().splitlines()]
+    assert saved==rows
+    import csv
+    with (ROOT/'generated/variant_matches.csv').open() as stream:
+        assert list(csv.DictReader(stream))==links

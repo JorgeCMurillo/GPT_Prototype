@@ -1,5 +1,17 @@
 # Balanced custom spatial benchmark
 
+## Revised-wording evaluation
+
+The additive [shortened v2 manifest](qwen3_step19500_shortened_v2.json) replaces
+left/right with freshly evaluated v1.2 wording and both cardinal axes with
+v1.4 wording, preserving the same six categories and weighting. The other
+three category results are reused unchanged. Its
+[overview](../spatial_probe_results/spatial_benchmark/qwen3_359m_step19500_shortened_v2/evaluation_overview.md)
+also reports the new minimal relation-first block and compact front/behind
+separately. The original manifest and historical reports below remain unchanged.
+
+## Original six-category report
+
 This report combines **six selected situation categories**: above/below,
 fixed-frame left/right, north/south, east/west, close/far, and closer/farther.
 It uses saved Qwen3 359M step-19,500 **raw binary mean-token likelihood**

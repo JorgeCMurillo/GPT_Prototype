@@ -4,6 +4,13 @@ This **replaces** the detailed v1.0 set. Only compact contexts remain: no signs,
 location lists, long tiers, definition prefixes, or answer bridges.
 [Browse examples](generated/examples.md).
 
+The compact v2.0 set has now been evaluated on Qwen3 359M step 19,500:
+[report](../spatial_probe_results/front_behind_situation_probe/qwen3_359m_step19500_v2_0/report.md).
+Balanced event accuracy is 50.00% using mean-token likelihood, with 0.00%
+both-context correctness. Direct controls and observer turns are separate.
+Use `scripts/evaluate_spatial_pairs.py --dataset front_behind --model CHECKPOINT
+--out-dir NEW_RESULTS_DIRECTORY` to evaluate these explicit-gold pairs.
+
 Examples:
 
 - “B faces the door. A stands between B and the door.” → Front.

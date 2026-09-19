@@ -1,0 +1,225 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "dataset": "front_behind",
+  "created_utc": "2026-09-19T04:38:02.819726+00:00",
+  "score_reduction": "mean",
+  "scoring": "raw mean full-target conditional token likelihood; no PMI; ties incorrect; sum is secondary",
+  "dtype": "float32",
+  "attention": "eager",
+  "torch": "2.7.0+cu126",
+  "transformers": "4.57.6",
+  "pairs": 224,
+  "unique_sequences": 896,
+  "probe_sha256": "ca8bd7921aecfb60b55b4230139ef2bc457fbc3e9daa49572b875d573ea7d0a7",
+  "groups": {
+    "event": {
+      "pairs": 212,
+      "families": {
+        "static_placement": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.4739583333333333,
+          "sum_both_correct": 0.010416666666666666
+        },
+        "target_crosses": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.234375,
+          "sum_both_correct": 0
+        },
+        "reference_crosses": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5,
+          "sum_both_correct": 0
+        },
+        "target_moves_without_crossing": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.4765625,
+          "sum_both_correct": 0.015625
+        },
+        "both_move": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5520833333333334,
+          "sum_both_correct": 0.14583333333333334
+        }
+      },
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.4473958333333333,
+      "sum_both_correct": 0.034375
+    },
+    "control": {
+      "pairs": 4,
+      "families": {
+        "direct_relation": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 1,
+          "sum_both_correct": 1
+        }
+      },
+      "mean_accuracy": 0.75,
+      "mean_both_correct": 0.5,
+      "sum_accuracy": 1,
+      "sum_both_correct": 1
+    },
+    "observer_turn": {
+      "pairs": 8,
+      "families": {
+        "observer_turn": {
+          "mean_accuracy": 0.625,
+          "mean_both_correct": 0.25,
+          "sum_accuracy": 0.375,
+          "sum_both_correct": 0
+        }
+      },
+      "mean_accuracy": 0.625,
+      "mean_both_correct": 0.25,
+      "sum_accuracy": 0.375,
+      "sum_both_correct": 0
+    }
+  },
+  "pooled": {
+    "pairs": 224,
+    "mean_accuracy": 0.5089285714285714,
+    "mean_both_correct": 0.017857142857142856,
+    "sum_accuracy": 0.49776785714285715,
+    "sum_both_correct": 0.049107142857142856,
+    "mean_ties": 0,
+    "sum_ties": 0
+  },
+  "diagnostics": {
+    "event_subtype/": {
+      "pairs": 12,
+      "mean_accuracy": 0.6666666666666666,
+      "mean_both_correct": 0.3333333333333333,
+      "sum_accuracy": 0.5833333333333334,
+      "sum_both_correct": 0.3333333333333333,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/adjacent": {
+      "pairs": 40,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.4625,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/approach": {
+      "pairs": 20,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.525,
+      "sum_both_correct": 0.05,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/crossing": {
+      "pairs": 40,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.4375,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/interior": {
+      "pairs": 16,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/opposite_direction_preserved": {
+      "pairs": 20,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.525,
+      "sum_both_correct": 0.05,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/order_reversed": {
+      "pairs": 20,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0.05,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/recede": {
+      "pairs": 20,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.475,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/same_direction_preserved": {
+      "pairs": 20,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.575,
+      "sum_both_correct": 0.15,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/separated": {
+      "pairs": 16,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.53125,
+      "sum_both_correct": 0.0625,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "evidence_format/direct_label": {
+      "pairs": 4,
+      "mean_accuracy": 0.75,
+      "mean_both_correct": 0.5,
+      "sum_accuracy": 1,
+      "sum_both_correct": 1,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "evidence_format/initial_relation_then_action": {
+      "pairs": 8,
+      "mean_accuracy": 0.625,
+      "mean_both_correct": 0.25,
+      "sum_accuracy": 0.375,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "evidence_format/nonnumeric": {
+      "pairs": 52,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.4423076923076923,
+      "sum_both_correct": 0.057692307692307696,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "evidence_format/numeric": {
+      "pairs": 160,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.509375,
+      "sum_both_correct": 0.025,
+      "mean_ties": 0,
+      "sum_ties": 0
+    }
+  },
+  "balancing": "equal family, then evidence format, then case; variants averaged within cases",
+  "uncertainty_note": "Few hand-built cases; wording variants are not independent samples. No binomial confidence intervals reported.",
+  "validation": "All saved token means, sums and explicit-gold decisions reconstructed."
+}

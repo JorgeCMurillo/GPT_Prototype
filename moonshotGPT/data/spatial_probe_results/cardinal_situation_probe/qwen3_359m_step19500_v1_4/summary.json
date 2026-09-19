@@ -1,0 +1,131 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "created_utc": "2026-09-19T04:33:30.960015+00:00",
+  "score": "raw mean full-target conditional log likelihood, including punctuation; no PMI; ties incorrect",
+  "pairs": 1344,
+  "unique_sequences": 5376,
+  "results": {
+    "north_south": {
+      "balanced_events": {
+        "accuracy": 0.5,
+        "both_correct": 0,
+        "positive_word_choice": 0.9958333333333333
+      },
+      "pooled_events": {
+        "pairs": 648,
+        "accuracy": 0.5,
+        "both_correct": 0,
+        "positive_word_choice": 0.9984567901234568,
+        "ties": 0
+      },
+      "families": {
+        "both_move": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "reference_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "static_placement": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        },
+        "target_crosses": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 0.9791666666666667
+        },
+        "target_moves_without_crossing": {
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0
+        }
+      },
+      "controls": {
+        "direct_relation": {
+          "pairs": 12,
+          "accuracy": 0.5416666666666666,
+          "both_correct": 0.4166666666666667,
+          "positive_word_choice": 0.625,
+          "ties": 0
+        },
+        "screen_to_cardinal": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0,
+          "ties": 0
+        }
+      }
+    },
+    "east_west": {
+      "balanced_events": {
+        "accuracy": 0.4982638888888889,
+        "both_correct": 0.008333333333333333,
+        "positive_word_choice": 0.9079861111111112
+      },
+      "pooled_events": {
+        "pairs": 648,
+        "accuracy": 0.49691358024691357,
+        "both_correct": 0.0030864197530864196,
+        "positive_word_choice": 0.9444444444444444,
+        "ties": 0
+      },
+      "families": {
+        "both_move": {
+          "accuracy": 0.4965277777777778,
+          "both_correct": 0,
+          "positive_word_choice": 0.9201388888888888
+        },
+        "reference_crosses": {
+          "accuracy": 0.5104166666666667,
+          "both_correct": 0.020833333333333332,
+          "positive_word_choice": 0.84375
+        },
+        "static_placement": {
+          "accuracy": 0.47916666666666663,
+          "both_correct": 0,
+          "positive_word_choice": 0.9375
+        },
+        "target_crosses": {
+          "accuracy": 0.5104166666666667,
+          "both_correct": 0.020833333333333332,
+          "positive_word_choice": 0.90625
+        },
+        "target_moves_without_crossing": {
+          "accuracy": 0.49479166666666663,
+          "both_correct": 0,
+          "positive_word_choice": 0.9322916666666667
+        }
+      },
+      "controls": {
+        "direct_relation": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0.3333333333333333,
+          "positive_word_choice": 0.6666666666666666,
+          "ties": 0
+        },
+        "screen_to_cardinal": {
+          "pairs": 12,
+          "accuracy": 0.5,
+          "both_correct": 0,
+          "positive_word_choice": 1.0,
+          "ties": 0
+        }
+      }
+    }
+  },
+  "balancing": "equal weight to evidence formats within each event family, then equal weight to five families",
+  "probe_sha256": "9fd2f02bc347c83a0e5aad2a1dd297257eac8a750e5c118560a58f1e142fed0e",
+  "torch": "2.7.0+cu126",
+  "transformers": "4.57.6",
+  "dtype": "float32",
+  "attention": "eager",
+  "gpu": "4",
+  "validation": "All persisted token means and gold choices reconstructed successfully."
+}

@@ -1,0 +1,141 @@
+{
+  "name": "custom_spatial_situations_six_relations_shortened_v2",
+  "sources": [
+    {
+      "category": "above_below",
+      "path": "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "applied"
+      },
+      "cluster_group": "ordered_five_positions",
+      "evidence_field": "evidence_type",
+      "accuracy_field": "binary_accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order"
+      ],
+      "case_aliases": {
+        "no_cross_up": "no_cross_positive",
+        "no_cross_down": "no_cross_negative",
+        "both_preserve_up": "both_preserve_positive",
+        "both_preserve_down": "both_preserve_negative"
+      },
+      "expected_pairs": 2304,
+      "note": "Latest applied situation version only; direct-label controls excluded."
+    },
+    {
+      "category": "left_right",
+      "path": "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1_2/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1_2/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "applied"
+      },
+      "cluster_group": "ordered_five_positions",
+      "evidence_field": "evidence_type",
+      "accuracy_field": "binary_accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order"
+      ],
+      "case_aliases": {
+        "no_cross_right": "no_cross_positive",
+        "no_cross_left": "no_cross_negative",
+        "both_preserve_right": "both_preserve_positive",
+        "both_preserve_left": "both_preserve_negative"
+      },
+      "expected_pairs": 2304,
+      "note": "Shortened fixed-screen wording v1.2, freshly evaluated; direct-label controls excluded."
+    },
+    {
+      "category": "north_south",
+      "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "event",
+        "axis": "north_south"
+      },
+      "cluster_group": "cardinal_map",
+      "evidence_field": "evidence_format",
+      "accuracy_field": "accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order",
+        "location_list_order",
+        "numeric_label_order"
+      ],
+      "expected_pairs": 648,
+      "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight. Natural shortened wording v1.4, freshly evaluated. Minimal relation-first block reported separately."
+    },
+    {
+      "category": "east_west",
+      "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "event",
+        "axis": "east_west"
+      },
+      "cluster_group": "cardinal_map",
+      "evidence_field": "evidence_format",
+      "accuracy_field": "accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order",
+        "location_list_order",
+        "numeric_label_order"
+      ],
+      "expected_pairs": 648,
+      "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight. Natural shortened wording v1.4, freshly evaluated. Minimal relation-first block reported separately."
+    },
+    {
+      "category": "close_far",
+      "path": "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/summary.json"
+      ],
+      "adapter": "close_far",
+      "cluster_group": "close_far_settings",
+      "balance_fields": [
+        "context_entity_order",
+        "target_order"
+      ],
+      "expected_pairs": 1152,
+      "note": "Existing matched-scene applied score: distance phrases and endpoint placements; direct labels and other historical close/far versions excluded.",
+      "uncertainty_note": "Close/far resamples six settings with all entity/order variants attached. They reuse a common spatial geometry, so this estimates setting sensitivity, not uncertainty over new spatial structures."
+    },
+    {
+      "category": "closer_farther",
+      "path": "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_applied_pairs.csv",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/summary.json",
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/summary.json"
+      ],
+      "adapter": "closer_farther",
+      "cluster_group": "distance_movement",
+      "balance_fields": [
+        "contrast",
+        "length_band",
+        "context_entity_order"
+      ],
+      "expected_pairs": 9324,
+      "note": "Existing three-family applied movement macro, with numeric/nonnumeric evidence balanced. Cross-family contrasts share contexts and remain in one structural cluster.",
+      "uncertainty_note": "Closer/farther has one structural cluster per fixed event-family stratum. Its bootstrap contribution is fixed, not an estimated generalization uncertainty; numeric values, names and units are treated as variants, not independent structures."
+    }
+  ]
+}

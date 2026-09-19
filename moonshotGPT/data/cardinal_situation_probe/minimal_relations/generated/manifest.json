@@ -1,0 +1,27 @@
+{
+  "probe_name": "cardinal_minimal_initial_relations",
+  "version": "1.0",
+  "paired_rows": 46,
+  "context_judgments": 92,
+  "cases_per_axis": 8,
+  "by_axis": {
+    "north_south": 23,
+    "east_west": 23
+  },
+  "by_block": {
+    "control": 4,
+    "event": 38,
+    "observer_turn": 4
+  },
+  "by_persistence_cue": {
+    "implicit": 28,
+    "explicit": 12,
+    "not_applicable": 6
+  },
+  "variant_matches": 61,
+  "mean_context_words": 14.608695652173912,
+  "min_context_words": 7,
+  "max_context_words": 19,
+  "generator_sha256": "574b26df574b5cca20534ee5c290aad9311c398f70ea39694e8287f7df9cd288",
+  "evaluation_status": "not_evaluated"
+}

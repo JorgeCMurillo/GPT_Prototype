@@ -1,5 +1,45 @@
 # Cardinal situations: fixed map
 
+The additive [minimal relation-first block](minimal_relations/README.md)
+provides short scenes with explicit starting relations, moves/heads wording,
+toward/to crossing variants, and a small matched stationary-cue subset.
+It covers both axes without changing the numeric/named inventory below and
+has its own evaluation report linked there.
+
+Version 1.4 uses short, natural event wording in **both numeric and named-location
+scenes**, without removing cases, pairs, or ordering variants. The 1,344 IDs,
+answers, endpoints, and 4,424 match links are unchanged. Event contexts change;
+the 48 simple-control pairs retain their previous text. Saved v1.2 evaluation
+results remain historical and do not evaluate this revised wording.
+The [v1.4 evaluation](../spatial_probe_results/cardinal_situation_probe/qwen3_359m_step19500_v1_4/report.md)
+on Qwen3 359M step 19,500 scores 50.00% north/south and 49.83% east/west on
+the balanced event families, using raw mean-token likelihood without PMI.
+Version 1.3 shortened the scenes; v1.4 smooths only the setup sentences,
+keeping the movements and “Final positions:” bridge unchanged. The map
+orientation and fixed frame remain explicit.
+
+| Event wording tier | Original v1.2 mean words | Current v1.4 mean words |
+|---|---:|---:|
+| Compact | 51.3 | 40.3 |
+| Standard | 60.4 | 42.3 |
+| Expanded | 87.4 | 47.2 |
+| All tiers | 66.4 | 43.3 |
+
+These are whitespace-delimited context-word averages, excluding answers and
+controls; north/south and east/west have identical averages. Current event
+contexts range from 35 to 52 words. Existing per-text `*_word_count` metadata
+retains its regex-based counting convention, which splits hyphenated words.
+
+Compact examples (the same formats exist on both axes):
+
+- Numeric: “On this fixed map, north is up and east is right.
+  Rows run south to north: 1, 2, 3. Both markers share a column.
+  A moves from row 1 to row 3. B stays at row 2.
+  Final positions:”
+- Nonnumeric: “On this fixed map, north is up and east is right.
+  Along one line, the locations run west to east: the school, the station, the garden.
+  A moves from the school to the garden. B stays at the station. Final positions:”
+
 The separate [observer-turn extension](observer_turn/README.md) adds matched
 no-turn/half-turn contexts with cardinal and observer-relative answers, testing
 invariance versus left/right reversal. It preserves this original dataset and
@@ -34,8 +74,8 @@ control types × two axes × three lengths × two context orders × two answer
 orders = 48 more pairs. They remain separate
 from the event score. The 36 family/format/length template combinations share
 reusable clause renderers, rather than being 36 independent semantic tests.
-Version 1.1 adds both entity-order dimensions. The original 120 pairs retain
-their IDs and texts; added order combinations receive ID suffixes. Entity
+Version 1.1 added both entity-order dimensions while preserving the original
+120 pairs' IDs and then-current texts; added order combinations receive ID suffixes. Entity
 names remain A and B. `template_id` retains the 36 family/format/length
 combinations; context and answer order are separate factors.
 
@@ -62,7 +102,8 @@ to south” have identical numbering but different presentation. Assigning rows
 are crossed independently. Named locations only receive list reversals, not
 numeric relabeling. Simple controls receive neither factor. Separate matched
 links change one factor at a time and preserve correct answers and endpoints.
-All previous 480 IDs and texts remain as the original-factor subset.
+Version 1.2 preserved all previous 480 IDs and texts as the original-factor
+subset. Version 1.3 retains those IDs but shortens event texts across all factors.
 
 The pool is lake, forest, village, bridge, tower, garden, station, school, mill,
 field, cabin, and fountain. Each case uses only two to four named anchors.
@@ -79,12 +120,15 @@ axes. This is not full name counterbalancing within each axis; axis comparisons
 also change names in the named format. Numeric axis comparisons do not.
 
 Compact, standard, and expanded variants preserve endpoints and events.
-Expanded wording states initial and final conditions more explicitly without
-adding another event or marker. Length and syntax vary together. The common
-answer bridge is: “After the scene ends, to summarize the final positions:”.
-The same bridge appears in controls and all length/format variants. Its choice
-is motivated by the earlier restatement sensitivity; this dataset alone does
-not test the bridge's effect.
+Standard adds the explicit “Marker” noun; expanded states initial and final
+conditions more explicitly without adding another event or marker. All retain
+the fixed north-up/east-right map convention and shared row, column, or axis.
+Length and syntax vary together. Version 1.3 uses the short event answer bridge
+“Final positions:” in all length/format variants. Controls retain the original
+“After the scene ends, to summarize the final positions:” bridge and frame.
+The event shortening changes both setup and bridge, so a before/after evaluation
+would not isolate the bridge's effect. Observer-turn and definition blocks are
+unchanged.
 
 In events, context order reverses the complete A/B description blocks without
 changing positions. In simple controls, it rewrites the stated relation with B

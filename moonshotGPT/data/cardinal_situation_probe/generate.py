@@ -61,21 +61,19 @@ def event_context(config,case,axis,fmt,length,names,truth,context_order='target_
         labels.reverse();first,last=last,first
     order=', '.join(labels)
     if fmt=='numeric':
-        anchors=f"The {axis['place']}s are ordered {order} from {first} to {last}."
-        alignment=f"Both markers stay in the same {axis['alignment']}."
+        anchors=f"{axis['place'].capitalize()}s run {first} to {last}: {order}."
+        alignment=f"Both markers share a {axis['alignment']}."
     else:
-        anchors=f"From {first} to {last}, the locations are {order}."
-        alignment=f"These locations lie along one {axis['negative']}–{axis['positive']} line."
-    intro=config['frame']+' '+anchors+' '+alignment
-    if length=='standard': intro+=' The locations stay fixed.'
-    elif length=='expanded': intro+=' These positions remain fixed throughout the scene, and the map does not rotate.'
+        anchors=f"Along one line, the locations run {first} to {last}: {order}."
+        alignment=''
+    intro=' '.join(part for part in (config['event_frame'],anchors,alignment) if part)
     clauses=[]
     sequence=('target','reference') if context_order=='target_first' else ('reference','target')
     for entity in sequence:
         a,b=case[truth][entity]
         kind='static' if case['family']=='static_placement' else 'still' if a==b else 'moving'
         clauses.append(config['entity_templates'][length][kind].format(entity=config['entities'][entity],start=position_label(a,axis,fmt,names,numbering),end=position_label(b,axis,fmt,names,numbering)))
-    return ' '.join([intro,*clauses,config['answer_bridge']])
+    return ' '.join([intro,*clauses,config['event_answer_bridge']])
 
 
 def control_context(config,axis,kind,length,truth,context_order='target_first'):
@@ -104,7 +102,7 @@ def make_row(config,axis,case,fmt,length,names,context_order='target_first',targ
         'target_entity':'A','reference_entity':'B','context_entity_order':context_order,'target_entity_order':target_order,
         'last_described_entity':'reference' if context_order=='target_first' else 'target','position_count':0 if control else case['positions'],
         'locations_negative_to_positive':' | '.join(names) if fmt=='named_locations' else '',
-        'answer_bridge':config['answer_bridge'],
+        'answer_bridge':config['answer_bridge'] if control else config['event_answer_bridge'],
         'location_list_order':'not_applicable' if control else list_order,
         'numeric_label_order':numbering if fmt=='numeric' else 'not_applicable',
         'correct_target_for_context1':'Target1','correct_target_for_context2':'Target2'}

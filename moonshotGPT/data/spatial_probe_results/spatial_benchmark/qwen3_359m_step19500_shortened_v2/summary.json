@@ -1,0 +1,952 @@
+{
+  "method": "equal-category/family/evidence weighting; stratified paired scene-cluster bootstrap",
+  "bootstrap_replicates": 20000,
+  "seed": 42,
+  "confidence_level": 0.95,
+  "chance_accuracy": 0.5,
+  "categories": {
+    "above_below": {
+      "n_pairs": 2304,
+      "n_binary_judgments": 4608,
+      "cluster_group": "ordered_five_positions",
+      "n_clusters": 12,
+      "all_strata_singleton": false,
+      "families": {
+        "both_move": {
+          "cases": [
+            "both_preserve_negative",
+            "both_preserve_positive",
+            "both_reverse"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.4991319444444444,
+            "ci95": [
+              0.4973958333333333,
+              0.5026041666666666
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.001736111111111111,
+            "ci95": [
+              0.0,
+              0.005208333333333333
+            ],
+            "degenerate": false
+          }
+        },
+        "reference_crosses": {
+          "cases": [
+            "reference_cross_full",
+            "reference_cross_inner"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5026041666666666,
+            "ci95": [
+              0.5026041666666666,
+              0.5026041666666666
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.020833333333333336,
+            "ci95": [
+              0.015625,
+              0.026041666666666668
+            ],
+            "degenerate": false
+          }
+        },
+        "static_placement": {
+          "cases": [
+            "static_inner",
+            "static_offset",
+            "static_outer"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5043402777777778,
+            "ci95": [
+              0.48697916666666674,
+              0.515625
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.0625,
+            "ci95": [
+              0.052083333333333336,
+              0.06770833333333334
+            ],
+            "degenerate": false
+          }
+        },
+        "target_crosses": {
+          "cases": [
+            "target_cross_full",
+            "target_cross_inner"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5026041666666667,
+            "ci95": [
+              0.4947916666666667,
+              0.5104166666666667
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.015625,
+            "ci95": [
+              0.005208333333333333,
+              0.026041666666666668
+            ],
+            "degenerate": false
+          }
+        },
+        "target_moves_without_crossing": {
+          "cases": [
+            "no_cross_negative",
+            "no_cross_positive"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5026041666666667,
+            "ci95": [
+              0.5,
+              0.5052083333333334
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.031249999999999997,
+            "ci95": [
+              0.026041666666666664,
+              0.03645833333333333
+            ],
+            "degenerate": false
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.5022569444444445,
+        "ci95": [
+          0.4984375,
+          0.5057291666666668
+        ],
+        "degenerate": false
+      },
+      "both_correct": {
+        "estimate": 0.02638888888888889,
+        "ci95": [
+          0.02256944444444444,
+          0.030208333333333337
+        ],
+        "degenerate": false
+      }
+    },
+    "close_far": {
+      "n_pairs": 1152,
+      "n_binary_judgments": 2304,
+      "cluster_group": "close_far_settings",
+      "n_clusters": 6,
+      "all_strata_singleton": false,
+      "families": {
+        "static_distance": {
+          "cases": [
+            "auditorium",
+            "courtyard",
+            "field",
+            "gym",
+            "hallway",
+            "platform"
+          ],
+          "n_clusters": 6,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5813802083333334,
+            "ci95": [
+              0.546875,
+              0.6158854166666666
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.17838541666666666,
+            "ci95": [
+              0.11197916666666667,
+              0.24609375
+            ],
+            "degenerate": false
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.5813802083333334,
+        "ci95": [
+          0.546875,
+          0.6158854166666666
+        ],
+        "degenerate": false
+      },
+      "both_correct": {
+        "estimate": 0.17838541666666666,
+        "ci95": [
+          0.11197916666666667,
+          0.24609375
+        ],
+        "degenerate": false
+      }
+    },
+    "closer_farther": {
+      "n_pairs": 9324,
+      "n_binary_judgments": 18648,
+      "cluster_group": "distance_movement",
+      "n_clusters": 3,
+      "all_strata_singleton": true,
+      "families": {
+        "object_moves_vs_both_move_cross_family": {
+          "cases": [
+            "object_moves_vs_both_move_cross_family"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "person_moves_reference_stationary": {
+          "cases": [
+            "person_moves_reference_stationary"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.49382716049382713,
+            "ci95": [
+              0.49382716049382713,
+              0.49382716049382713
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.00038580246913580245,
+            "ci95": [
+              0.00038580246913580245,
+              0.00038580246913580245
+            ],
+            "degenerate": true
+          }
+        },
+        "reference_object_moves": {
+          "cases": [
+            "reference_object_moves"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.47540509259259267,
+            "ci95": [
+              0.47540509259259267,
+              0.47540509259259267
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.005401234567901234,
+            "ci95": [
+              0.005401234567901234,
+              0.005401234567901234
+            ],
+            "degenerate": true
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.4897440843621399,
+        "ci95": [
+          0.4897440843621399,
+          0.4897440843621399
+        ],
+        "degenerate": true
+      },
+      "both_correct": {
+        "estimate": 0.0019290123456790122,
+        "ci95": [
+          0.0019290123456790122,
+          0.0019290123456790122
+        ],
+        "degenerate": true
+      }
+    },
+    "east_west": {
+      "n_pairs": 648,
+      "n_binary_judgments": 1296,
+      "cluster_group": "cardinal_map",
+      "n_clusters": 9,
+      "all_strata_singleton": false,
+      "families": {
+        "both_move": {
+          "cases": [
+            "both_preserve_negative",
+            "both_preserve_positive",
+            "both_swap"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.49652777777777785,
+            "ci95": [
+              0.4895833333333333,
+              0.5
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "reference_crosses": {
+          "cases": [
+            "reference_cross"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.5104166666666667,
+            "ci95": [
+              0.5104166666666667,
+              0.5104166666666667
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.020833333333333332,
+            "ci95": [
+              0.020833333333333332,
+              0.020833333333333332
+            ],
+            "degenerate": true
+          }
+        },
+        "static_placement": {
+          "cases": [
+            "static_adjacent",
+            "static_separated"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.4791666666666667,
+            "ci95": [
+              0.45833333333333337,
+              0.5
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "target_crosses": {
+          "cases": [
+            "target_cross"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.5104166666666667,
+            "ci95": [
+              0.5104166666666667,
+              0.5104166666666667
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.020833333333333332,
+            "ci95": [
+              0.020833333333333332,
+              0.020833333333333332
+            ],
+            "degenerate": true
+          }
+        },
+        "target_moves_without_crossing": {
+          "cases": [
+            "no_cross_negative",
+            "no_cross_positive"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.4947916666666667,
+            "ci95": [
+              0.48958333333333337,
+              0.5
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.49826388888888895,
+        "ci95": [
+          0.49305555555555564,
+          0.5034722222222223
+        ],
+        "degenerate": false
+      },
+      "both_correct": {
+        "estimate": 0.008333333333333333,
+        "ci95": [
+          0.008333333333333333,
+          0.008333333333333333
+        ],
+        "degenerate": true
+      }
+    },
+    "left_right": {
+      "n_pairs": 2304,
+      "n_binary_judgments": 4608,
+      "cluster_group": "ordered_five_positions",
+      "n_clusters": 12,
+      "all_strata_singleton": false,
+      "families": {
+        "both_move": {
+          "cases": [
+            "both_preserve_negative",
+            "both_preserve_positive",
+            "both_reverse"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.509548611111111,
+            "ci95": [
+              0.5078125,
+              0.5104166666666666
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.029513888888888885,
+            "ci95": [
+              0.026041666666666668,
+              0.03125
+            ],
+            "degenerate": false
+          }
+        },
+        "reference_crosses": {
+          "cases": [
+            "reference_cross_full",
+            "reference_cross_inner"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.4947916666666667,
+              0.5052083333333334
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.023437499999999997,
+            "ci95": [
+              0.010416666666666666,
+              0.03645833333333333
+            ],
+            "degenerate": false
+          }
+        },
+        "static_placement": {
+          "cases": [
+            "static_inner",
+            "static_offset",
+            "static_outer"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.4973958333333333,
+            "ci95": [
+              0.4895833333333333,
+              0.5078125
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.04513888888888889,
+            "ci95": [
+              0.020833333333333332,
+              0.07291666666666667
+            ],
+            "degenerate": false
+          }
+        },
+        "target_crosses": {
+          "cases": [
+            "target_cross_full",
+            "target_cross_inner"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.50390625,
+            "ci95": [
+              0.5026041666666667,
+              0.5052083333333333
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.0390625,
+            "ci95": [
+              0.036458333333333336,
+              0.041666666666666664
+            ],
+            "degenerate": false
+          }
+        },
+        "target_moves_without_crossing": {
+          "cases": [
+            "no_cross_negative",
+            "no_cross_positive"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5091145833333333,
+            "ci95": [
+              0.5078125,
+              0.5104166666666666
+            ],
+            "degenerate": false
+          },
+          "both_correct": {
+            "estimate": 0.05989583333333333,
+            "ci95": [
+              0.052083333333333336,
+              0.06770833333333333
+            ],
+            "degenerate": false
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.5039930555555555,
+        "ci95": [
+          0.501736111111111,
+          0.5063368055555555
+        ],
+        "degenerate": false
+      },
+      "both_correct": {
+        "estimate": 0.03940972222222222,
+        "ci95": [
+          0.03298611111111111,
+          0.04583333333333334
+        ],
+        "degenerate": false
+      }
+    },
+    "north_south": {
+      "n_pairs": 648,
+      "n_binary_judgments": 1296,
+      "cluster_group": "cardinal_map",
+      "n_clusters": 9,
+      "all_strata_singleton": false,
+      "families": {
+        "both_move": {
+          "cases": [
+            "both_preserve_negative",
+            "both_preserve_positive",
+            "both_swap"
+          ],
+          "n_clusters": 3,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "reference_crosses": {
+          "cases": [
+            "reference_cross"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "static_placement": {
+          "cases": [
+            "static_adjacent",
+            "static_separated"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "target_crosses": {
+          "cases": [
+            "target_cross"
+          ],
+          "n_clusters": 1,
+          "singleton_stratum": true,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        },
+        "target_moves_without_crossing": {
+          "cases": [
+            "no_cross_negative",
+            "no_cross_positive"
+          ],
+          "n_clusters": 2,
+          "singleton_stratum": false,
+          "accuracy": {
+            "estimate": 0.5,
+            "ci95": [
+              0.5,
+              0.5
+            ],
+            "degenerate": true
+          },
+          "both_correct": {
+            "estimate": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "degenerate": true
+          }
+        }
+      },
+      "accuracy": {
+        "estimate": 0.5,
+        "ci95": [
+          0.5,
+          0.5
+        ],
+        "degenerate": true
+      },
+      "both_correct": {
+        "estimate": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "degenerate": true
+      }
+    }
+  },
+  "overall": {
+    "accuracy": {
+      "estimate": 0.5126063635973938,
+      "ci95": [
+        0.5068193265603567,
+        0.5185019075788752
+      ],
+      "degenerate": false
+    },
+    "both_correct": {
+      "estimate": 0.042407728909465016,
+      "ci95": [
+        0.03144129372427984,
+        0.05382265946502057
+      ],
+      "degenerate": false
+    }
+  },
+  "n_unique_cluster_units": 30,
+  "warnings": [
+    "Intervals are conditional percentile scene-cluster bootstrap intervals, not binomial/Wilson intervals.",
+    "These hand-built cases are not a random sample of spatial reasoning. Intervals do not cover new templates, domains, model seeds, or training uncertainty.",
+    "A zero-width interval means no observed cluster-score variation, not certainty about generalization.",
+    "Binary judgments include reused contexts in distance contrasts; counts are not independent sample sizes.",
+    "closer_farther: singleton strata object_moves_vs_both_move_cross_family, person_moves_reference_stationary, reference_object_moves are fixed in resampling; their scene uncertainty cannot be estimated.",
+    "east_west: singleton strata reference_crosses, target_crosses are fixed in resampling; their scene uncertainty cannot be estimated.",
+    "north_south: singleton strata reference_crosses, target_crosses are fixed in resampling; their scene uncertainty cannot be estimated.",
+    "Close/far resamples six settings with all entity/order variants attached. They reuse a common spatial geometry, so this estimates setting sensitivity, not uncertainty over new spatial structures.",
+    "Closer/farther has one structural cluster per fixed event-family stratum. Its bootstrap contribution is fixed, not an estimated generalization uncertainty; numeric values, names and units are treated as variants, not independent structures."
+  ],
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "sources": [
+    {
+      "category": "above_below",
+      "path": "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "applied"
+      },
+      "cluster_group": "ordered_five_positions",
+      "evidence_field": "evidence_type",
+      "accuracy_field": "binary_accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order"
+      ],
+      "case_aliases": {
+        "no_cross_up": "no_cross_positive",
+        "no_cross_down": "no_cross_negative",
+        "both_preserve_up": "both_preserve_positive",
+        "both_preserve_down": "both_preserve_negative"
+      },
+      "expected_pairs": 2304,
+      "note": "Latest applied situation version only; direct-label controls excluded.",
+      "total_source_rows": 2400,
+      "included_pairs": 2304,
+      "excluded_rows": 96,
+      "sha256": "4a73fa6a8502c59e7b4c6d0bc0c6bc17493b6b9c61a497335d6c453301adc055",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/above_below_situation_probe/qwen3_359m_step19500_v1_3/summary.json": "d064b55f3eb17c2078627eedcbc5a89f0fc934510dd3441701d1223ce1f997e2"
+      }
+    },
+    {
+      "category": "left_right",
+      "path": "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1_2/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1_2/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "applied"
+      },
+      "cluster_group": "ordered_five_positions",
+      "evidence_field": "evidence_type",
+      "accuracy_field": "binary_accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order"
+      ],
+      "case_aliases": {
+        "no_cross_right": "no_cross_positive",
+        "no_cross_left": "no_cross_negative",
+        "both_preserve_right": "both_preserve_positive",
+        "both_preserve_left": "both_preserve_negative"
+      },
+      "expected_pairs": 2304,
+      "note": "Shortened fixed-screen wording v1.2, freshly evaluated; direct-label controls excluded.",
+      "total_source_rows": 2400,
+      "included_pairs": 2304,
+      "excluded_rows": 96,
+      "sha256": "eeef2b85bd83416bd6f60f395585d4f3c7c5860c03d01266bfb9b5868d73f998",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/left_right_situation_probe/qwen3_359m_step19500_v1_2/summary.json": "b868f815c9dea078624cbe224cc4a1a358d80a5706f729d7352672ecd5e3a0df"
+      }
+    },
+    {
+      "category": "north_south",
+      "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "event",
+        "axis": "north_south"
+      },
+      "cluster_group": "cardinal_map",
+      "evidence_field": "evidence_format",
+      "accuracy_field": "accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order",
+        "location_list_order",
+        "numeric_label_order"
+      ],
+      "expected_pairs": 648,
+      "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight. Natural shortened wording v1.4, freshly evaluated. Minimal relation-first block reported separately.",
+      "total_source_rows": 1344,
+      "included_pairs": 648,
+      "excluded_rows": 696,
+      "sha256": "70031320ca86829c077a70f323d6ba6442db759eb826ac72604bc4a7d169feb8",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json": "81a65de0a0e36d9918534b4870b1b7024cfdfc9f633b97956b37527ec2938e67"
+      }
+    },
+    {
+      "category": "east_west",
+      "path": "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json"
+      ],
+      "adapter": "directional",
+      "select": {
+        "probe_family": "event",
+        "axis": "east_west"
+      },
+      "cluster_group": "cardinal_map",
+      "evidence_field": "evidence_format",
+      "accuracy_field": "accuracy",
+      "balance_fields": [
+        "length_band",
+        "context_entity_order",
+        "target_entity_order",
+        "location_list_order",
+        "numeric_label_order"
+      ],
+      "expected_pairs": 648,
+      "note": "Matched axis cases share bootstrap draws. Numeric and named-location evidence get equal weight. Natural shortened wording v1.4, freshly evaluated. Minimal relation-first block reported separately.",
+      "total_source_rows": 1344,
+      "included_pairs": 648,
+      "excluded_rows": 696,
+      "sha256": "70031320ca86829c077a70f323d6ba6442db759eb826ac72604bc4a7d169feb8",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/cardinal_situation_probe/qwen3_359m_step19500_v1_4/summary.json": "81a65de0a0e36d9918534b4870b1b7024cfdfc9f633b97956b37527ec2938e67"
+      }
+    },
+    {
+      "category": "close_far",
+      "path": "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/item_scores.jsonl",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/summary.json"
+      ],
+      "adapter": "close_far",
+      "cluster_group": "close_far_settings",
+      "balance_fields": [
+        "context_entity_order",
+        "target_order"
+      ],
+      "expected_pairs": 1152,
+      "note": "Existing matched-scene applied score: distance phrases and endpoint placements; direct labels and other historical close/far versions excluded.",
+      "uncertainty_note": "Close/far resamples six settings with all entity/order variants attached. They reuse a common spatial geometry, so this estimates setting sensitivity, not uncertainty over new spatial structures.",
+      "total_source_rows": 1536,
+      "included_pairs": 1152,
+      "excluded_rows": 384,
+      "sha256": "04378b03ba075d8424d2c7e0b30cde24d991cc672d16f6d9bb8452d430ce5e5b",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/close_far_evidence_probe/qwen3_359m_step19500_matched_scenes_v1_1/summary.json": "57ee30062fee197205715a7958d9f70251381d5f4f7f3dca7bae01c32cefbf0b"
+      }
+    },
+    {
+      "category": "closer_farther",
+      "path": "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_applied_pairs.csv",
+      "metadata_paths": [
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/summary.json",
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/summary.json"
+      ],
+      "adapter": "closer_farther",
+      "cluster_group": "distance_movement",
+      "balance_fields": [
+        "contrast",
+        "length_band",
+        "context_entity_order"
+      ],
+      "expected_pairs": 9324,
+      "note": "Existing three-family applied movement macro, with numeric/nonnumeric evidence balanced. Cross-family contrasts share contexts and remain in one structural cluster.",
+      "uncertainty_note": "Closer/farther has one structural cluster per fixed event-family stratum. Its bootstrap contribution is fixed, not an estimated generalization uncertainty; numeric values, names and units are treated as variants, not independent structures.",
+      "total_source_rows": 9324,
+      "included_pairs": 9324,
+      "excluded_rows": 0,
+      "sha256": "8bae088680f1285523f80ed926d68f0f9dba8d310ccf02956a998b670939a44e",
+      "metadata_sha256": {
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/summary.json": "2f072e088c23c94baa4305843b576574613fb6fd74a7386a725c2efa526c34d1",
+        "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/summary.json": "238e43906a4a8308b743ba37072fadf0047f73d498e05e3bf3425aa2c4da8663"
+      }
+    }
+  ],
+  "scope": "custom_spatial_situations_six_relations_shortened_v2",
+  "manifest_sha256": "c4b9bdba57dd73784250c4783dd7f26a5de58b837e4735714bb934b4acd8d57c"
+}

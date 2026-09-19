@@ -1,0 +1,372 @@
+{
+  "model": "/SSD2/tokenPred/moonshotGPT/runs/research/bos_aligned_proto/qwen3_liger_muon_steps19500_ws6_seed42_restart_20260816_120352/runs/qwen3_liger_muon/babygpt_fineweb_stream_mbs6_T1024_qwen3_d1024_h16_L24_tok516096_efftok516096_ws6_gas14_seed42_steps19500/ckpt_final_step0019500",
+  "dataset": "minimal_cardinal",
+  "created_utc": "2026-09-19T04:35:54.534060+00:00",
+  "score_reduction": "mean",
+  "scoring": "raw mean full-target conditional token likelihood; no PMI; ties incorrect; sum is secondary",
+  "dtype": "float32",
+  "attention": "eager",
+  "torch": "2.7.0+cu126",
+  "transformers": "4.57.6",
+  "pairs": 46,
+  "unique_sequences": 184,
+  "probe_sha256": "3ef1a24a0149f87575a78a49e4ec2db683a9ebdbc79c500288a4566e5c34609d",
+  "groups": {
+    "north_south/main_movement": {
+      "pairs": 15,
+      "families": {
+        "target_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "reference_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "target_moves_without_crossing": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 0.75,
+          "sum_both_correct": 0.5
+        },
+        "both_move": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 0.75,
+          "sum_both_correct": 0.5
+        }
+      },
+      "mean_accuracy": 0.375,
+      "mean_both_correct": 0.25,
+      "sum_accuracy": 0.375,
+      "sum_both_correct": 0.25
+    },
+    "north_south/explicit_movement": {
+      "pairs": 4,
+      "families": {
+        "target_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "reference_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "target_moves_without_crossing": {
+          "mean_accuracy": 1,
+          "mean_both_correct": 1,
+          "sum_accuracy": 1,
+          "sum_both_correct": 1
+        }
+      },
+      "mean_accuracy": 0.3333333333333333,
+      "mean_both_correct": 0.3333333333333333,
+      "sum_accuracy": 0.3333333333333333,
+      "sum_both_correct": 0.3333333333333333
+    },
+    "north_south/static_controls": {
+      "pairs": 2,
+      "families": {
+        "static_placement": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 0.75,
+          "sum_both_correct": 0.5
+        }
+      },
+      "mean_accuracy": 0.75,
+      "mean_both_correct": 0.5,
+      "sum_accuracy": 0.75,
+      "sum_both_correct": 0.5
+    },
+    "north_south/observer_turns": {
+      "pairs": 2,
+      "families": {
+        "observer_turn": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5,
+          "sum_both_correct": 0
+        }
+      },
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0
+    },
+    "east_west/main_movement": {
+      "pairs": 15,
+      "families": {
+        "target_crosses": {
+          "mean_accuracy": 0.125,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.125,
+          "sum_both_correct": 0
+        },
+        "reference_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "target_moves_without_crossing": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 0.75,
+          "sum_both_correct": 0.5
+        },
+        "both_move": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5,
+          "sum_both_correct": 0
+        }
+      },
+      "mean_accuracy": 0.34375,
+      "mean_both_correct": 0.125,
+      "sum_accuracy": 0.34375,
+      "sum_both_correct": 0.125
+    },
+    "east_west/explicit_movement": {
+      "pairs": 4,
+      "families": {
+        "target_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "reference_crosses": {
+          "mean_accuracy": 0,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0,
+          "sum_both_correct": 0
+        },
+        "target_moves_without_crossing": {
+          "mean_accuracy": 0.75,
+          "mean_both_correct": 0.5,
+          "sum_accuracy": 0.75,
+          "sum_both_correct": 0.5
+        }
+      },
+      "mean_accuracy": 0.25,
+      "mean_both_correct": 0.16666666666666666,
+      "sum_accuracy": 0.25,
+      "sum_both_correct": 0.16666666666666666
+    },
+    "east_west/static_controls": {
+      "pairs": 2,
+      "families": {
+        "static_placement": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5,
+          "sum_both_correct": 0
+        }
+      },
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0
+    },
+    "east_west/observer_turns": {
+      "pairs": 2,
+      "families": {
+        "observer_turn": {
+          "mean_accuracy": 0.5,
+          "mean_both_correct": 0,
+          "sum_accuracy": 0.5,
+          "sum_both_correct": 0
+        }
+      },
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0
+    }
+  },
+  "pooled": {
+    "pairs": 46,
+    "mean_accuracy": 0.40217391304347827,
+    "mean_both_correct": 0.21739130434782608,
+    "sum_accuracy": 0.40217391304347827,
+    "sum_both_correct": 0.21739130434782608,
+    "mean_ties": 0,
+    "sum_ties": 0
+  },
+  "diagnostics": {
+    "event_subtype/away": {
+      "pairs": 6,
+      "mean_accuracy": 0.5833333333333334,
+      "mean_both_correct": 0.16666666666666666,
+      "sum_accuracy": 0.5833333333333334,
+      "sum_both_correct": 0.16666666666666666,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/both_equal": {
+      "pairs": 4,
+      "mean_accuracy": 0.75,
+      "mean_both_correct": 0.5,
+      "sum_accuracy": 0.75,
+      "sum_both_correct": 0.5,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/observer_turn": {
+      "pairs": 4,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/reference_crosses": {
+      "pairs": 10,
+      "mean_accuracy": 0,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/static": {
+      "pairs": 4,
+      "mean_accuracy": 0.625,
+      "mean_both_correct": 0.25,
+      "sum_accuracy": 0.625,
+      "sum_both_correct": 0.25,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/swap": {
+      "pairs": 2,
+      "mean_accuracy": 0.5,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.5,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/target_crosses": {
+      "pairs": 10,
+      "mean_accuracy": 0.05,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0.05,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "event_subtype/toward_without_crossing": {
+      "pairs": 6,
+      "mean_accuracy": 1,
+      "mean_both_correct": 1,
+      "sum_accuracy": 1,
+      "sum_both_correct": 1,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "evidence_format/direct_initial_relation": {
+      "pairs": 46,
+      "mean_accuracy": 0.40217391304347827,
+      "mean_both_correct": 0.21739130434782608,
+      "sum_accuracy": 0.40217391304347827,
+      "sum_both_correct": 0.21739130434782608,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "persistence_cue/explicit": {
+      "pairs": 12,
+      "mean_accuracy": 0.4583333333333333,
+      "mean_both_correct": 0.25,
+      "sum_accuracy": 0.4583333333333333,
+      "sum_both_correct": 0.25,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "persistence_cue/implicit": {
+      "pairs": 28,
+      "mean_accuracy": 0.32142857142857145,
+      "mean_both_correct": 0.17857142857142858,
+      "sum_accuracy": 0.32142857142857145,
+      "sum_both_correct": 0.17857142857142858,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "persistence_cue/not_applicable": {
+      "pairs": 6,
+      "mean_accuracy": 0.6666666666666666,
+      "mean_both_correct": 0.3333333333333333,
+      "sum_accuracy": 0.6666666666666666,
+      "sum_both_correct": 0.3333333333333333,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "movement_verb/heads": {
+      "pairs": 14,
+      "mean_accuracy": 0.32142857142857145,
+      "mean_both_correct": 0.21428571428571427,
+      "sum_accuracy": 0.32142857142857145,
+      "sum_both_correct": 0.21428571428571427,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "movement_verb/moves": {
+      "pairs": 22,
+      "mean_accuracy": 0.38636363636363635,
+      "mean_both_correct": 0.2727272727272727,
+      "sum_accuracy": 0.38636363636363635,
+      "sum_both_correct": 0.2727272727272727,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "movement_verb/not_applicable": {
+      "pairs": 10,
+      "mean_accuracy": 0.55,
+      "mean_both_correct": 0.1,
+      "sum_accuracy": 0.55,
+      "sum_both_correct": 0.1,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "preposition/not_applicable": {
+      "pairs": 20,
+      "mean_accuracy": 0.6,
+      "mean_both_correct": 0.2,
+      "sum_accuracy": 0.6,
+      "sum_both_correct": 0.2,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "preposition/to": {
+      "pairs": 8,
+      "mean_accuracy": 0,
+      "mean_both_correct": 0,
+      "sum_accuracy": 0,
+      "sum_both_correct": 0,
+      "mean_ties": 0,
+      "sum_ties": 0
+    },
+    "preposition/toward": {
+      "pairs": 18,
+      "mean_accuracy": 0.3611111111111111,
+      "mean_both_correct": 0.3333333333333333,
+      "sum_accuracy": 0.3611111111111111,
+      "sum_both_correct": 0.3333333333333333,
+      "mean_ties": 0,
+      "sum_ties": 0
+    }
+  },
+  "balancing": "equal family, then evidence format, then case; variants averaged within cases",
+  "uncertainty_note": "Few hand-built cases; wording variants are not independent samples. No binomial confidence intervals reported.",
+  "validation": "All saved token means, sums and explicit-gold decisions reconstructed."
+}

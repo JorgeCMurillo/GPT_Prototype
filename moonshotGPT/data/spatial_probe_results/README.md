@@ -19,6 +19,11 @@ neighboring probe directories.
 | Cardinal definitions and observer turns | [Expanded-block results](cardinal_blocks/qwen3_359m_step19500_expanded_v2/report.md) | [Intervals](cardinal_blocks/qwen3_359m_step19500_expanded_v2/confidence_intervals.md) |
 | Selected six-category situation composite | [Balanced accuracy: 51.22%](spatial_benchmark/qwen3_359m_step19500_v1/report.md) | Conditional scene-cluster bootstrap; limitations in report |
 | Token-Length Preference Diagnostic | [Answer length versus model choice](spatial_benchmark/qwen3_359m_step19500_length_diagnostic_v1/report.md) | Mean versus summed scoring; length/meaning confounding |
+| Shortened fixed-frame left/right v1.2 | [Applied mean: 50.40%](left_right_situation_probe/qwen3_359m_step19500_v1_2/report.md) | Fresh evaluation of the current shortened wording |
+| Natural shortened cardinal scenes v1.4 | [North/south 50.00%; east/west 49.83%](cardinal_situation_probe/qwen3_359m_step19500_v1_4/report.md) | Numeric and named-location evidence balanced |
+| Minimal relation-first cardinal scenes | [Movement: north/south 37.50%; east/west 34.38%](cardinal_situation_probe/qwen3_359m_step19500_minimal_v1/report.md) | [Matched verb, preposition, and stationary-cue changes](cardinal_situation_probe/qwen3_359m_step19500_minimal_v1/matched_changes.jsonl) |
+| Compact front/behind v2.0 | [Applied mean: 50.00%](front_behind_situation_probe/qwen3_359m_step19500_v2_0/report.md) | Direct controls and observer turns separate |
+| Revised six-category composite | [Balanced accuracy: 51.26%](spatial_benchmark/qwen3_359m_step19500_shortened_v2/report.md) | [Overview and minimal-task interpretation](spatial_benchmark/qwen3_359m_step19500_shortened_v2/evaluation_overview.md) |
 
 These scores use different evidence and different averaging rules. They are
 diagnostic summaries; only the explicitly defined six-category composite
@@ -31,11 +36,22 @@ their direct-label controls.
 
 The current [left/right v1.2](../left_right_situation_probe/README.md) shortens
 compact/standard/expanded contexts to averages of 25/29/36 words while preserving
-all 2,400 pairs. The results above still describe the longer **v1.0** wording.
+all 2,400 pairs. Both the historical **v1.0** and fresh **v1.2** evaluations
+are retained above.
 The [front/behind v2.0](../front_behind_situation_probe/README.md) set has 224
 compact pairs; the discarded detailed front/behind versions are not published.
-Neither these front/behind examples nor the revised left/right wording has been
-evaluated or substituted into the saved composite score.
+Front/behind v2.0 and the revised left/right wording have now been evaluated.
+The new composite substitutes shortened left/right and cardinal scores while
+reusing the unchanged above/below, close/far, and closer/farther results.
+Front/behind and the new minimal relation-first block stay separate from that
+six-category score. Historical composite reports are unchanged.
+
+The new results are compact snapshots: reports, aggregate summaries, input
+manifests, and selected grouped/matched diagnostics. Full per-item and per-token
+score files, exact run snapshots, and model weights remain local. Generated
+examples and evaluator code are included in this repository. Generation-time
+manifests may say `not_evaluated`; the versioned evaluation reports above are
+the authoritative record of completed model runs.
 
 The [composite method and input manifest](../spatial_benchmark/README.md) document
 the scene clusters, controls excluded, and uncertainty limitations. Recomputing
