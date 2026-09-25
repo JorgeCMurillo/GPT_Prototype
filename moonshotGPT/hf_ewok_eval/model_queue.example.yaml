@@ -1,0 +1,5 @@
+# Small example for the optional Hub download/evaluation queue.
+# Use scripts/compare_ewok_true_false.py for an existing local checkpoint.
+models:
+  - model_id: gpt2
+    param_count_b: 0.124

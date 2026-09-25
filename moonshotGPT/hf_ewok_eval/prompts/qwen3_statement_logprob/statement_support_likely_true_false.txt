@@ -1,0 +1,3 @@
+Context: {{Ci}}
+Statement: {{Tj}}
+Based on the context, the statement is likely

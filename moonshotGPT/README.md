@@ -56,6 +56,8 @@ If you are new to the repo and want the maintained attribution path, start with
 
 - `evaluation/`
   Shared benchmark evaluators and the reusable evaluation runner.
+- [`hf_ewok_eval/`](hf_ewok_eval/README.md)
+  Hugging Face EWoK evaluation, True/False scoring and context-choice prompts.
 - `training_utils/`
   Shared helpers for rho-1, resume-safe log trimming, and parity debugging.
 - `research/`

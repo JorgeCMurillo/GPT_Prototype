@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+downloads/
+results*/
+prompted_results/
+*.log
+*_key.txt
+*_api.txt
+*pat*.txt
+.env
+.env.*

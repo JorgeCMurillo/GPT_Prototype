@@ -1,0 +1,14 @@
+# TASK
+You will be shown one statement and two contexts.
+Choose the context that better supports the statement.
+
+Statement:
+{{Tj}}
+
+Contexts:
+1. {{C1}}
+2. {{C2}}
+
+Answer with exactly one number: 1 or 2.
+
+Answer:

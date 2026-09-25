@@ -1,0 +1,19 @@
+# INSTRUCTIONS
+You will be shown one context and two candidate statements.
+Choose the statement that better fits the context.
+
+Reply with only:
+Answer: 1
+or
+Answer: 2
+
+# TASK
+## Context
+{{Ci}}
+
+## Candidate statements
+1. {{T1}}
+2. {{T2}}
+
+## Response
+Answer:
