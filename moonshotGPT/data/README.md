@@ -19,6 +19,11 @@ preserve the reports and diagnostic tables from the local Qwen3 evaluation.
 The model checkpoint and full token-level run outputs are not part of this
 repository.
 
+[Matched neutral contexts](spatial_neutral_context_probe/README.md) add an
+uninformative C0 to 16,630 selected spatial pairs for measuring target preference
+under neutral evidence. The compressed dataset, generator, provenance manifest,
+and readable review examples are included; manual semantic review is pending.
+
 Run generators from the `moonshotGPT` directory, for example:
 
 ```bash

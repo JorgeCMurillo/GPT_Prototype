@@ -1,0 +1,60 @@
+{
+  "probe_name": "spatial_matched_neutral_contexts",
+  "version": "1.0",
+  "paired_rows": 16630,
+  "neutral_contexts": 16630,
+  "six_category_rows": 16380,
+  "front_behind_supplement_rows": 212,
+  "minimal_cardinal_supplement_rows": 38,
+  "by_category": {
+    "above_below": 2304,
+    "close_far": 1152,
+    "closer_farther": 9324,
+    "east_west": 667,
+    "front_behind": 212,
+    "left_right": 2304,
+    "north_south": 667
+  },
+  "by_source_dataset": {
+    "above_below": 2304,
+    "cardinal": 1296,
+    "close_far": 1152,
+    "closer_farther": 9324,
+    "front_behind": 212,
+    "left_right": 2304,
+    "minimal_cardinal": 38
+  },
+  "by_rule": {
+    "direction_unspecified_crossing": 1856,
+    "facing_preserved_position_unspecified": 24,
+    "initial_relation_unspecified": 38,
+    "position_unspecified": 16,
+    "reference_facing_unspecified": 28,
+    "side_unspecified_no_crossing": 1088,
+    "unordered_comotion": 32,
+    "unordered_equal_comotion": 1056,
+    "unordered_exchange": 544,
+    "unordered_position_assignment": 1472,
+    "unspecified_before_after_distance": 5328,
+    "unspecified_distance_magnitude": 768,
+    "unspecified_linear_motion_direction": 3996,
+    "unspecified_setting_position": 384
+  },
+  "high_priority_manual_review": 7668,
+  "source_files": {
+    "data/cardinal_situation_probe/minimal_relations/generated/probes.jsonl": "3ef1a24a0149f87575a78a49e4ec2db683a9ebdbc79c500288a4566e5c34609d",
+    "data/above_below_situation_probe/generated/probes.jsonl": "4940c854efc67f97c5c1ce7e90ae83eed5ab6bbc02164e6f0e8068a081b16c48",
+    "data/close_far_evidence_probe/matched_scenes/generated/probes.jsonl": "fcb6e4c88d710521fd149d7fd4a91445e8a0f58673c560e0fb6270dc6be2d25a",
+    "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/binary_pair_scores.csv": "a8b06c1a4459209ac687b98be52accf1ab72ad37525e04553e7458447eecc138",
+    "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/overall_applied_pairs.csv": "8bae088680f1285523f80ed926d68f0f9dba8d310ccf02956a998b670939a44e",
+    "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_event_extension_v1_2/item_scores.jsonl": "6faac28d6204ddd0f28b1a152f8c2fc5eb51abc53b3b29780c2835cab529af47",
+    "runs/research/bos_aligned_proto/closer_farther_probe/qwen3_359m_step19500_non_numeric_v1_2/pair_scores.csv": "95bc32725815fb7f5a5e1b38aa826f307cb44b93dea2ade33d3c718c4b8ac9b3",
+    "data/cardinal_situation_probe/generated/probes.jsonl": "9fd2f02bc347c83a0e5aad2a1dd297257eac8a750e5c118560a58f1e142fed0e",
+    "data/left_right_situation_probe/generated/probes.jsonl": "5f4495a48ff5f9a39f1a877988b0658ef38f70bd6651f9f2fb8a979dbc878495",
+    "data/front_behind_situation_probe/generated/probes.jsonl": "ca8bd7921aecfb60b55b4230139ef2bc457fbc3e9daa49572b875d573ea7d0a7"
+  },
+  "generator_sha256": "4c3b16cf07102101c63c0c50f504a7c4303efc6e62dfb6ff503f27acb2815d44",
+  "neutral_probes_sha256": "2b49ee11181efdd678ab8eb564b5bc7598977e61f79c35c562e67caa9824bf92",
+  "validation": "passed: exact selected inventory; original fields copied; C0 unlabeled; both targets have source-scene witnesses",
+  "evaluation_status": "not_scored"
+}
