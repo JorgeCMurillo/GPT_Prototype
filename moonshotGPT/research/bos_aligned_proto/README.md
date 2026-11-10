@@ -62,6 +62,8 @@ Unified BOS research trainer and supporting helpers.
   Evaluation cleanup and plotting helpers.
 - `reporting.py`
   Shared JSON and JSONL reporting utilities.
+- [`DOCUMENT_ATTENTION.md`](training/DOCUMENT_ATTENTION.md)
+  Optional packed FlashAttention and controlled document-isolation experiments.
 
 Rho-specific gap diagnostics such as student-vs-reference delta summaries
 belong in the training layer, not in `pipeline/`. The pipeline owns artifact

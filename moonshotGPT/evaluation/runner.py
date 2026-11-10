@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from torch.nn.attention import sdpa_kernel
 
 from .ewok import BABYLM_COMPLETION_CHOICE, EWOK_CONTEXT_SENSITIVITY
+from training_utils.document_attention import attention_forward_kwargs
 
 
 def _normalize_ewok_reductions(value: str) -> tuple[str, ...]:
@@ -42,8 +43,17 @@ def run_parallel_validation(
     val_batch_limit: int,
     append_jsonl_fn,
     scalars_path: str,
+    attention_mode: str = "sdpa",
+    document_bos_token_id: int | None = None,
 ) -> float:
-    """Run validation prefix on all ranks and return global token-weighted loss."""
+    """Return ordinary stream loss; varlen experiments also log isolated loss.
+
+    Both experiment arms use the same two evaluation views over identical
+    tokens. The existing val_loss field always remains ordinary causal loss.
+    """
+    compare_documents = attention_mode != "sdpa"
+    if compare_documents and document_bos_token_id is None:
+        raise ValueError("A BOS token id is required to validate document attention")
     # Barrier before evaluation so every rank enters together.
     accelerator.wait_for_everyone()
 
@@ -51,6 +61,7 @@ def run_parallel_validation(
     model.eval()
     local_val_loss_sum = 0.0
     local_val_tokens_sum = 0
+    local_document_loss_sum = 0.0
 
     if accelerator.is_local_main_process:
         print("Validation")
@@ -68,12 +79,20 @@ def run_parallel_validation(
             else:
                 v_ids, v_labels = v_batch
 
+            ordinary_kwargs = attention_forward_kwargs(
+                v_ids, attention_mode="flash_varlen" if compare_documents else "sdpa",
+                bos_token_id=document_bos_token_id, device=device,
+            )
+            isolated_kwargs = attention_forward_kwargs(
+                v_ids, attention_mode="flash_varlen_document",
+                bos_token_id=document_bos_token_id, device=device,
+            ) if compare_documents else None
             v_ids = v_ids.to(device, non_blocking=True)
             v_labels = v_labels.to(device, non_blocking=True)
 
             with autocast_ctx():
                 with sdpa_kernel(sdpa_backends):
-                    v_logits = model(input_ids=v_ids).logits
+                    v_logits = model(input_ids=v_ids, **ordinary_kwargs).logits
 
             v_loss_mean = F.cross_entropy(
                 v_logits[..., :loss_vocab_size].reshape(-1, loss_vocab_size),
@@ -84,18 +103,35 @@ def run_parallel_validation(
             vtoks = int(v_labels.numel())
             local_val_loss_sum += float(v_loss_mean.item()) * vtoks
             local_val_tokens_sum += vtoks
+            del v_logits
+            if compare_documents:
+                with autocast_ctx():
+                    with sdpa_kernel(sdpa_backends):
+                        document_logits = model(input_ids=v_ids, **isolated_kwargs).logits
+                document_loss = F.cross_entropy(
+                    document_logits[..., :loss_vocab_size].reshape(-1, loss_vocab_size),
+                    v_labels.reshape(-1), reduction="mean",
+                )
+                local_document_loss_sum += float(document_loss.item()) * vtoks
+                del document_logits
 
     tr_loss = torch.tensor(local_val_loss_sum, device=device)
     tr_tokens = torch.tensor(local_val_tokens_sum, device=device)
     global_loss_sum = accelerator.reduce(tr_loss, reduction="sum")
     global_tokens_sum = accelerator.reduce(tr_tokens, reduction="sum")
     current_val_loss = global_loss_sum.item() / max(1, global_tokens_sum.item())
+    document_val_loss = None
+    if compare_documents:
+        document_sum = accelerator.reduce(torch.tensor(local_document_loss_sum, device=device), reduction="sum")
+        document_val_loss = document_sum.item() / max(1, global_tokens_sum.item())
 
     if accelerator.is_local_main_process:
         print(
             f" --> Val loss (first {int(val_batch_limit)} val batches) "
             f"@ step {int(step)}: {current_val_loss:.4f}"
         )
+        if document_val_loss is not None:
+            print(f" --> Document-isolated val loss @ step {int(step)}: {document_val_loss:.4f}")
     if accelerator.is_main_process:
         append_jsonl_fn(
             scalars_path,
@@ -105,6 +141,8 @@ def run_parallel_validation(
                 "timestamp": datetime.now().isoformat(),
                 "val_loss": float(current_val_loss),
                 "val_batches": int(val_batch_limit),
+                **({"document_isolated_val_loss": float(document_val_loss),
+                    "training_attention_mode": attention_mode} if document_val_loss is not None else {}),
             },
         )
 

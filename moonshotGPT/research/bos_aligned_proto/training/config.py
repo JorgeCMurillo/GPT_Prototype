@@ -52,6 +52,7 @@ class TrainConfig:
     qwen_tie_word_embeddings: bool = True
     rope_theta: float = 10000.0
     use_liger_kernel: bool = False
+    attention_mode: str = "sdpa"
     num_workers: int = 0
     shuffle_blocks: bool = True
     grad_clip: float = 1.0
@@ -233,6 +234,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=10000.0,
         help="RoPE theta for --model_arch llama or qwen3.",
+    )
+    parser.add_argument(
+        "--attention_mode",
+        choices=("sdpa", "flash_varlen", "flash_varlen_document"),
+        default="sdpa",
+        help=(
+            "Qwen3 attention: existing SDPA (default), native varlen FlashAttention with one segment "
+            "per row, or native varlen FlashAttention isolated at BOS document boundaries. "
+            "Varlen modes require CUDA mixed precision and validate both attention views."
+        ),
     )
     parser.add_argument(
         "--use_liger_kernel",

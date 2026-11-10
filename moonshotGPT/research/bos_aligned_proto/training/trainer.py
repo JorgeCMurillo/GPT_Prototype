@@ -182,6 +182,12 @@ from training_utils.model_config import (
     build_causal_lm_config,
     normalize_model_arch,
 )
+from training_utils.document_attention import (
+    ATTENTION_MODES,
+    attention_forward_kwargs,
+    configure_attention,
+    validate_attention_resume,
+)
 from training_utils.muon_polar_express import (
     MuonWithAuxAdamPE,
     build_muon_pe_param_groups,
@@ -715,6 +721,7 @@ def main(cfg: TrainConfig) -> None:
     qwen_tie_word_embeddings = cfg.qwen_tie_word_embeddings
     rope_theta = cfg.rope_theta
     use_liger_kernel = bool(cfg.use_liger_kernel)
+    attention_mode = str(cfg.attention_mode)
     num_workers = cfg.num_workers
     shuffle_blocks = cfg.shuffle_blocks
     grad_clip = cfg.grad_clip
@@ -778,6 +785,10 @@ def main(cfg: TrainConfig) -> None:
         raise ValueError(f"Unsupported optimizer={optimizer_name!r}.")
     if use_liger_kernel and model_arch not in {"llama", "qwen3"}:
         raise ValueError("--use_liger_kernel is only supported for --model_arch llama or qwen3.")
+    if attention_mode not in ATTENTION_MODES:
+        raise ValueError(f"Unsupported attention_mode={attention_mode!r}.")
+    if attention_mode != "sdpa" and model_arch != "qwen3":
+        raise ValueError("Native varlen attention currently requires --model_arch qwen3.")
     if muon_ns_steps <= 0:
         raise ValueError(f"--muon_ns_steps must be > 0, got {muon_ns_steps}.")
 
@@ -890,6 +901,16 @@ def main(cfg: TrainConfig) -> None:
     )
     device = accelerator.device
     world_size = accelerator.num_processes
+    if attention_mode != "sdpa" and (device.type != "cuda" or effective_mixed_precision == "no"):
+        raise ValueError("Native varlen attention requires CUDA with BF16/FP16 mixed precision.")
+    document_bos_token_id = tokenizer.bos_token_id
+    if attention_mode != "sdpa":
+        if document_bos_token_id is None:
+            raise ValueError("Document attention requires a tokenizer BOS marker.")
+        artifact_meta = load_json(os.path.join(data_dir, "meta.json"))
+        recorded_bos = artifact_meta.get("bos_token_id")
+        if recorded_bos is not None and int(recorded_bos) != int(document_bos_token_id):
+            raise ValueError("Artifact and tokenizer BOS markers disagree.")
 
     if rho_enabled:
         checked_shards = validate_rho_ref_loss_alignment(
@@ -927,6 +948,7 @@ def main(cfg: TrainConfig) -> None:
     if resume_mode:
         resume_run_dir, resume_ckpt_dir, resume_step_hint = resolve_resume_paths(resume_from_run)
         resume_state = load_trainer_state(resume_ckpt_dir)
+        validate_attention_resume(resume_state, attention_mode)
         out_dir = resume_run_dir
     else:
         if loader_kind == "stream":
@@ -945,6 +967,8 @@ def main(cfg: TrainConfig) -> None:
         )
         if rho_enabled:
             run_name += rho_config.run_name_suffix()
+        if attention_mode != "sdpa":
+            run_name += f"_{attention_mode}"
         out_dir = os.path.join(experiments_dir, run_name)
 
     model_init_ckpt_dir = ""
@@ -1082,6 +1106,7 @@ def main(cfg: TrainConfig) -> None:
         elif model_init_ckpt_dir:
             print(f"init_from_ckpt              = {model_init_ckpt_dir}")
         print("---- Batch math ----")
+        print(f"attention_mode              = {attention_mode}")
         print("# Global token/accounting settings used to derive optimizer-step batch size.")
         print(f"world_size (processes)      = {world_size}")
         print(f"micro_batch_size (per GPU)  = {micro_batch_size}")
@@ -1318,6 +1343,7 @@ def main(cfg: TrainConfig) -> None:
         )
         model = AutoModelForCausalLM.from_config(config, attn_implementation="sdpa")
     model.config.use_cache = False
+    configure_attention(model, attention_mode)
 
     if accelerator.is_local_main_process:
         if model_init_ckpt_dir:
@@ -1516,6 +1542,7 @@ def main(cfg: TrainConfig) -> None:
                     "checkpoint_tag": str(tag),
                     "opt_step": int(step),
                     "loader_kind": str(loader_kind),
+                    "attention_mode": attention_mode,
                     "tokens_seen_local_total": int(tokens_seen_local_total),
                     "micro_batch_size": int(micro_batch_size),
                     "seq_len": int(seq_len),
@@ -1748,6 +1775,10 @@ def main(cfg: TrainConfig) -> None:
                 global_offset_map=debug_trace_global_offset_map,
             )
 
+        attention_kwargs = attention_forward_kwargs(
+            input_ids, attention_mode=attention_mode,
+            bos_token_id=document_bos_token_id, device=device,
+        )
         input_ids = input_ids.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
@@ -1775,7 +1806,7 @@ def main(cfg: TrainConfig) -> None:
         with accelerator.accumulate(model):
             with autocast_ctx():
                 with sdpa_kernel(sdpa_backends):
-                    logits = model(input_ids=input_ids).logits  # no attention_mask
+                    logits = model(input_ids=input_ids, **attention_kwargs).logits
 
                 # Token-wise NLL over (B*T) positions.
                 token_loss = F.cross_entropy(
@@ -1973,6 +2004,7 @@ def main(cfg: TrainConfig) -> None:
                         "tokens_seen_global_approx": tokens_seen_global_approx,
                         "tokens_per_opt_step_global": int(effective_total_tokens),
                         "optimizer": str(optimizer_name),
+                        "attention_mode": attention_mode,
                         "optimizer_use_fused": bool(use_fused),
                         "muon_batch_updates": (
                             bool(muon_batch_updates) if optimizer_name == "muon_pe" else None
@@ -2224,6 +2256,8 @@ def main(cfg: TrainConfig) -> None:
                     val_batch_limit=VAL_BATCH_LIMIT,
                     append_jsonl_fn=append_jsonl,
                     scalars_path=scalars_path,
+                    attention_mode=attention_mode,
+                    document_bos_token_id=document_bos_token_id,
                 )
                 if accelerator.is_main_process:
                     val_loss_history.append((opt_step, current_val_loss))
@@ -2379,6 +2413,28 @@ def main(cfg: TrainConfig) -> None:
         avg_loss = total_loss_sum / max(1, total_tokens)
         print(f"⇨ Done. token-avg loss = {avg_loss:.4f}")
         save_plot()
+
+    # Record an exact final validation point when the last optimizer step is
+    # not already on the periodic validation cadence.
+    if eval_every > 0 and opt_step > 0 and opt_step % eval_every != 0:
+        current_val_loss = run_parallel_validation(
+            accelerator=accelerator,
+            model=model,
+            val_loader=val_loader,
+            device=device,
+            autocast_ctx=autocast_ctx,
+            sdpa_backends=sdpa_backends,
+            loss_vocab_size=loss_vocab_size,
+            step=opt_step,
+            val_batch_limit=VAL_BATCH_LIMIT,
+            append_jsonl_fn=append_jsonl,
+            scalars_path=scalars_path,
+            attention_mode=attention_mode,
+            document_bos_token_id=document_bos_token_id,
+        )
+        if accelerator.is_main_process:
+            val_loss_history.append((opt_step, current_val_loss))
+            save_plot()
 
     # Final CORE / EWoK (+ per-item) + final checkpoint
     accelerator.wait_for_everyone()
